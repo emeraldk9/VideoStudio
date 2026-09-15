@@ -266,3 +266,93 @@ Our deep audit reveals 5 distinct mathematical, architectural, and visual causes
    - Add calibrated CSS transform offset for `stylus` / `ink_marker` icons so the physical tip of the nib lands exactly on $(x, y)$.
 2. **Export Calibration**:
    - Offset the `overlay=x=...:y=...` coordinates by the measured nib offset of `hand-pen.png` and `hand-marker.png` (currently `x - 6, y - 6`).
+
+---
+
+## 7. In-Depth Audit & Architectural Proposal: Zone Types & Hand-Drawn Stroke Following
+
+### 7.1 Problem Statement: The "Curtain Wipe" Flaw in Current Zones
+
+In the current whiteboard engine:
+1. **Geometric Half-Plane Masking**: When a user draws a custom zone lasso around an illustration or text, the code executes `clipPolygonHalfPlane(zone.points, sweep.axis, front, sweep.keep)`. This is a flat, straight vertical or horizontal **curtain wipe**.
+2. **Centroid Slider Motion**: The pen front is placed at:
+   ```ts
+   sweep.axis === 'x' ? { x: state.front, y: centroid.y } : { x: centroid.x, y: state.front }
+   ```
+   The hand stylus glides in a **single straight line across the zone's center** while a flat rectangular boundary sweeps across the picture.
+3. **UX Failure**: It does not look like a human artist drawing or coloring the zone. It looks like a mechanical gradient wipe with a disconnected stylus hovering in the center.
+
+---
+
+### 7.2 Industry Standards Benchmark (VideoScribe, Doodly, Vyond)
+
+Professional whiteboard animation software solves regional drawing through **3 distinct hand-drawn zone engines**:
+
+| Zone Type | How It Renders | Hand Stylus Behavior | Best Used For |
+| :--- | :--- | :--- | :--- |
+| **1. Traced Sketch (`sketch`)** | Linework edge contours inside the zone are drawn stroke-by-stroke, followed by a color bloom. | Follows the actual contours, curves, and outlines within the zone. | Detailed illustrations, faces, logos, product outlines. |
+| **2. Scribble / Shading (`scribble`)** | The zone is colored in via an angled continuous zigzag hatching path. | Rapidly zigzags back and forth at 45° across the zone, mimicking human marker shading. | Solid colors, flat vector art, filled shapes, backgrounds. |
+| **3. Calligraphy / Writing (`writing`)** | Multi-line row-by-row serpentine reveal with carriage returns. | Writes left-to-right along successive text lines inside the polygon. | Text blocks, bullet points, titles, annotations. |
+| **4. Linear Wipe (`wipe`)** | Smooth directional gradient wipe (existing behavior). | Sweeps across the zone axis. | Fast transitions or simple geometric graphics. |
+
+---
+
+### 7.3 Proposed Solutions & Algorithms
+
+#### **Solution A: Traced Contour Sketching Inside Zones (`type: 'sketch'`)**
+- **Algorithm**:
+  1. Crop the analysis skeleton time-map to the zone polygon: only pixels $(x, y) \in \text{Zone}$ are retained.
+  2. The stroke chains inside that zone are ordered via contour hierarchy (longest outline first).
+  3. The hand stylus physical coordinates follow the specific stroke chains inside that zone.
+  4. The mask reveals the linework along the pen's exact path, followed by a local chamfer-distance color bloom inside the zone.
+- **Visual Result**: The hand physically sketches the object inside the lasso before moving to the next zone!
+
+#### **Solution B: Hand-Drawn Scribble / Crosshatch Shading (`type: 'scribble'`)**
+- **Algorithm**:
+  1. Rotate the zone polygon by the shading angle $\theta$ (default $45^\circ$).
+  2. Generate horizontal scanline chords spaced by the pen/marker nib diameter $D$ (e.g. 16px to 24px in sequence space).
+  3. Connect the chord endpoints alternately (left-to-right, then right-to-left) to form a continuous **zigzag polyline**.
+  4. The stylus tip traverses this zigzag path across the zone.
+  5. The reveal mask grows along the dilated scribble path, so the image appears **colored in by the pen**.
+- **Visual Result**: Authentic hand-drawn shading. The user sees the hand actively coloring in the lassoed area with rapid, energetic strokes.
+
+#### **Solution C: Multi-Line Natural Writing (`type: 'writing'`)**
+- **Algorithm**:
+  1. Divide the zone's bounding box into $N$ horizontal text bands (e.g. 3 to 8 rows, or auto-calculated from zone height).
+  2. Intersect each band with the zone polygon.
+  3. The stylus traces each line left-to-right, then executes a swift "Pen-Up" carriage return to the beginning of the next line.
+- **Visual Result**: Perfect for text, formulas, or bullet points lassoed by the user.
+
+---
+
+### 7.4 Data Schema & UI Architecture
+
+#### **1. Updated `WhiteboardZone` Schema (`src/shared/types/sequence.ts`)**:
+```ts
+export type WhiteboardZoneType = 'sketch' | 'scribble' | 'writing' | 'wipe';
+
+export interface WhiteboardZone {
+  /** Simplified freehand polygon, 3..64 vertices. */
+  points: { x: number; y: number }[];
+  /** Entrance style: stroke trace, shading scribble, multi-line writing, or wipe. */
+  type: WhiteboardZoneType;
+  /** Angle for scribble shading (in degrees, default 45). */
+  hatchAngle?: number;
+  /** Number of text rows for writing mode (default 4). */
+  rows?: number;
+  /** Direction for wipe fallback ('lr' | 'rl' | 'tb'). */
+  sweep?: 'lr' | 'rl' | 'tb';
+  /** Proportional share of the draw window (0.25–4, default 1). */
+  weight?: number;
+}
+```
+
+#### **2. Zone Editor UI (`WhiteboardZoneEditorModal.tsx`)**:
+In the sidebar where each zone is listed:
+- Replace the lone "Sweep" dropdown with a clean **Type Selector**:
+  - `[Sketch (Trace) | Scribble (Shade) | Writing (Text) | Wipe]`
+- Show contextual secondary controls depending on the selected type:
+  - If **`Scribble`**: Angle selector (`45° Diagonal`, `Horizontal`, `Vertical`) and Nib Density slider.
+  - If **`Writing`**: Number of lines (`Auto`, `3 lines`, `5 lines`).
+  - If **`Wipe`**: Direction dropdown (`Left → Right`, `Right → Left`, `Top → Bottom`).
+  - If **`Sketch`**: Stroke detail badge (`Contour Trace`).
