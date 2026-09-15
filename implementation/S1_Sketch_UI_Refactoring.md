@@ -149,3 +149,112 @@ SketchPane
 #### Option C: Stepped Toggle with Advanced Speed Override
 - A clean toggle: `[Fluid | Hand-Drawn]`.
 - An optional compact dropdown for power users wanting custom rates (8 fps, 12 fps, 15 fps) if needed.
+
+---
+
+## 6. In-Depth Audit: Hand-Drawn Stroke Following & Industry Standards
+
+### 6.1 The Objective
+In professional whiteboard video production (VideoScribe, Doodly, Vyond), the hand/stylus must appear to **physically draw each contour of the image**. The pen tip must track directly along the edge lines, curves, and silhouettes of the subject rather than cutting straight corners or gliding arbitrarily across empty space.
+
+### 6.2 Current Codebase Architecture & Tracing Pipeline
+
+The existing whiteboard trace system in `src/main/media/whiteboard-trace.ts` executes a classical computer vision pipeline:
+1. **Line Extraction**: Gaussian blur → Sobel gradient magnitude → Hysteresis thresholding → Zhang-Suen morphological thinning.
+2. **Chain Tracing**: Walks 8-connected skeleton neighbors into polyline chains (`Chain { points: {x, y}[] }`).
+3. **Chain Ordering**:
+   - `'reading'`: Clusters chains into horizontal rows (`y / 24`) and sorts left-to-right.
+   - `'nearest'`: Greedy TSP nearest-neighbor search to chain endpoints.
+4. **Time-Map Generation**: Stamps each pixel along the stroke with a normalized timestamp `t` ($0 \le t \le \text{strokeFraction}$, default 0.70). The remaining 30% time window is a chamfer-distance fill bloom.
+5. **Pen Path Decimation**: Flattens all chains into a single array and samples coordinates into `penPath`:
+   ```ts
+   export const WHITEBOARD_TRACE_MAX_PEN_POINTS = 33;
+   const penEvery = Math.max(1, Math.ceil(totalLength / (WHITEBOARD_TRACE_MAX_PEN_POINTS - 1)));
+   ```
+6. **Playback Interpolation**:
+   - **Preview (`TimelinePreview.tsx`)**: Evaluates `whiteboardTraceFrontAt` via piecewise-linear interpolation between the 33 sampled keyframes.
+   - **Export (`whiteboard-segment.ts`)**: Constructs a nested FFmpeg `if(lt(T,...),...,...)` expression string evaluating piecewise linear segments in `-filter_complex`.
+
+---
+
+### 6.3 Root Causes: Why the Hand Fails to Accurately Follow Image Strokes
+
+Our deep audit reveals 5 distinct mathematical, architectural, and visual causes:
+
+#### 1. Severe Keyframe Decimation (The 33-Point Cap)
+- An edge-detected drawing typically contains **5,000 to 20,000 skeleton pixels** across dozens of curves, circles, corners, and contours.
+- Decimating this to a maximum of **33 keyframes** means the pen path records a point only once every **150–600 pixels**.
+- When `whiteboardTraceFrontAt` interpolates between point $A$ and point $B$, it draws a **straight chord line across 2D space**.
+- **Result**: The hand cuts straight across arcs, circular eyes, letter loops, and facial silhouettes, completely bypassing the actual curves of the image.
+
+#### 2. Disconnected Cross-Chain "Air Gliding" (No Pen-Up Concept)
+- When chain $K$ (e.g. left eye) finishes and chain $K+1$ (e.g. right ear) begins, the distance between their endpoints can be hundreds of pixels of blank space.
+- In `traceImage`, all points across all chains are flattened sequentially into a single timeline without distinguishing between **drawing on paper** and **repositioning in air**.
+- **Result**: The pen moves slowly and visibly across blank background areas, drawing nothing while dragging its tip in thin air, or arriving late after the line has already revealed.
+
+#### 3. Chain Ordering Visual Flaws
+- **`'reading'` order**: Slices the drawing into artificial horizontal bands (`y / 24`). For illustrations, this causes the hand to oscillate mechanically back and forth across scanlines like a desktop flatbed scanner, rather than drawing cohesive shapes.
+- **`'nearest'` order**: Greedy endpoint search frequently traps itself in local branches, forcing sudden massive diagonal jumps across the entire canvas when a branch ends.
+
+#### 4. The FFmpeg Command-Line Bottleneck (Why the 33-Point Cap Existed)
+- In `whiteboard-segment.ts`, the export implements hand motion by constructing a single recursive expression string:
+  ```ts
+  expr = `if(lt(${T},${end}),${segment(axis, i)},${expr})`;
+  ```
+  Nesting 32 `if` statements creates an expression ~4KB long. If `penPath` had 200 or 500 points, FFmpeg's expression parser would crash from recursion limits, and the command string would exceed OS command-line limits (8,191 chars on Windows).
+- **The flaw**: This export-side string limitation was inadvertently imposed on the **Preview player**, even though JavaScript/Canvas in the preview player has zero command-line string limits!
+
+#### 5. Nib / Stylus Anchor Misalignment
+- In `TimelinePreview.tsx`:
+  ```tsx
+  <span className="material-symbols-outlined absolute text-3xl" style={{ left: `${wbGlyphFront.x * 100}%`, top: `${wbGlyphFront.y * 100}%` }}>
+    {whiteboard.hand === 'marker' ? 'ink_marker' : 'stylus'}
+  </span>
+  ```
+  The Material icon is anchored at its top-left $(0, 0)$. The visual pen tip is angled toward the bottom-left/center of the 30px bounding box.
+- Without an anchor transform offset (`translate(-Xpx, -Ypx)`), the pen glyph visibly floats **several pixels away from the actual reveal line**.
+
+---
+
+### 6.4 Industry Standards Benchmark
+
+| Feature | VideoScribe / Doodly | Adobe After Effects / Motion | VideoStudio (Current) |
+| :--- | :--- | :--- | :--- |
+| **Path Tracking** | Exact continuous vector Bézier curve tracking ($s \in [0, L]$) | Spline/parametric path keyframing | 33 uniform linear sample points |
+| **Stroke Transitions** | Fast Pen-Up travel (50–100ms swift snap without drawing) | Mask transition / cut | Slow linear glide through empty space |
+| **Curve Simplification** | Ramer-Douglas-Peucker (RDP) adaptive tolerance | Adaptive spatial tangents | Uniform division (`length / 32`) |
+| **Drawing Hierarchy** | Main silhouettes first → interior details → fill | Layer stack ordering | Scanline row or greedy nearest |
+| **Hand Anchor** | Calibrated to exact pixel coordinate of pen nib | Anchor Point at nib tip | Top-left bounding box without offset |
+
+---
+
+### 6.5 Proposed Solutions (Aligned with Industry Standards)
+
+#### **Solution 1: High-Density Stroke Tracking in Preview & Curvature-Adaptive Path**
+1. **Decouple Preview from FFmpeg's String Limit**:
+   - The trace worker computes a **high-density pen path** (e.g. 300–600 points, or 1 point per animation step at 12 fps / sequence fps).
+   - The preview player (`TimelinePreview.tsx`) tracks this high-resolution path, providing silky, exact stroke following on the monitor canvas.
+2. **Adaptive Curve Simplification (Ramer-Douglas-Peucker)**:
+   - Instead of blind uniform division (`length / 32`), apply the RDP algorithm to each chain.
+   - Long straight lines need only 2 points; tight curves, loops, and corners retain the necessary density to follow the contour accurately.
+
+#### **Solution 2: Distinguish Drawing vs. Transit ("Pen-Up / Pen-Down")**
+1. **Explicit Transit Phase**:
+   - When transitioning from chain $A$ to chain $B$, flag the movement as `transit: true` (or allocate a brief, dedicated 60–100ms transit time).
+   - During transit, the draw threshold is paused, and the hand quickly repositions to the start of the next stroke.
+2. **Eliminates Air-Drawing**:
+   - The hand never drags across blank canvas while lines are revealing elsewhere.
+
+#### **Solution 3: Hierarchical Stroke Ordering (Natural Human Drawing Order)**
+1. **Longest / Outer Contours First**:
+   - Sort chains by length and perimeter bounding box: draw the primary subject silhouette and major outlines first.
+2. **Secondary Details Second**:
+   - Draw internal facial features, text, or minor linework.
+3. **Fill Bloom Last**:
+   - When the pen finishes the final stroke, the hand can either gracefully exit the frame (slide down-right) or perform a brief shading wave as color blooms.
+
+#### **Solution 4: Calibrated Nib Anchor Offset**
+1. **Preview Calibration**:
+   - Add calibrated CSS transform offset for `stylus` / `ink_marker` icons so the physical tip of the nib lands exactly on $(x, y)$.
+2. **Export Calibration**:
+   - Offset the `overlay=x=...:y=...` coordinates by the measured nib offset of `hand-pen.png` and `hand-marker.png` (currently `x - 6, y - 6`).
