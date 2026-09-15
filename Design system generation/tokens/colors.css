@@ -1,0 +1,360 @@
+:root {
+  /* base scale */
+  --gray-950: #010101; /* app background */
+  --gray-900: #050505; /* canvas */
+  --gray-850: #141413; /* workspace / sidebar */
+  --gray-800: #1D1D1C; /* hover */
+  --gray-750: #272725; /* selected */
+  --gray-500: #52524D; /* disabled */
+  --gray-300: #9C9C96; /* secondary text */
+  --gray-100: #EDEDEA; /* primary text */
+
+  /*
+   * accents: shared lightness/chroma, hue-only variation, per hue-name in spec
+   *
+   * Beta Step 147 — chroma 0.190 → 0.175. This was **outside sRGB** (blue
+   * channel at 1.044), so the browser clamped it and the AI accent has been
+   * rendering `#7382ff` rather than the colour the token asked for. It sits
+   * above the S38 block below and so was never part of that gamut audit, which
+   * is how it survived; the contrast test now covers every accent in both
+   * themes rather than the four S38 checked by hand.
+   *
+   * Deliberately no visual change: the in-gamut value renders `#7585fb`, within
+   * two levels per channel of what was already on screen. Contrast on
+   * `--bg-app` is 6.45:1, up from an effective 6.34:1.
+   */
+  --indigo-500: oklch(66% 0.175 275); /* AI accent — #7585fb */
+
+  /*
+   * Beta Step 38 — pastel neon. Uniform lightness, hue-only variation, with
+   * chroma at each hue's sRGB ceiling.
+   *
+   * Two things this set fixes, both measured rather than eyeballed:
+   *
+   * 1. The previous green and blue were **outside sRGB** — oklch(70% 0.17 160)
+   *    and oklch(66% 0.17 230) both clip, so the rendered color was never the
+   *    one the token asked for. Every value below is verified in gamut.
+   * 2. Contrast on `--bg-app` went from 6.6–10.2:1 to 11.5–12.7:1. It also
+   *    improves the solid-fill case (`Button variant="danger"`, which puts
+   *    `--text-on-accent` on top): dark text on a light accent beats light
+   *    text on a mid-tone one.
+   *
+   * Chroma is deliberately NOT uniform. Red is the binding constraint — at
+   * this lightness it ceilings at 0.098 while green reaches 0.185, and
+   * rotating red toward pink buys nothing (0.075 → 0.077 at L=86%). Holding
+   * chroma uniform would drag all four down to red's limit and turn the
+   * greens chalky, losing the neon; holding *lightness* uniform is what makes
+   * them read as one family.
+   *
+   * 82% and not higher for the same reason: above it red decays to a pale
+   * pink, and danger is the one signal that must not go soft.
+   */
+  --emerald-500: oklch(82% 0.160 160); /* success — #4CE3A0 */
+  --amber-500: oklch(82% 0.155 85);    /* warning — #F2BB31 */
+  --coral-500: oklch(82% 0.098 25);    /* danger  — #FEABA4 */
+  /* Renamed from `--blue-500`: the hue moved 230 → 200, which is cyan, and the
+     scale names in this file are hue names. */
+  --cyan-500: oklch(82% 0.135 200);    /* info    — #22DEE6 */
+
+  /* semantic aliases */
+  --bg-app: var(--gray-950);
+  --bg-canvas: var(--gray-900);
+  --bg-workspace: var(--gray-850);
+  --bg-sidebar: var(--gray-850);
+  --bg-hover: var(--gray-800);
+  --bg-selected: var(--gray-750);
+
+  --text-primary: var(--gray-100);
+  --text-secondary: var(--gray-300);
+  --text-disabled: var(--gray-500);
+
+  /* Semantic reference roles. Stored data carries the role, never these colours. */
+  --reference-identity: #A78BFA;
+  --reference-background: #2DD4BF;
+  --reference-location: #60A5FA;
+  --reference-prop: var(--amber-500);
+  --reference-approved-still: var(--emerald-500);
+
+  /* Beta S165 — timeline type identities (text / effect-overlay). Same hues
+     as reference-identity/-background but deliberately separate names, the
+     brand-ramp rule: retuning the reference palette must not repaint the
+     timeline. Applied as the lane header's glyph colour and a color-mix wash
+     on text/effect clip blocks — lane surfaces stay neutral (owner direction,
+     2026-08-14). */
+  --track-text: #A78BFA;
+  --track-overlay: #2DD4BF;
+  --text-on-accent: #08080A;
+
+  --accent-ai: var(--indigo-500);
+  --accent-success: var(--emerald-500);
+  --accent-warning: var(--amber-500);
+  --accent-danger: var(--coral-500);
+  --accent-info: var(--cyan-500);
+
+  --hairline: rgba(237, 237, 234, 0.08);
+
+  /*
+   * Scrim — the dim behind a modal or drawer. One token, because the app used
+   * to reach for `bg-black/70`, `/60` and `/50` in different places and so dimmed
+   * to three different depths depending on which surface opened.
+   *
+   * This one IS themed: it sits over the app's own surfaces, so a light theme
+   * wants a shallower dim. Contrast with the `--media-*` family below.
+   */
+  --scrim: rgba(0, 0, 0, 0.6);
+
+  /*
+   * Media overlays — deliberately theme-INVARIANT. Do not move these into a
+   * per-theme block.
+   *
+   * These colours sit on top of *content*: video thumbnails, stills, preset
+   * artwork, generated placeholder gradients. What is underneath is a picture,
+   * not a themed surface, so the readable choice does not change with the
+   * theme — white-on-dark-scrim is right over a video frame whether the app
+   * around it is light or dark. Theming them would put near-black text on a
+   * black scrim in light mode.
+   *
+   * The three scrim depths are one gradient's worth: `strong` is the bottom
+   * stop of a card's label sweep, `soft` is its midpoint, `--media-scrim` is a
+   * standalone badge pill.
+   *
+   * Beta S163 — `strong` used to name the media lightbox's full backdrop too,
+   * and that was a misclassification worth recording so it is not undone. A
+   * lightbox backdrop is a *room*, not an overlay on a picture: the detail
+   * column, its icon buttons and its primary CTA are laid on it, and those are
+   * themed. In dark mode the 85% black happened to land within a few levels of
+   * `--bg-app`, so themed text worked by luck; in light mode the same backdrop
+   * put `--text-secondary` at 2.1:1 and made a `--text-primary` button fill
+   * invisible at 1.2:1. It now uses `bg-bg-app/90` — a themed ground — and only
+   * colour that genuinely sits on a picture belongs in this family.
+   */
+  --media-scrim-strong: rgba(0, 0, 0, 0.85);
+  --media-scrim: rgba(0, 0, 0, 0.6);
+  --media-scrim-soft: rgba(0, 0, 0, 0.35);
+
+  /* Text over the scrims above. `--media-text-dark` is for the opposite case:
+     text laid directly on *bright* artwork (the story-card placeholder's pastel
+     gradient), where a light ink would vanish. Used with an opacity modifier. */
+  --media-text: #ffffff;
+  --media-text-dark: #000000;
+
+  /*
+   * Beta S157 — the effect-card swatch: four stops of a fixed miniature
+   * "scene" (sky, sand, clay, dusk) that every effect preset recolours
+   * through its own CSS filter. Content, not chrome — the same untheming
+   * rationale as the scrims: the swatch stands in for a video frame, and a
+   * themed source would make the same preset preview differently per theme.
+   */
+  --media-swatch-sky: #7fa8d9;
+  --media-swatch-sand: #e8c98f;
+  --media-swatch-clay: #b96f4e;
+  --media-swatch-dusk: #3a3f52;
+
+  /*
+   * Beta S161 — the whiteboard reveal's board and ink. Content, not chrome,
+   * same untheming rationale as the scrims and swatches: a whiteboard is
+   * white in both themes, and its pen glyph is the ink drawn on it. The
+   * export's board is these exact values, so the preview and the render
+   * cannot describe two different whiteboards.
+   */
+  --media-board: #ffffff;
+  --media-ink: #3f3f46;
+
+  /*
+   * Brand ramp — the Winki mark only (`AppLogo.tsx`).
+   *
+   * Kept separate from `--accent-*` on purpose: those are semantic status
+   * colours, and binding a brand mark to them would repaint the logo whenever
+   * the palette is retuned for legibility reasons that have nothing to do with
+   * the brand. These are tokens rather than hardcoded hex only so the mark can
+   * follow the theme, which is a brand decision, not a semantic one.
+   *
+   * A left-to-right spectral sweep following the mark's own geometry, each
+   * shape picking up where the previous ends. Dark theme: constant high
+   * lightness, hue-only variation — the original artwork varied lightness
+   * across one olive hue, which read as mud on a near-black ground.
+   */
+  --logo-violet: #c9a6ff;
+  --logo-periwinkle: #a7b6ff;
+  --logo-sky: #7ed9ff;
+  --logo-mint: #79f2d1;
+  --logo-lime: #b9f87c;
+}
+
+/*
+ * ============================================================================
+ * Light theme — Beta Step 141
+ * ============================================================================
+ *
+ * Only the *semantic alias* layer is re-pointed. The `@theme` block in
+ * `src/renderer/index.css` maps each Tailwind colour to `var(--alias)` rather
+ * than to a resolved literal, so every one of the ~1,100 utility classes in the
+ * app follows from here with no component edit. (This is also why that block
+ * must never become `@theme inline` — see the note there.)
+ *
+ * ## Ramp strategy: the document is the brightest surface
+ *
+ * Owner decision (2026-08-12): the light theme **stays flat**. The Beta S47
+ * tone-only elevation rule is not amended — no shadow-based elevation, no new
+ * borders. Tone does the structural work in both themes.
+ *
+ * The first cut inverted the dark ramp's *order* literally, which put the
+ * workspace panel (`--bg-canvas`, the big document surface at
+ * `AppLayout.tsx:105`) at a mid grey with white chrome around it. Owner
+ * feedback, and correct: that is backwards from every mainstream light UI and
+ * reads muddy — the surface you spend all day reading was the dullest thing on
+ * screen. Revised to the industry arrangement: **grey chrome, white document.**
+ *
+ * Descending in lightness:
+ *
+ *   --bg-canvas     #FFFFFF   the workspace panel — the document
+ *   --bg-workspace  #F7F7F4   cards and fields sitting on it
+ *   --bg-app        #EDEDEA   outer ground and the sidebar — chrome
+ *   --bg-hover      #E3E3DE   interaction states, below every surface above
+ *   --bg-selected   #D8D8D3
+ *
+ * The ordering is what makes a single opaque hover token work, and it is worth
+ * stating because it is not the dark ramp's order. In dark, hover sits *above*
+ * every surface (app is the darkest thing, hover the lightest), so it reads
+ * everywhere. Here it sits *below* every surface for the same reason. What is
+ * preserved is not the sequence but the semantics: interaction states move away
+ * from the document, and nothing brackets them. That is why the tokens can stay
+ * opaque rather than becoming translucent overlays, which would compound where
+ * an inset field nests inside an inset panel — and 117 of the 174 uses of
+ * `--bg-hover`/`--bg-selected` are opaque resting surfaces, not hovers.
+ *
+ * Cards sit only ~8 raw levels off the canvas. That is deliberate and is how
+ * Linear and Notion draw the same relationship; `--hairline` at 0.12 carries
+ * the rest, which S47 already sanctions at a panel boundary.
+ *
+ * ## Most of the scale is reused, not invented
+ *
+ * Dark's workspace tone becomes light's primary text, and dark's primary text
+ * becomes light's chrome — a property of the scale rather than a coincidence.
+ * Secondary and disabled text reuse `--gray-500`/`--gray-300` outright and land
+ * within a few tenths of their dark-mode ratios, so the type hierarchy reads
+ * with the same weight in both themes rather than being maximised in one:
+ *
+ *   text-primary    #141413 on #FFFFFF  18.4:1   (dark: 17.8:1)
+ *   text-secondary  #52524D on #FFFFFF   7.8:1   (dark:  7.4:1)
+ *   text-disabled   #9C9C96 on #FFFFFF   2.7:1   (dark:  2.7:1)
+ *
+ * Only the four tones below are new; `--gray-100` does double duty.
+ */
+:root[data-theme='light'] {
+  --gray-0: #ffffff;
+  --gray-25: #f7f7f4;
+  --gray-150: #e3e3de;
+  --gray-200: #d8d8d3;
+
+  /*
+   * Light accents. Every value below is measured, not eyeballed — see
+   * `tests/unit/renderer/shared/theme-contrast.test.ts`, which converts these
+   * out of oklch and fails the build on a gamut or contrast regression.
+   *
+   * The dark ramp sits at oklch 82%, tuned in Beta S38 for 11.5–12.7:1 on
+   * near-black. It measures **1.64:1 on white** (`--accent-success` #4CE3A0),
+   * which is why a light theme cannot reuse it.
+   *
+   * Two constraints fix these values:
+   *
+   * 1. **In gamut.** The first cut of this block put success, warning and info
+   *    *outside* sRGB — repeating precisely the mistake the S38 note above
+   *    documents, where a clipped token renders a colour nobody chose. Chroma
+   *    is now held back from each hue's ceiling with margin to spare rather
+   *    than pushed against it.
+   * 2. **4.5:1 on `--bg-app`, not just on the canvas.** Accent text lands on
+   *    two different surfaces: the queue banners render inside the workspace
+   *    panel (white), but `QueueStatusBadge` renders in the sidebar (`#EDEDEA`)
+   *    on a 15% tint of its own accent. The chrome is the worse case, so it
+   *    sets the bar. Measured: 4.64–5.17:1 there, and the same figures hold for
+   *    `--text-on-accent` on a solid fill.
+   *
+   * WARNING IS BRONZE, AND THAT IS PHYSICS RATHER THAN A COMPROMISE.
+   * Gold is a high-lightness colour: sRGB has no dark saturated yellow, so any
+   * warning dark enough to clear 4.5:1 on a light surface reads bronze. Hue
+   * moved 85 → 65 because at this lightness the extra orange reads as "warning"
+   * where hue 85 reads as olive. Radix ships #AB6400 for the same role for the
+   * same reason. Making it gold again means giving up the contrast bar.
+   */
+  --indigo-600: oklch(52% 0.19 275); /* #4e56d3 */
+  --emerald-600: oklch(51% 0.1 160); /* #237752 */
+  --amber-600: oklch(53% 0.11 65); /* #975c16 */
+  --coral-600: oklch(52% 0.18 25); /* #ba2b2e */
+  --cyan-600: oklch(51% 0.075 200); /* #237377 */
+
+  /* Surfaces — the document is brightest, chrome is grey, interaction states
+     sit below everything. See the ordering note above. */
+  --bg-canvas: var(--gray-0);
+  --bg-workspace: var(--gray-25);
+  --bg-app: var(--gray-100);
+  --bg-sidebar: var(--gray-100);
+  --bg-hover: var(--gray-150);
+  --bg-selected: var(--gray-200);
+
+  --text-primary: var(--gray-850);
+  --text-secondary: var(--gray-500);
+  --text-disabled: var(--gray-300);
+
+  /*
+   * Flipped, and easy to miss. In dark mode the accents are light, so text on a
+   * solid accent fill is near-black. Here they are mid-tone, so it must be
+   * light — otherwise every `Button variant="danger"` becomes unreadable.
+   */
+  --text-on-accent: var(--gray-100);
+
+  --accent-ai: var(--indigo-600);
+  --accent-success: var(--emerald-600);
+  --accent-warning: var(--amber-600);
+  --accent-danger: var(--coral-600);
+  --accent-info: var(--cyan-600);
+
+  /* Reference roles — same hues as the dark set, darkened to carry on white. */
+  --reference-identity: #7c3aed;
+  --reference-background: #0d9488;
+  --reference-location: #2563eb;
+  --reference-prop: var(--amber-600);
+  --reference-approved-still: var(--emerald-600);
+
+  /* Beta S165 — lane identities, darkened to carry on white like the above. */
+  --track-text: #7c3aed;
+  --track-overlay: #0d9488;
+
+  /*
+   * Carries proportionally more weight here than in dark mode. Near-white tone
+   * steps are perceptually weaker than near-black ones, so the compressed ramp
+   * above needs the hairline to hold boundaries that tone alone held alone in
+   * dark. This is not an elevation amendment: S47 already sanctions a hairline
+   * at the workspace/chrome boundary, so this leans on the existing system.
+   */
+  --hairline: rgba(0, 0, 0, 0.12);
+
+  /* Shallower dim: it sits over bright surfaces, not near-black ones. */
+  --scrim: rgba(0, 0, 0, 0.4);
+
+  /* Declared in tokens/motion.css at 0.45 for a near-black ground, which reads
+     as a smudge on white. Still decorative, not structural — cards and floating
+     menus only, per the flat rule above. */
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+  /*
+   * The brand ramp, darkened. Same five hues in the same order, so the sweep
+   * and the brand read identically — only the lightness moves, because the
+   * pastels were tuned for a near-black ground and wash out to near-invisible
+   * on white. This is the closest thing to the artwork's original intent: the
+   * source mark was a *dark* logo for light backgrounds.
+   */
+  --logo-violet: #7c4de0;
+  --logo-periwinkle: #4c63d2;
+  --logo-sky: #0f82be;
+  --logo-mint: #109b7c;
+  --logo-lime: #5f9b22;
+
+  /*
+   * NOT overridden here, deliberately: the `--media-*` family (Beta S140).
+   * Those colours sit on video thumbnails, stills and generated artwork rather
+   * than on a themed surface, so white-on-dark-scrim stays correct in both
+   * themes. Giving them light values would put near-black text on a black
+   * scrim over a video.
+   */
+}

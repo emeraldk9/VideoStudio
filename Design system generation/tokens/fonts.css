@@ -1,0 +1,83 @@
+/* Substitution: no font binaries were provided with the source spec (which named
+   "Lato or Inter" for UI and "JetBrains Mono" for code). Inter + JetBrains Mono
+   stand in until real font files are supplied.
+
+   Vendored locally (2026-07-28) instead of the previous Google Fonts CDN
+   `@import`s: a desktop app was making blocking network requests for fonts on
+   every cold start, and the icon font's `display: block` meant every icon in
+   the app rendered invisible offline or on a slow link. These are the exact
+   variable-font woff2 files the CDN served for the same css2 requests —
+   latin subset for the text faces (the UI is English; the stack below falls
+   back to system fonts for other scripts), full glyph set for the icons.
+   Licenses permit redistribution: Inter and JetBrains Mono are SIL OFL 1.1,
+   Material Symbols is Apache 2.0. */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./fonts/inter-var-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-var-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/*
+  Icons: Google Material Symbols (Outlined), primary icon system per brand
+  direction. The variable font carries the full `FILL 0..1` axis range, not a
+  fixed instance — a fixed point downloads only that one static instance, so no
+  glyph anywhere in the app could ever actually render filled (confirmed:
+  QueueGridCard's star/unstar toggle rendered visually identical in both
+  states, filled and outline, because the "filled" instance's outline data was
+  never fetched). Toggled per-icon via `.material-symbols-outlined--filled`
+  below, not on the base class — every other icon keeps the same
+  always-outline default it already had.
+
+  `font-display: block` matches what the CDN served: a flash of raw ligature
+  text ("favorite", "settings") is worse than a brief blank while the local
+  file loads.
+*/
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('./fonts/material-symbols-outlined-var.woff2') format('woff2');
+}
+
+:root {
+  --icon-size-sm: 18px;
+  --icon-size-md: 20px;
+  --icon-size-lg: 24px;
+}
+/* Base icon class — merged from the helper CSS the Google stylesheet used to
+   ship (font-family + ligature/AA settings) and this file's own sizing. */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-weight: normal;
+  font-style: normal;
+  font-size: var(--icon-size-md);
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+.material-symbols-outlined--filled {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}

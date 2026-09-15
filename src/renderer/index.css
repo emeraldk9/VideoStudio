@@ -1,0 +1,238 @@
+/* fonts.css declares the self-hosted `@font-face`s (vendored woff2 files —
+   no Google Fonts CDN fetch at runtime anymore); keeping it first means the
+   font faces are registered before any rule that uses them, including
+   Tailwind's own expanded output. */
+@import '../../Design system generation/tokens/fonts.css';
+@import 'tailwindcss';
+
+@import '../../Design system generation/tokens/colors.css';
+@import '../../Design system generation/tokens/spacing.css';
+@import '../../Design system generation/tokens/radius.css';
+@import '../../Design system generation/tokens/typography.css';
+@import '../../Design system generation/tokens/motion.css';
+
+/*
+ * Beta Step 141 — this MUST stay `@theme`, never `@theme inline`.
+ *
+ * Plain `@theme` emits `--color-bg-app: var(--bg-app)` and has the utilities
+ * reference `var(--color-bg-app)`, so the indirection survives to runtime and
+ * re-pointing `--bg-app` under `:root[data-theme='light']` propagates to every
+ * class. `@theme inline` resolves each value at build time instead, which would
+ * bake the dark palette into the stylesheet and silently kill the light theme
+ * while leaving all four gates green.
+ */
+@theme {
+  --color-bg-app: var(--bg-app);
+  --color-bg-canvas: var(--bg-canvas);
+  --color-bg-workspace: var(--bg-workspace);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-selected: var(--bg-selected);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-disabled: var(--text-disabled);
+  --color-text-on-accent: var(--text-on-accent);
+
+  /* The design system's divider colour. It existed in tokens/colors.css but was
+     never exposed to Tailwind, so the `border-border-hairline` class several
+     components already used resolved to nothing and drew no border at all.
+     Registered here as `hairline`, giving `border-hairline` / `divide-hairline`. */
+  --color-hairline: var(--hairline);
+
+  /* Modal/drawer dim (themed) and the media-overlay family (deliberately not
+     themed — see the comment block in tokens/colors.css). */
+  --color-scrim: var(--scrim);
+  --color-media-scrim-strong: var(--media-scrim-strong);
+  --color-media-scrim: var(--media-scrim);
+  --color-media-scrim-soft: var(--media-scrim-soft);
+  --color-media-text: var(--media-text);
+  --color-media-text-dark: var(--media-text-dark);
+  /* Beta S161 — whiteboard board/ink (unthemed content, like the scrims). */
+  --color-media-board: var(--media-board);
+  --color-media-ink: var(--media-ink);
+
+  --color-accent-ai: var(--accent-ai);
+  --color-accent-success: var(--accent-success);
+  --color-accent-warning: var(--accent-warning);
+  --color-accent-danger: var(--accent-danger);
+  --color-accent-info: var(--accent-info);
+  /* Beta S165 — timeline lane identities (text / overlay lanes). */
+  --color-track-text: var(--track-text);
+  --color-track-overlay: var(--track-overlay);
+  --color-reference-identity: var(--reference-identity);
+  --color-reference-background: var(--reference-background);
+  --color-reference-location: var(--reference-location);
+  --color-reference-prop: var(--reference-prop);
+  --color-reference-approved-still: var(--reference-approved-still);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-workspace: var(--radius-workspace);
+  --radius-card: var(--radius-card);
+  --radius-button: var(--radius-button);
+  --radius-input: var(--radius-input);
+  --radius-dialog: var(--radius-dialog);
+}
+
+/*
+ * Beta Step 163 — the theme the *user agent* renders in, which is a separate
+ * thing from the theme our own tokens render in.
+ *
+ * Nothing declared `color-scheme` before this, so Chromium used its default
+ * (`normal` — light) for every control it paints itself. The visible case is
+ * `<audio controls>`: six of them across the app (the media lightbox, the two
+ * TTS panels, the dubbing panel, the voice auditions, the take history) and
+ * every one rendered a pale grey transport bar, including in dark mode where it
+ * sat on a near-black card. Native form widgets and the default scrollbar had
+ * the same problem.
+ *
+ * Declared on `:root` alongside `data-theme` rather than on `body`, because the
+ * UA reads it from the root element for the canvas and for form-control
+ * defaults. The two values must disagree — a copy-paste leaving both `dark` is
+ * invisible to typecheck, lint and every render test, so `theme-boot.test.ts`
+ * asserts they differ.
+ *
+ * The custom `::-webkit-scrollbar-*` rules below still win over the scheme's
+ * default scrollbar; `color-scheme` only supplies the fallback.
+ */
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  margin: 0;
+}
+
+#root {
+  height: 100vh;
+}
+
+/*
+ * The app's own title bar row, as one number.
+ *
+ * `titleBarStyle: 'hidden'` plus `titleBarOverlay` means the OS paints the
+ * minimise/maximise/close buttons *over* the top-right of the web content —
+ * they are native, always on top, and nothing in the DOM can move them. `TitleBar`
+ * already keeps clear of them horizontally with `pr-36`; anything that spans the
+ * full window height has to keep clear of them vertically instead.
+ *
+ * Beta Step 64 — declared here rather than left as a `h-8` in `TitleBar`,
+ * because `Drawer` needs the same figure and the two must not drift: the
+ * settings drawer opened with its own title and close button underneath the
+ * window controls, so the panel read as headerless and its X sat beside the
+ * OS's own (owner-reported 2026-08-02).
+ */
+:root {
+  --titlebar-height: 2rem;
+}
+
+/*
+ * Every scrollable surface in the app used the OS's own scrollbar chrome
+ * (on Windows: a wide grey track with square up/down arrow buttons) sitting
+ * directly against the design system's near-black surfaces — the one part
+ * of the UI that never took the theme. Chromium (this is Electron) supports
+ * the `::-webkit-scrollbar-*` pseudo-elements directly, no plugin needed;
+ * `scrollbar-*` is the standards-track fallback for any non-Chromium engine.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-selected) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--bg-selected);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-disabled);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * Appearance Engine: Extended Studio Themes & Color Accents
+ */
+:root[data-theme='oled'] {
+  color-scheme: dark;
+  --bg-app: #000000;
+  --bg-canvas: #040404;
+  --bg-workspace: #09090b;
+  --bg-sidebar: #040404;
+  --bg-hover: #121215;
+  --bg-selected: #1c1c21;
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-disabled: #52525b;
+  --hairline: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme='cinema'] {
+  color-scheme: dark;
+  --bg-app: #18181b;
+  --bg-canvas: #121214;
+  --bg-workspace: #202024;
+  --bg-sidebar: #18181b;
+  --bg-hover: #27272a;
+  --bg-selected: #34343a;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-disabled: #71717a;
+  --hairline: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-accent='violet'] {
+  --accent-ai: #7585fb;
+}
+
+:root[data-accent='cyan'] {
+  --accent-ai: #22dee6;
+}
+
+:root[data-accent='amber'] {
+  --accent-ai: #f2bb31;
+}
+
+:root[data-accent='emerald'] {
+  --accent-ai: #4ce3a0;
+}
+
+:root[data-accent='coral'] {
+  --accent-ai: #feaba4;
+}
+
+:root[data-density='compact'] {
+  font-size: 13px;
+}
+
+:root[data-density='standard'] {
+  font-size: 14px;
+}
+
+:root[data-density='relaxed'] {
+  font-size: 15px;
+}
+

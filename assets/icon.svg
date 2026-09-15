@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Winki Studio app icon (Beta Step 38).
+
+    Source of truth for the mark's geometry and palette is
+    `src/renderer/widgets/app-shell/ui/AppLogo.tsx` — keep the two in sync.
+
+    The dark rounded-square backdrop is deliberate, not decoration: the mark is
+    a set of light pastel-neon strokes, which disappear against a light Windows
+    taskbar or a light macOS dock. Giving the icon its own dark container makes
+    it legible on any background, which is why virtually every shipped app icon
+    has one.
+  -->
+  <defs>
+    <linearGradient id="winki-icon-gradient" x1="242.23" y1="187.89" x2="328.53" y2="101.59" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A7B6FF"/>
+      <stop offset="1" stop-color="#7ED9FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="96" ry="96" fill="#0B0B0C"/>
+
+  <g transform="translate(82 140.25) scale(0.58)">
+    <path fill="#C9A6FF" d="M213.58,351.15c.13,26.02-21.25,48.06-48,48-19.71,0-36.65-11.88-44.04-28.87-.43-1.53-116.62-251.53-117.02-252.8h0c-14.97-30.57,9.2-69.02,43.56-68.17,19.71,0,36.65,11.88,44.04,28.87,26.34,57.05,91.44,197.45,117.02,252.8h0c2.84,6.13,4.44,12.96,4.44,20.17Z"/>
+    <path fill="#B9F87C" d="M600.08,47.32c-1.08,63.1-94.93,63.09-96,0,1.08-63.09,94.93-63.08,96,0Z"/>
+    <path fill="url(#winki-icon-gradient)" d="M333.91,126.81c.02,7.87-1.98,15.78-5.71,22.68h.01c-.79,1.42-42.65,79.54-43.42,80.96-.78-1.52-40.9-80.4-41.66-81.87h.01c-16.41-30.59,7.34-70.47,42.77-69.77,26.73-.07,48.15,22,48,48Z"/>
+    <path fill="#79F2D1" d="M536.57,186.13h0c-.27.54-90.41,178.9-90.75,179.57,3.8-11.69,2.74-25.32-2.97-36.32-.69-1.34-42.59-83.69-43.27-85.02,0-.06,50.88-100.61,50.88-100.69,7.76-16.09,24.22-27.19,43.27-27.19,35.01-.9,59.24,39.05,42.83,69.65Z"/>
+    <path fill="#7ED9FF" d="M448.08,351.15c1.08,50-70.65,66.17-91.27,20.81-.06-.01-71.98-141.49-72.02-141.51,2.28-4.66,44.44-82.05,45.57-85.52,5.15-12.22,4.59-27.25-1.16-38.9,26.99,53.03,87.27,171.53,113.66,223.35h-.01c3.43,6.71,5.23,14.22,5.23,21.77Z"/>
+    <path fill="#A7B6FF" d="M208.39,372.89c6.13-11.71,6.92-27.06,1.78-39.53-.43-1.08-.9-2.16-1.42-3.21,0,0-40.01-86.44-40.01-86.44l74.36-138.64c-7.03,13.17-6.83,31.39.47,44.37.11.25,41.1,80.74,41.22,81.01l-76.4,142.44Z"/>
+  </g>
+</svg>
