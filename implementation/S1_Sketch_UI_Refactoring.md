@@ -1,7 +1,7 @@
 # S1 Sketch UI Refactoring Plan & Progress Tracker
 
 **Location**: `C:\Users\vivan\Documents\My Apps\VideoStudio\implementation\S1_Sketch_UI_Refactoring.md`  
-**Status**: ✅ Completed (Phases 1, 2, 3, 4, 5 & 6 Complete)
+**Status**: ✅ Completed (Phases 1, 2, 3, 4, 5, 6 & 7 Complete)
 
 ---
 
@@ -36,6 +36,14 @@
   - [x] Added `simplifyPenForExport` in `whiteboard-segment.ts` to strictly cap export graph expressions to safe CLI limits.
   - [x] Calibrated pen/stylus visual nib anchor in `TimelinePreview.tsx` (`translate(-4px, -24px)`).
   - [x] Verified zero TypeScript errors (`npm run typecheck`).
+- [x] **Phase 7: Zone Types / Authentic Hand-Drawn Mechanics (Writing, Scribble, Contour Tracing)**
+  - [x] Eliminated flat curtain-wipe as the sole zone reveal mechanic; introduced `WhiteboardZoneType` (`sketch`, `scribble`, `writing`, `wipe`).
+  - [x] Implemented `writing` row-by-row reading trajectory with natural carriage returns in both preview and export expressions.
+  - [x] Implemented `scribble` marker zigzag shading trajectory across zone bounds with sinusoidal oscillation in export graphs.
+  - [x] Implemented `sketch` contour perimeter tracing with interior swirl in preview and export pipelines.
+  - [x] Enhanced `WhiteboardZoneEditorModal.tsx` with Style dropdown selector and dynamic Text Rows control.
+  - [x] Upgraded Zod schema in `effects.ts` with backward compatibility for legacy zones.
+  - [x] Verified 100% clean typecheck (`npm run typecheck` returned code 0).
 
 ---
 

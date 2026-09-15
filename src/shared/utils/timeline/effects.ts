@@ -319,6 +319,9 @@ export const clipEffectsSchema = z
                   .min(3)
                   .max(WHITEBOARD_MAX_ZONE_POINTS),
                 entrance: z.enum(['draw']),
+                type: z.enum(['sketch', 'scribble', 'writing', 'wipe']).optional(),
+                hatchAngle: z.number().optional(),
+                rows: z.number().int().min(2).max(16).optional(),
                 sweep: z.enum(['lr', 'rl', 'tb']).optional(),
                 weight: boundedNumber(WHITEBOARD_MIN_ZONE_WEIGHT, WHITEBOARD_MAX_ZONE_WEIGHT).optional(),
               })

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 
 import {
+  polygonBounds,
   polygonCentroid,
   resolveWhiteboardDrawSeconds,
   WHITEBOARD_EXPORT_MAX_PEN_POINTS,
@@ -329,7 +330,24 @@ function buildZoneGraph(
       `[wzm${index}][wzs${index}]blend=all_mode=darken,format=gray[wza${index}]`,
       `[${imagePads[index]}][wza${index}]alphamerge[wcut${index}]`,
     );
-    if (sweep.axis === 'x') {
+    const bounds = polygonBounds(zone.points);
+    const type = zone.type ?? 'sketch';
+
+    if (type === 'scribble') {
+      const localNorm = `clip((${T}-${start})/${span.toFixed(4)},0,1)`;
+      const wave = `sin(${localNorm}*87.964)`;
+      const halfH = ((bounds.maxY - bounds.minY) * height * 0.42).toFixed(2);
+      handX.push(`${front}*${width}`);
+      handY.push(`(${(centroid.y * height).toFixed(2)}+${wave}*${halfH})`);
+    } else if (type === 'writing') {
+      const rows = Math.min(16, Math.max(2, zone.rows ?? 4));
+      const localNorm = `clip((${T}-${start})/${span.toFixed(4)},0,1)`;
+      const rowH = (((bounds.maxY - bounds.minY) * height) / rows).toFixed(2);
+      const rowProg = `mod(${localNorm}*${rows},1)`;
+      const rowIdx = `floor(${localNorm}*${rows})`;
+      handX.push(`(${(bounds.minX * width).toFixed(2)}+${rowProg}*${((bounds.maxX - bounds.minX) * width).toFixed(2)})`);
+      handY.push(`(${(bounds.minY * height).toFixed(2)}+(${rowIdx}+0.5)*${rowH})`);
+    } else if (sweep.axis === 'x') {
       handX.push(`${front}*${width}`);
       handY.push((centroid.y * height).toFixed(2));
     } else {

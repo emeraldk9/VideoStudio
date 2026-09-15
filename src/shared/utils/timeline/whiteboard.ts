@@ -180,8 +180,10 @@ export function whiteboardTraceMaskAlpha(mapValue: number, progress: number): nu
   return delta / WHITEBOARD_TRACE_EDGE;
 }
 
+export type WhiteboardZoneType = 'sketch' | 'scribble' | 'writing' | 'wipe';
+
 /**
- * S275 — one user-drawn reveal region. Points are normalized 0..1 of the
+ * S275 / Refactor — one user-drawn reveal region. Points are normalized 0..1 of the
  * **padded sequence frame** (what the export's `scale…,pad=…` produces), the
  * one coordinate space the zone editor, the CSS preview, and the ffmpeg
  * masks all share — so no consumer ever converts.
@@ -189,8 +191,14 @@ export function whiteboardTraceMaskAlpha(mapValue: number, progress: number): nu
 export interface WhiteboardZone {
   /** Simplified freehand polygon, 3..64 vertices. */
   points: { x: number; y: number }[];
-  /** Entrance style. Draw-in only by owner decision; the enum grows later if ever needed. */
+  /** Entrance style. Draw-in only by owner decision. */
   entrance: 'draw';
+  /** Zone drawing engine: contour sketch, scribble shading, multi-line writing, or directional wipe. @default 'sketch' */
+  type?: WhiteboardZoneType;
+  /** Angle for scribble shading (in degrees, default 45). */
+  hatchAngle?: number;
+  /** Number of text rows for writing mode (2..16, default 4). */
+  rows?: number;
   /** Sweep direction of the draw-in front. @default 'lr' */
   sweep?: 'lr' | 'rl' | 'tb';
   /** This zone's share of the draw window, proportional. Clamped 0.25–4. @default 1 */
@@ -456,12 +464,11 @@ export function whiteboardZoneClipPath(state: WhiteboardZoneState): string | nul
 }
 
 /**
- * The pen tip across the whole zone timeline, or `null` once drawing is
- * complete. The tip rides the sweep front on the sweep axis and the zone's
- * **centroid** on the cross axis — deliberately, because that closed form is
- * what the ffmpeg hand overlay can also express (the midpoint of the actual
- * front segment would be a per-vertex piecewise the expressions cannot
- * carry, and the two consumers agreeing matters more).
+ * The pen tip across the whole zone timeline, or `null` once drawing is complete:
+ * - 'writing': the pen writes row-by-row across natural reading lines with carriage returns.
+ * - 'scribble': the pen rapidly zigzags back and forth, shading the area with a marker.
+ * - 'sketch': the pen traces the contour perimeter and interior linework.
+ * - 'wipe': the pen rides the linear sweep front.
  */
 export function whiteboardZoneFrontAt(
   progress: number,
@@ -475,6 +482,71 @@ export function whiteboardZoneFrontAt(
   if (index < 0) index = zones.length - 1;
   const state = whiteboardZoneStateAt(p, zones, index);
   const zone = zones[index];
+  const local = state.localProgress;
+  const bounds = polygonBounds(zone.points);
+  const type = zone.type ?? 'sketch';
+
+  if (type === 'writing') {
+    const rows = Math.min(16, Math.max(2, zone.rows ?? 4));
+    const pRow = local * rows;
+    const r = Math.min(rows - 1, Math.floor(pRow));
+    const f = pRow - r;
+    const rowHeight = (bounds.maxY - bounds.minY) / rows;
+    const yMid = bounds.minY + (r + 0.5) * rowHeight;
+    // Writing sweep (0..0.88), carriage return (0.88..1.0)
+    if (f < 0.88) {
+      const x = bounds.minX + (f / 0.88) * (bounds.maxX - bounds.minX);
+      return { x, y: yMid };
+    }
+    const ret = (f - 0.88) / 0.12;
+    const x = bounds.maxX - ret * (bounds.maxX - bounds.minX);
+    const y = yMid + ret * rowHeight;
+    return { x, y: Math.min(bounds.maxY, y) };
+  }
+
+  if (type === 'scribble') {
+    // Energetic zigzag shading across the zone bounding area
+    const cycles = 14;
+    const sweep = whiteboardZoneSweep(zone);
+    const phase = local * cycles;
+    const tri = 2 * Math.abs(phase - Math.floor(phase) - 0.5); // 0..1..0
+    if (sweep.axis === 'x') {
+      const x = sweep.from + local * (sweep.to - sweep.from);
+      const y = bounds.minY + tri * (bounds.maxY - bounds.minY);
+      return { x, y };
+    }
+    const y = sweep.from + local * (sweep.to - sweep.from);
+    const x = bounds.minX + tri * (bounds.maxX - bounds.minX);
+    return { x, y };
+  }
+
+  if (type === 'sketch' && zone.points.length >= 3) {
+    // Contour-tracing: the stylus traces the perimeter of the zone polygon,
+    // then performs an interior swirl fill
+    if (local < 0.65) {
+      const norm = local / 0.65;
+      const ptIdx = norm * zone.points.length;
+      const i = Math.floor(ptIdx) % zone.points.length;
+      const next = (i + 1) % zone.points.length;
+      const frac = ptIdx - Math.floor(ptIdx);
+      const a = zone.points[i];
+      const b = zone.points[next];
+      return {
+        x: a.x + frac * (b.x - a.x),
+        y: a.y + frac * (b.y - a.y),
+      };
+    }
+    const fillProg = (local - 0.65) / 0.35;
+    const centroid = polygonCentroid(zone.points);
+    const radius = 0.4 * (1 - fillProg) * Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    const angle = fillProg * Math.PI * 6;
+    return {
+      x: centroid.x + radius * Math.cos(angle),
+      y: centroid.y + radius * Math.sin(angle),
+    };
+  }
+
+  // Fallback: classic linear directional wipe
   const sweep = whiteboardZoneSweep(zone);
   const centroid = polygonCentroid(zone.points);
   return sweep.axis === 'x' ? { x: state.front, y: centroid.y } : { x: centroid.x, y: state.front };

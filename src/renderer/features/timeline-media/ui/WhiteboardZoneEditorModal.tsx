@@ -12,6 +12,7 @@ import {
   toMediaUrl,
   type PolygonPoint,
   type WhiteboardZone,
+  type WhiteboardZoneType,
 } from '@shared';
 
 import { Button } from '../../../shared/ui/Button';
@@ -42,6 +43,8 @@ import { Select } from '../../../shared/ui/Select';
 interface DraftZone {
   key: number;
   points: PolygonPoint[];
+  type: WhiteboardZoneType;
+  rows?: number;
   sweep: 'lr' | 'rl' | 'tb';
   weight: number;
 }
@@ -57,6 +60,13 @@ const SIMPLIFY_EPSILON = 0.005;
 const MIN_ZONE_EXTENT = 0.02;
 
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+
+const ZONE_TYPE_OPTIONS = [
+  { value: 'sketch', label: 'Sketch (Contour)' },
+  { value: 'scribble', label: 'Scribble (Shade)' },
+  { value: 'writing', label: 'Writing (Lines)' },
+  { value: 'wipe', label: 'Wipe (Linear)' },
+];
 
 const SWEEP_OPTIONS = [
   { value: 'lr', label: 'Left → right' },
@@ -85,6 +95,8 @@ export function WhiteboardZoneEditorModal({
     (zones ?? []).map((zone) => ({
       key: (nextZoneKey += 1),
       points: zone.points.map((point) => ({ ...point })),
+      type: zone.type ?? 'sketch',
+      rows: zone.rows ?? 4,
       sweep: zone.sweep ?? 'lr',
       weight: zone.weight ?? 1,
     })),
@@ -175,7 +187,7 @@ export function WhiteboardZoneEditorModal({
         const key = (nextZoneKey += 1);
         setDraft((current) => [
           ...current,
-          { key, points: simplified, sweep: 'lr', weight: 1 },
+          { key, points: simplified, type: 'sketch', rows: 4, sweep: 'lr', weight: 1 },
         ]);
         setSelectedKey(key);
       },
@@ -235,7 +247,7 @@ export function WhiteboardZoneEditorModal({
     );
   };
 
-  const patchZone = (key: number, patch: Partial<Pick<DraftZone, 'sweep' | 'weight'>>) => {
+  const patchZone = (key: number, patch: Partial<Pick<DraftZone, 'type' | 'rows' | 'sweep' | 'weight'>>) => {
     setDraft((current) =>
       current.map((zone) => (zone.key === key ? { ...zone, ...patch } : zone)),
     );
@@ -260,7 +272,9 @@ export function WhiteboardZoneEditorModal({
           y: Number(point.y.toFixed(4)),
         })),
         entrance: 'draw' as const,
-        ...(zone.sweep !== 'lr' ? { sweep: zone.sweep } : {}),
+        type: zone.type,
+        ...(zone.type === 'writing' ? { rows: zone.rows ?? 4 } : {}),
+        ...(zone.type === 'wipe' && zone.sweep !== 'lr' ? { sweep: zone.sweep } : {}),
         ...(zone.weight !== 1 ? { weight: zone.weight } : {}),
       })),
     );
@@ -399,18 +413,50 @@ export function WhiteboardZoneEditorModal({
                 />
               </div>
               <div className="flex items-center gap-2 text-xs text-text-secondary">
-                <span className="w-12 shrink-0">Sweep</span>
+                <span className="w-12 shrink-0">Style</span>
                 <Select
-                  aria-label={`Zone ${index + 1} sweep direction`}
-                  value={zone.sweep}
+                  aria-label={`Zone ${index + 1} style`}
+                  value={zone.type}
                   onChange={(value) => {
-                    if (value === 'lr' || value === 'rl' || value === 'tb') {
-                      patchZone(zone.key, { sweep: value });
+                    if (value === 'sketch' || value === 'scribble' || value === 'writing' || value === 'wipe') {
+                      patchZone(zone.key, { type: value });
                     }
                   }}
-                  options={SWEEP_OPTIONS}
+                  options={ZONE_TYPE_OPTIONS}
                 />
               </div>
+              {zone.type === 'writing' && (
+                <div className="flex items-center gap-2 text-xs text-text-secondary">
+                  <span className="w-12 shrink-0">Rows</span>
+                  <Select
+                    aria-label={`Zone ${index + 1} text rows`}
+                    value={String(zone.rows ?? 4)}
+                    onChange={(value) => patchZone(zone.key, { rows: Number(value) })}
+                    options={[
+                      { value: '2', label: '2 rows' },
+                      { value: '3', label: '3 rows' },
+                      { value: '4', label: '4 rows' },
+                      { value: '6', label: '6 rows' },
+                      { value: '8', label: '8 rows' },
+                    ]}
+                  />
+                </div>
+              )}
+              {zone.type === 'wipe' && (
+                <div className="flex items-center gap-2 text-xs text-text-secondary">
+                  <span className="w-12 shrink-0">Sweep</span>
+                  <Select
+                    aria-label={`Zone ${index + 1} sweep direction`}
+                    value={zone.sweep}
+                    onChange={(value) => {
+                      if (value === 'lr' || value === 'rl' || value === 'tb') {
+                        patchZone(zone.key, { sweep: value });
+                      }
+                    }}
+                    options={SWEEP_OPTIONS}
+                  />
+                </div>
+              )}
               <label className="flex items-center gap-2 text-xs text-text-secondary">
                 <span className="w-12 shrink-0">Time ×</span>
                 <input
