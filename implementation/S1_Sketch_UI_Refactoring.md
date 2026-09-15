@@ -1,7 +1,7 @@
 # S1 Sketch UI Refactoring Plan & Progress Tracker
 
 **Location**: `C:\Users\vivan\Documents\My Apps\VideoStudio\implementation\S1_Sketch_UI_Refactoring.md`  
-**Status**: ✅ Completed (Phases 1, 2, 3, 4 & 5 Complete)
+**Status**: ✅ Completed (Phases 1, 2, 3, 4, 5 & 6 Complete)
 
 ---
 
@@ -28,6 +28,14 @@
   - [x] Fixed naming collision by replacing `"Sketchy"` with `"Hand-Drawn"`.
   - [x] Implemented smart-pairing: selecting `Sketch` automatically pairs with Hand-Drawn (12 fps), while geometric patterns default to Fluid.
   - [x] Verified zero TypeScript compilation errors (`npm run typecheck`).
+- [x] **Phase 6: Hand-Drawn Stroke Following & Curvature Tracking**
+  - [x] Bumped `TRACE_ALGORITHM_VERSION = 2` to automatically refresh cached analysis with high-density contour data.
+  - [x] Enhanced `orderChains` so `'nearest'` starts from the major silhouette/contour instead of top-left (0,0).
+  - [x] Implemented contour-accurate chain sampling in `traceImage` (explicit start, interior curvature steps, and end per stroke).
+  - [x] Increased `WHITEBOARD_TRACE_MAX_PEN_POINTS` to 240 for silky-smooth preview stroke tracking.
+  - [x] Added `simplifyPenForExport` in `whiteboard-segment.ts` to strictly cap export graph expressions to safe CLI limits.
+  - [x] Calibrated pen/stylus visual nib anchor in `TimelinePreview.tsx` (`translate(-4px, -24px)`).
+  - [x] Verified zero TypeScript errors (`npm run typecheck`).
 
 ---
 

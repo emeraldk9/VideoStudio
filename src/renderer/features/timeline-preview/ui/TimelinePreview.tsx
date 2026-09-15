@@ -1158,10 +1158,14 @@ export function TimelinePreview() {
             {whiteboard.progress < 1 && whiteboard.hand !== 'none' && wbGlyphFront ? (
               <span
                 aria-hidden="true"
-                className="material-symbols-outlined absolute text-3xl text-media-ink"
+                className="material-symbols-outlined pointer-events-none absolute select-none text-3xl text-media-ink"
                 style={{
                   left: `${wbGlyphFront.x * 100}%`,
                   top: `${wbGlyphFront.y * 100}%`,
+                  transform:
+                    whiteboard.hand === 'marker'
+                      ? 'translate(-4px, -24px)'
+                      : 'translate(-4px, -24px)',
                 }}
               >
                 {/* The glyph follows the Hand setting. It was `stylus` for

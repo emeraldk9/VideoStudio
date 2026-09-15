@@ -39,7 +39,7 @@ import { decodeFrameRgba, probeFrameSize } from './watermark-frame-io';
  * convention. Parameters live in the document; paths never do.
  */
 
-export const TRACE_ALGORITHM_VERSION = 1;
+export const TRACE_ALGORITHM_VERSION = 2;
 export const TRACE_ANALYSIS_MAX_EDGE = 960;
 /** Chains shorter than this many skeleton pixels are noise, not strokes. */
 const MIN_CHAIN_LENGTH = 8;
@@ -244,7 +244,7 @@ function traceChains(skeleton: Uint8Array, width: number, height: number): Chain
   return chains.filter((chain) => chain.points.length >= MIN_CHAIN_LENGTH);
 }
 
-/** Orders chains; `'nearest'` may reverse a chain so its nearer end leads. */
+/** Orders chains; `'nearest'` starts from the longest contour and reverses chains so nearer ends lead. */
 function orderChains(chains: Chain[], order: WhiteboardTraceSettings['order']): Chain[] {
   if (order === 'reading') {
     return [...chains].sort((a, b) => {
@@ -253,9 +253,21 @@ function orderChains(chains: Chain[], order: WhiteboardTraceSettings['order']): 
       return rowA === rowB ? a.points[0].x - b.points[0].x : rowA - rowB;
     });
   }
+  if (chains.length <= 1) return [...chains];
   const remaining = [...chains];
   const ordered: Chain[] = [];
-  let cursor = { x: 0, y: 0 };
+
+  // Start with the longest chain (major silhouette / outline)
+  let longestIdx = 0;
+  for (let i = 1; i < remaining.length; i += 1) {
+    if (remaining[i].points.length > remaining[longestIdx].points.length) {
+      longestIdx = i;
+    }
+  }
+  const [first] = remaining.splice(longestIdx, 1);
+  ordered.push(first);
+  let cursor = first.points[first.points.length - 1];
+
   while (remaining.length > 0) {
     let bestIndex = 0;
     let bestDistance = Infinity;
@@ -305,13 +317,20 @@ export function traceImage(
   const timeMap = new Uint8Array(width * height).fill(255);
   const totalLength = chains.reduce((sum, chain) => sum + chain.points.length, 0);
   const penPath: WhiteboardPenPoint[] = [];
-  const penEvery = Math.max(1, Math.ceil(totalLength / (WHITEBOARD_TRACE_MAX_PEN_POINTS - 1)));
+
+  // Density step along chains: captures smooth curves without air-gliding
+  const step = Math.max(1, Math.floor(totalLength / (WHITEBOARD_TRACE_MAX_PEN_POINTS - 1)));
 
   let cursor = 0;
   for (const chain of chains) {
-    for (const point of chain.points) {
+    if (chain.points.length === 0) continue;
+    const chainStartCursor = cursor;
+
+    for (let pi = 0; pi < chain.points.length; pi += 1) {
+      const point = chain.points[pi];
       const t = totalLength > 0 ? (cursor / totalLength) * strokeFraction : 0;
       const value = Math.min(254, Math.round(t * 254));
+
       // ±1 dilation so the drawn line has body; min() keeps the earliest time.
       for (let dy = -1; dy <= 1; dy += 1) {
         for (let dx = -1; dx <= 1; dx += 1) {
@@ -323,14 +342,31 @@ export function traceImage(
           }
         }
       }
-      if (cursor % penEvery === 0) {
-        penPath.push({ t, x: point.x / width, y: point.y / height });
+
+      // Sample keyframes:
+      // Always capture the start of a stroke (pi === 0)
+      // Sample regular intervals along the curve to follow contours
+      // Always capture the end of a stroke (pi === chain.points.length - 1)
+      const isStart = pi === 0;
+      const isEnd = pi === chain.points.length - 1;
+      const isStep = (cursor - chainStartCursor) % step === 0;
+
+      if (isStart || isEnd || isStep) {
+        const nextX = point.x / width;
+        const nextY = point.y / height;
+        const last = penPath[penPath.length - 1];
+        if (!last || last.t !== t || Math.hypot(last.x - nextX, last.y - nextY) > 0.001) {
+          penPath.push({ t, x: nextX, y: nextY });
+        }
       }
+
       cursor += 1;
     }
   }
-  if (totalLength > 0) {
-    const lastPoint = chains[chains.length - 1].points[chains[chains.length - 1].points.length - 1];
+
+  if (totalLength > 0 && chains.length > 0) {
+    const lastChain = chains[chains.length - 1];
+    const lastPoint = lastChain.points[lastChain.points.length - 1];
     penPath.push({ t: strokeFraction, x: lastPoint.x / width, y: lastPoint.y / height });
   }
 

@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   polygonCentroid,
   resolveWhiteboardDrawSeconds,
+  WHITEBOARD_EXPORT_MAX_PEN_POINTS,
   whiteboardCadenceHz,
   whiteboardRows,
   whiteboardZoneSweep,
@@ -385,6 +386,22 @@ function buildZoneGraph(
  * clamped lerps, ≤ 32 of them (the shared cap) — and leaves when the
  * linework ends: the bloom is not pen work.
  */
+/** Simplifies high-density pen paths to keep FFmpeg overlay expressions within parser stack limits. */
+function simplifyPenForExport(
+  pen: WhiteboardPenPoint[],
+  maxPoints: number = WHITEBOARD_EXPORT_MAX_PEN_POINTS,
+): WhiteboardPenPoint[] {
+  if (pen.length <= maxPoints) return pen;
+  const result: WhiteboardPenPoint[] = [pen[0]];
+  const stride = (pen.length - 1) / (maxPoints - 1);
+  for (let i = 1; i < maxPoints - 1; i += 1) {
+    const idx = Math.min(pen.length - 1, Math.round(i * stride));
+    result.push(pen[idx]);
+  }
+  result.push(pen[pen.length - 1]);
+  return result;
+}
+
 function buildTraceGraph(
   options: WhiteboardSegmentOptions,
   geometry: {
@@ -423,7 +440,8 @@ function buildTraceGraph(
     `[wbimg][wbmask]alphamerge[wbrev]`,
   ];
 
-  const pen = options.tracePenPath ?? [];
+  const rawPen = options.tracePenPath ?? [];
+  const pen = simplifyPenForExport(rawPen, WHITEBOARD_EXPORT_MAX_PEN_POINTS);
   if (options.handAssetPath && pen.length >= 2) {
     // Nested clamped-lerp segments over absolute times; the last segment is
     // the unconditional tail of the selector.

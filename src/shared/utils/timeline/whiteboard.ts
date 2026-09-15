@@ -117,7 +117,8 @@ export interface WhiteboardPenPoint {
   y: number;
 }
 
-export const WHITEBOARD_TRACE_MAX_PEN_POINTS = 33;
+export const WHITEBOARD_TRACE_MAX_PEN_POINTS = 240;
+export const WHITEBOARD_EXPORT_MAX_PEN_POINTS = 33;
 
 /**
  * The pen tip along the traced path at draw progress 0..1 — piecewise-linear
