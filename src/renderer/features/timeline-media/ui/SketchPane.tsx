@@ -156,10 +156,17 @@ export function SketchPane() {
         <SegmentedControl
           value={activeSettings.pattern}
           onChange={(pattern) => {
-            const next: WhiteboardSettings =
-              pattern === 'trace' && !activeSettings.trace
-                ? { ...activeSettings, pattern, trace: WHITEBOARD_TRACE_DEFAULTS }
-                : { ...activeSettings, pattern };
+            let next: WhiteboardSettings = { ...activeSettings, pattern };
+            if (pattern === 'trace') {
+              next = {
+                ...next,
+                trace: activeSettings.trace ?? WHITEBOARD_TRACE_DEFAULTS,
+                cadenceFps: activeSettings.cadenceFps ?? 12, // Hand-drawn default for sketch
+              };
+            } else if (pattern === 'serpentine' || pattern === 'wipe') {
+              // Smooth default for geometric wipes/writing to prevent jagged masks
+              delete next.cadenceFps;
+            }
             updateSettings(next);
           }}
           options={[
@@ -277,28 +284,26 @@ export function SketchPane() {
 
         {/* Frame Cadence */}
         <div className="flex items-center justify-between pt-1 border-t border-hairline">
-          <span className="text-[11px] text-text-secondary">Animation Step</span>
+          <div className="flex flex-col">
+            <span className="text-[11px] text-text-secondary">Animation Cadence</span>
+            <span className="text-[10px] text-text-disabled">
+              {activeSettings.cadenceFps ? 'Hand-drawn (12 fps)' : 'Fluid (full frame rate)'}
+            </span>
+          </div>
           <SegmentedControl
-            value={
-              activeSettings.cadenceFps === 8
-                ? '8'
-                : activeSettings.cadenceFps === 12
-                  ? '12'
-                  : 'smooth'
-            }
+            value={activeSettings.cadenceFps ? '12' : 'smooth'}
             onChange={(value) => {
               const next = { ...activeSettings };
               if (value === 'smooth') {
                 delete next.cadenceFps;
               } else {
-                next.cadenceFps = Number(value);
+                next.cadenceFps = 12;
               }
               updateSettings(next);
             }}
             options={[
-              { value: 'smooth', label: 'Smooth' },
-              { value: '12', label: 'Sketchy' },
-              { value: '8', label: 'Choppy' },
+              { value: 'smooth', label: 'Fluid' },
+              { value: '12', label: 'Hand-Drawn' },
             ]}
             ariaLabel="Draw cadence"
           />

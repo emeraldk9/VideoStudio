@@ -1,7 +1,7 @@
 # S1 Sketch UI Refactoring Plan & Progress Tracker
 
 **Location**: `C:\Users\vivan\Documents\My Apps\VideoStudio\implementation\S1_Sketch_UI_Refactoring.md`  
-**Status**: ✅ Completed (Phase 1, 2, 3 & 4 Complete)
+**Status**: ✅ Completed (Phases 1, 2, 3, 4 & 5 Complete)
 
 ---
 
@@ -22,6 +22,12 @@
 - [x] **Phase 4: Verification & Testing**
   - [x] Typecheck validation with `npm run typecheck` (Passed with exit code 0).
   - [x] Manual & regression inspection: Menu is always visible, interactive, and beautifully styled.
+- [x] **Phase 5: Cadence Streamlining & Sketch Pattern Smart-Pairing**
+  - [x] Audited `cadenceFps` implementation across preview (`TimelinePreview.tsx`) and export (`whiteboard-segment.ts`).
+  - [x] Replaced redundant 3-way `[Smooth | Sketchy | Choppy]` with streamlined binary `[Fluid | Hand-Drawn]`.
+  - [x] Fixed naming collision by replacing `"Sketchy"` with `"Hand-Drawn"`.
+  - [x] Implemented smart-pairing: selecting `Sketch` automatically pairs with Hand-Drawn (12 fps), while geometric patterns default to Fluid.
+  - [x] Verified zero TypeScript compilation errors (`npm run typecheck`).
 
 ---
 
@@ -85,3 +91,61 @@ SketchPane
    - Video/audio clip is selected.
    - Still clip is selected.
 3. Verify clip mutation when modifying controls while still clip is selected.
+
+---
+
+## 5. In-Depth Audit: Smooth, Sketchy, and Choppy Functions
+
+### 5.1 Current Architecture & Implementation
+
+`cadenceFps` controls the discrete stepping rate of the whiteboard reveal clock across both the preview player and FFmpeg export:
+
+| Setting | `cadenceFps` Value | Stepping Formula (Preview) | FFmpeg Export Implementation | Perceptual Effect |
+| :--- | :--- | :--- | :--- | :--- |
+| **Smooth** | `undefined` (`null`) | `seconds` (continuous) | Clock is `t`; ramp is native `fps` (30/60) | Fluid, unbroken motion at full frame rate |
+| **Sketchy** | `12` | `Math.floor(s * 12) / 12` (83.3ms hold) | `floor(t*12)/12`; ramp rate `r=12` | 12 fps stepped motion (~2.5 frames held at 30fps) |
+| **Choppy** | `8` | `Math.floor(s * 8) / 8` (125.0ms hold) | `floor(t*8)/8`; ramp rate `r=8` | 8 fps stepped motion (~3.75 frames held at 30fps) |
+
+### 5.2 Key Audit Findings: Why They Feel Overly Similar & Out of Context
+
+1. **Marginal Perceptual Difference (83ms vs 125ms)**:
+   - The interval difference between 12Hz and 8Hz is only **41.7 milliseconds**. During typical playback durations (2–4 seconds), human eyes cannot reliably discern whether a line is updating at 12 fps or 8 fps; both simply register as generic "stop-motion stutter".
+   - Offering both `12` and `8` creates unnecessary decision fatigue for users without providing distinct creative utility.
+
+2. **Semantic Clash with the "Sketch" Pattern**:
+   - The cadence option is currently labeled **"Sketchy"** in the Timing section, while the fourth reveal pattern is named **"Sketch"** (Trace).
+   - This causes user confusion: users assume "Sketchy" is a setting that exclusively configures the "Sketch" pattern, or that selecting "Sketch" already includes "Sketchy".
+
+3. **Incongruous Behavior on Geometric Patterns (`Wipe` / `Writing`)**:
+   - When a stepped cadence (12Hz or 8Hz) is applied to geometric wipe boundaries or rectangular serpentine blocks, the straight mask line jumps abruptly across the image. It looks like dropped video frames or system stuttering rather than an artistic effect.
+   - In contrast, when applied to **`Sketch` (vector trace)**, the linework blooms edge-by-edge along traced contours. Stepped cadence here simulates authentic 2D hand-drawn animation ("shot on twos").
+
+### 5.3 Industry Standards Benchmarks
+
+- **VideoScribe & Doodly**:
+  - The drawing engine defaults directly to hand-drawn stroke cadence (12–15 fps) to emulate human hand speed.
+  - They do not split stepped rates into arbitrary numbers like 8 and 12 fps. The paradigm is **Smooth (Fluid)** vs **Hand-Drawn (Stepped)**.
+- **Adobe After Effects / Motion Design**:
+  - The standard technique for hand-drawn / sketch look is **12 fps** (half of 24fps cinema, standard animation "on twos") using `Posterize Time`.
+  - 8 fps is rarely used except for extreme claymation / retro game aesthetics ("on threes").
+
+### 5.4 Proposed Solutions
+
+#### Option A: Unified Binary Cadence with Smart Default (Recommended)
+1. **Streamline Cadence to a 2-State Segmented Control**:
+   - **Fluid (Smooth)**: Native project fps (30/60 fps).
+   - **Hand-Drawn (12 fps)**: The universally recognized 12 fps animation cadence ("on twos").
+   - Drop the redundant 8 fps ("Choppy") to eliminate ambiguity.
+2. **Contextual Coupling to the Sketch Pattern**:
+   - When the user selects the **Sketch (`trace`)** pattern, automatically default to **Hand-Drawn (12 fps)** (while still allowing the user to toggle to Smooth).
+   - When selecting **Writing** or **Wipe**, default to **Fluid (Smooth)** to avoid jagged mask stepping.
+3. **Rename for Clarity**:
+   - Change the label from `"Sketchy"` to `"Hand-Drawn"` (or `"Stop-Motion"`), completely removing semantic collision with the `"Sketch"` pattern.
+
+#### Option B: Nest Cadence Directly Inside the Sketch Pattern Card
+- Only display the Cadence toggle inside the Sketch vector trace card.
+- Geometric wipes and writing remain strictly smooth, where they look clean.
+
+#### Option C: Stepped Toggle with Advanced Speed Override
+- A clean toggle: `[Fluid | Hand-Drawn]`.
+- An optional compact dropdown for power users wanting custom rates (8 fps, 12 fps, 15 fps) if needed.
