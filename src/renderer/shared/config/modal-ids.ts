@@ -71,6 +71,8 @@ export const MODAL_IDS = {
   AUTO_REFRAME: 'auto-reframe',
   /** S84 — CapCut AI Auto-Beats & Dynamic Music Cut Synchronizer */
   BEAT_SYNC: 'beat-sync',
+  /** S86 — CapCut AI Vocal Remover & 4-Stem Audio Separator */
+  VOCAL_SEPARATOR: 'vocal-separator',
 } as const;
 
 export type ModalId = (typeof MODAL_IDS)[keyof typeof MODAL_IDS];

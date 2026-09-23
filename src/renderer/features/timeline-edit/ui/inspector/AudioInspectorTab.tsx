@@ -59,6 +59,8 @@ import { Switch } from '../../../../shared/ui/Switch';
 import { Select } from '../../../../shared/ui/Select';
 import { useSequenceStore } from '../../../../entities/sequence';
 import { useToastStore } from '../../../../shared/model/toastStore';
+import { MODAL_IDS } from '../../../../shared/config/modal-ids';
+import { useModalStore } from '../../../../shared/model/modalStore';
 import { BeatDetectionSection } from './BeatDetectionSection';
 
 export interface AudioInspectorTabProps {
@@ -1694,6 +1696,18 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
                         Target {isolation.targetLufs} LUFS
                       </span>
                     )}
+                  </div>
+
+                  {/* S86 — 4-Stem Studio Separator Launcher */}
+                  <div className="pt-2 border-t border-hairline/40">
+                    <button
+                      type="button"
+                      onClick={() => useModalStore.getState().openModal(MODAL_IDS.VOCAL_SEPARATOR)}
+                      className="w-full flex items-center justify-center gap-1.5 rounded-md border border-accent-ai/40 bg-accent-ai/10 py-1.5 text-xs font-semibold text-accent-ai hover:bg-accent-ai/20 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">spatial_audio</span>
+                      <span>4-Stem Separator & Vocal Remover...</span>
+                    </button>
                   </div>
                 </div>
               </div>

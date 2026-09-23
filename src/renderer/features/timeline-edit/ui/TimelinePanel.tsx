@@ -85,6 +85,7 @@ import { AudioGainModal } from './AudioGainModal';
 import { SubtitleModal } from './SubtitleModal';
 import { AutoReframeModal } from './AutoReframeModal';
 import { AutoBeatSyncModal } from './AutoBeatSyncModal';
+import { VocalStemSeparatorModal } from './VocalStemSeparatorModal';
 import { LANE_LABEL_WIDTH_PX, TimelineTrackRow } from './TimelineLane';
 import { SketchKeyframeLane } from './SketchKeyframeLane';
 import { TIMELINE_RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler';
@@ -2685,6 +2686,9 @@ export function TimelinePanel() {
           onClose={closeModal}
         />
       )}
+
+      {/* S86 — CapCut AI Vocal Remover & 4-Stem Audio Separator */}
+      <VocalStemSeparatorModal />
     </section>
   );
 }

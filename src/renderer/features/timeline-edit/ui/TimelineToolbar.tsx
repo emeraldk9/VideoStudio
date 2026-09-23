@@ -699,6 +699,14 @@ export function TimelineToolbar() {
         onClick={() => useModalStore.getState().openModal(MODAL_IDS.BEAT_SYNC)}
       />
 
+      {/* S86 — CapCut AI Vocal Remover & 4-Stem Audio Separator */}
+      <IconButton
+        icon="spatial_audio"
+        label="AI Vocal Remover & 4-Stem Audio Separator..."
+        size="sm"
+        onClick={() => useModalStore.getState().openModal(MODAL_IDS.VOCAL_SEPARATOR)}
+      />
+
       {/* Magnet snapping */}
       <IconButton
         icon={<MagnetIcon />}

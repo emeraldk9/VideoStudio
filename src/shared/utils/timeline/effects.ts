@@ -64,6 +64,7 @@ import { type MultibandDenoiserSettings, buildFfmpegMultibandDenoiserFilter } fr
 import { type VideoDenoiserSettings, buildFfmpegVideoDenoiserFilter } from './video-denoiser-ops';
 import { type MultiCamClipSettings } from './multi-cam-ops';
 import { type MotionBlurSettings, buildFfmpegMotionBlurFilter } from './motion-blur-ops';
+import { type VocalStemSeparationSettings } from './vocal-separator-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -263,6 +264,8 @@ export interface ClipEffects {
   pan?: AudioPanSettings;
   /** S53 — AI Vocal Isolation, Dialogue Enhancer & Stems Separation */
   audioIsolation?: AudioIsolationSettings;
+  /** S86 — CapCut AI Vocal Remover & 4-Stem Audio Separator */
+  vocalSeparation?: VocalStemSeparationSettings;
   /** S56 — Multiband Audio Denoiser, De-Clicker & Hum Removal */
   multibandDenoiser?: MultibandDenoiserSettings;
   /** S51 — AI Video Background Matting & Smart Portrait Cutout */

@@ -80,5 +80,6 @@ export * from './utils/timeline/auto-reframe-ops';
 export * from './utils/timeline/smart-cut-ops';
 export * from './utils/timeline/auto-beat-sync-ops';
 export * from './utils/timeline/text-template-ops';
+export * from './utils/timeline/vocal-separator-ops';
 export * from './ipc/ipc-channels';
 export * from './ipc/ipc-schemas';

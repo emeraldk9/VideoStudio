@@ -397,6 +397,27 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Added Badge Icon selector with 15 curated icons.
     - Added Compound 3-Phase Motion controls (In, Loop, Out animation selectors and duration sliders).
   - 100% test pass rate: 928/928 tests passing across 75 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 10:42]** Step S86 successfully completed:
+  - Built CapCut AI Vocal Remover & 4-Stem Audio Separator engine in `src/shared/utils/timeline/vocal-separator-ops.ts`:
+    - `STEM_DEFINITIONS` & `ALL_STEM_CHANNELS`: Full 4-stem DSP isolation configurations (Vocals: 250Hz-4.5kHz speech formant bandpass; Drums: percussive peak envelope; Bass: 20Hz-220Hz mono lowpass; Instruments: side-channel stereo harmonic residue).
+    - `VocalStemSeparationSettings`: Multi-channel stem mixer model with independent Solo, Mute, Gain (-24dB to +12dB), and Pan controls.
+    - `calculateStemEnergyDistribution`: Dynamic RMS and transient percussive energy estimation across the 4 stems.
+    - `buildFfmpegVocalSeparatorFilter`: Generates production FFmpeg audio filtergraphs (`pan`, `highpass`, `lowpass`, `bandreject`, `volume`).
+    - `decomposeClipInto4Stems`: 1-Click transaction decomposing any master music/video clip into 4 discrete, synchronized timeline tracks (`Vocals`, `Drums`, `Bass`, `Instruments`) with color-coded labels (`cyan`, `amber`, `emerald`, `violet`).
+  - Added unit test suite `src/shared/utils/timeline/__tests__/vocal-separator-ops.test.ts` (10 tests passing).
+  - Extended `ClipEffects` in `src/shared/utils/timeline/effects.ts` with `vocalSeparation?: VocalStemSeparationSettings` and exported in `@shared`.
+  - Registered `MODAL_IDS.VOCAL_SEPARATOR = 'vocal-separator'`.
+  - Built `src/renderer/features/timeline-edit/ui/VocalStemSeparatorModal.tsx`:
+    - Audio clip selector for any sound-carrying clip on the sequence.
+    - Mode selector tabs: "Isolate Vocals (Acapella)", "Remove Vocals (Karaoke / Instrumental)", and "4-Stem Studio Mixer".
+    - 4-channel stem mixer board with live simulated SPL meters, Solo/Mute toggles, and Gain sliders.
+    - Separation sensitivity and bleed reduction sliders.
+    - Actions: "Apply Filter to Clip" (in-place) and "Decompose to 4 Tracks" (multi-track synchronization).
+  - Integrated launcher button in `src/renderer/features/timeline-edit/ui/TimelineToolbar.tsx`.
+  - Mounted `<VocalStemSeparatorModal />` in `src/renderer/features/timeline-edit/ui/TimelinePanel.tsx`.
+  - Upgraded `src/renderer/features/timeline-edit/ui/inspector/AudioInspectorTab.tsx` with dedicated 4-stem launcher card.
+  - 100% test pass rate: 938/938 tests passing across 76 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+
 
 
 
