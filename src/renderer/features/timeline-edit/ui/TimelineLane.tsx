@@ -64,6 +64,13 @@ export interface TimelineTrackRowProps {
   onTrimStart: (event: React.PointerEvent, clip: SequenceClip, edge: 'start' | 'end') => void;
   /** S160 — clip right-click; the panel owns the menu. */
   onClipContextMenu: (event: React.MouseEvent, clip: SequenceClip) => void;
+  /** S17 — Empty space / gap right-click on the trough; the panel owns the menu. */
+  onTroughContextMenu?: (event: React.MouseEvent, track: SequenceTrack, frame: number) => void;
+  /** S17 — Currently active gap highlight when gap context menu is open. */
+  activeGap?: { trackId: string; startFrames: number; endFrames: number; durationFrames: number } | null;
+  /** S22 — Audio gain & fade adjustment handlers */
+  onGainChange?: (clipId: string, gainDb: number) => void;
+  onFadeChange?: (clipId: string, edge: 'in' | 'out', frames: number) => void;
   /**
    * S200 — a pool drag is over the trough at `frame` (raw, from the pointer).
    * The panel resolves it (snap, legality) and answers the frame the drop
@@ -72,6 +79,8 @@ export interface TimelineTrackRowProps {
   onDropHover: (track: SequenceTrack, frame: number, altKey: boolean) => number | null;
   /** S200 — the drop, at the panel-resolved frame. */
   onDropFile: (track: SequenceTrack, payload: string, frame: number) => void;
+  /** Direct OS file drop onto this track (Premiere/DaVinci standard). */
+  onDropExternalFiles?: (track: SequenceTrack, filePaths: string[], frame: number) => void;
   /** S157 — header drag, the z-order gesture. The panel owns the geometry. */
   onReorderStart: (track: SequenceTrack, clientY: number) => void;
   onReorderMove: (clientY: number) => void;
@@ -173,8 +182,13 @@ export function TimelineTrackRow({
   onMoveStart,
   onTrimStart,
   onClipContextMenu,
+  onTroughContextMenu,
+  activeGap,
+  onGainChange,
+  onFadeChange,
   onDropHover,
   onDropFile,
+  onDropExternalFiles,
   onReorderStart,
   onReorderMove,
   onReorderEnd,
@@ -223,7 +237,49 @@ export function TimelineTrackRow({
   // array identity (full waveform repaint per pointermove). Both inputs are
   // identity-stable between document commits.
   const placed = useMemo(() => layoutTrack(clips, track), [clips, track]);
-  const height = Math.max(24, track.heightPx);
+  const defaultHeight = track.kind === 'audio' ? 36 : 48;
+  const [resizing, setResizing] = useState(false);
+  const [liveHeight, setLiveHeight] = useState<number | null>(null);
+  const height = Math.max(24, Math.min(300, liveHeight ?? (track.heightPx || defaultHeight)));
+  const resizeOriginRef = useRef<{ startY: number; startHeight: number } | null>(null);
+
+  const handleResizePointerDown = (event: React.PointerEvent) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeOriginRef.current = {
+      startY: event.clientY,
+      startHeight: height,
+    };
+    setResizing(true);
+  };
+
+  const handleResizePointerMove = (event: React.PointerEvent) => {
+    if (!resizeOriginRef.current) return;
+    const delta = event.clientY - resizeOriginRef.current.startY;
+    const next = Math.max(24, Math.min(300, Math.round(resizeOriginRef.current.startHeight + delta)));
+    setLiveHeight(next);
+  };
+
+  const handleResizePointerUp = (event: React.PointerEvent) => {
+    if (!resizeOriginRef.current) return;
+    const delta = event.clientY - resizeOriginRef.current.startY;
+    const next = Math.max(24, Math.min(300, Math.round(resizeOriginRef.current.startHeight + delta)));
+    resizeOriginRef.current = null;
+    setResizing(false);
+    setLiveHeight(null);
+    if (next !== track.heightPx) {
+      void patchTrack(track.id, { heightPx: next });
+    }
+  };
+
+  const handleResizeDoubleClick = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void patchTrack(track.id, { heightPx: defaultHeight });
+  };
+
   const pixelsPerFrame = pixelsPerSecond / fps;
   const soloed = soloTrackIds.includes(track.id);
   // S165 — the lane's identity hue (text violet, overlay teal, neutral otherwise).
@@ -233,7 +289,7 @@ export function TimelineTrackRow({
 
   return (
     <div
-      className={`group/track flex items-stretch ${
+      className={`group/track relative flex items-stretch ${
         // S166 — a mid-drag row lifts the way a dragged clip does: an opacity
         // drop, never a scale or a ghost. (This also makes the row a stacking
         // context that contains the rail's z — harmless, since the rail only
@@ -282,20 +338,20 @@ export function TimelineTrackRow({
           />
         ) : (
           <>
-            {/* Track kind badge & glyph */}
+            {/* Track kind glyph — borderless, label-free, clean minimalist aesthetic */}
             <span
               role="button"
               tabIndex={0}
               title={`${track.name} — double-click to rename`}
               aria-label={track.name}
-              className={`flex items-center gap-1 shrink-0 cursor-pointer rounded px-1 py-0.5 select-none transition-transform hover:scale-105 ${
+              className={`flex h-6 w-6 items-center justify-center shrink-0 cursor-pointer rounded select-none transition-colors hover:bg-bg-hover ${
                 isSpine
-                  ? 'bg-accent-ai/15 text-accent-ai border border-accent-ai/30'
+                  ? 'text-accent-ai'
                   : isTextTrack(track)
-                  ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
+                  ? 'text-purple-400'
                   : track.kind === 'video'
-                  ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
-                  : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  ? 'text-cyan-400'
+                  : 'text-emerald-400'
               }`}
               onDoubleClick={() => setRenaming(true)}
               onKeyDown={(event) => {
@@ -305,11 +361,8 @@ export function TimelineTrackRow({
                 }
               }}
             >
-              <span className="material-symbols-outlined text-[13px] leading-none">
+              <span className="material-symbols-outlined text-[17px] leading-none">
                 {kindGlyph(track, spineTrackId)}
-              </span>
-              <span className="font-mono text-[10px] font-bold leading-none">
-                {isSpine ? 'SPINE' : isTextTrack(track) ? 'T' : track.kind === 'video' ? 'V' : 'A'}
               </span>
             </span>
             <span className="min-w-1 flex-1" />
@@ -381,8 +434,9 @@ export function TimelineTrackRow({
                     (onMoveUp ? 1 : 0) +
                     (onMoveDown ? 1 : 0) +
                     (track.kind === 'audio' ? 3 : 0) + // role radio group
+                    5 + // S16 height presets
                     (isSpine ? 0 : 1); // delete
-                  const menuHeight = itemCount * 30 + 8;
+                  const menuHeight = itemCount * 28 + 24;
                   const top =
                     anchor.bottom + 4 + menuHeight > window.innerHeight
                       ? Math.max(8, anchor.top - 4 - menuHeight)
@@ -465,6 +519,59 @@ export function TimelineTrackRow({
                             </button>
                           ))
                         : null}
+                      {/* S16 — Track Height Presets */}
+                      <span aria-hidden="true" className="my-0.5 h-px w-full bg-hairline" />
+                      <span className="px-2 py-0.5 text-[10px] font-semibold text-text-disabled uppercase tracking-wider">
+                        Track Height
+                      </span>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center justify-between rounded-[var(--radius-button)] px-2 py-1 text-left text-xs text-text-primary transition-colors duration-100 hover:bg-bg-hover"
+                        onClick={() => {
+                          setMenuPosition(null);
+                          void patchTrack(track.id, { heightPx: 28 });
+                        }}
+                      >
+                        <span>Compact</span>
+                        <span className="font-mono text-[10px] text-text-disabled">28px</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center justify-between rounded-[var(--radius-button)] px-2 py-1 text-left text-xs text-text-primary transition-colors duration-100 hover:bg-bg-hover"
+                        onClick={() => {
+                          setMenuPosition(null);
+                          void patchTrack(track.id, { heightPx: defaultHeight });
+                        }}
+                      >
+                        <span>Standard (Default)</span>
+                        <span className="font-mono text-[10px] text-text-disabled">{defaultHeight}px</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center justify-between rounded-[var(--radius-button)] px-2 py-1 text-left text-xs text-text-primary transition-colors duration-100 hover:bg-bg-hover"
+                        onClick={() => {
+                          setMenuPosition(null);
+                          void patchTrack(track.id, { heightPx: 96 });
+                        }}
+                      >
+                        <span>Expanded (Filmstrip)</span>
+                        <span className="font-mono text-[10px] text-text-disabled">96px</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center justify-between rounded-[var(--radius-button)] px-2 py-1 text-left text-xs text-text-primary transition-colors duration-100 hover:bg-bg-hover"
+                        onClick={() => {
+                          setMenuPosition(null);
+                          void patchTrack(track.id, { heightPx: 140 });
+                        }}
+                      >
+                        <span>Large</span>
+                        <span className="font-mono text-[10px] text-text-disabled">140px</span>
+                      </button>
                       {/* S170 fix — the spine is the sequence's default
                           track: no Delete item, and the repository refuses
                           the call anyway. */}
@@ -507,46 +614,80 @@ export function TimelineTrackRow({
           if (target !== event.currentTarget && target.tagName !== 'CANVAS') return;
           onMarqueeStart(event, track);
         }}
-        onDragOver={(event) => {
-          if (track.locked) return;
-          // Only the pool's own drags — an OS file drag belongs to the pool's
-          // Imported source, not to a lane.
-          if (![...event.dataTransfer.types].includes(TIMELINE_DRAG_MIME)) return;
-          // The trough handled it; the lanes container's own handler is for
-          // the space *between* and *below* rows.
-          event.stopPropagation();
-          // S200 — the pointer's frame, from the trough's own box (which
-          // starts after the header gutter, so no label-width arithmetic).
-          const rect = event.currentTarget.getBoundingClientRect();
-          const rawFrame = Math.max(0, (event.clientX - rect.left) / pixelsPerFrame);
-          const frame = onDropHover(track, rawFrame, event.altKey);
-          if (frame === null) {
-            event.dataTransfer.dropEffect = 'none';
+        // S17 — Right click on empty trough space or waveform canvas opens gap / track context menu
+        onContextMenu={(event) => {
+          if (track.locked) {
+            event.preventDefault();
             return;
           }
-          // Preventing default is what marks this a valid drop target; without
-          // it the browser refuses the drop and nothing fires.
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'copy';
-          // The ghost follows the pointer through one custom-property write
-          // (S173's rule: continuous motion never renders React). On a
-          // magnetic lane the ghost sits at the slot the frame resolves to.
-          event.currentTarget.style.setProperty(
-            '--drop-x',
-            `${(track.magnetic ? slotFrameFor(placed, frame) : frame) * pixelsPerFrame}px`,
-          );
+          const target = event.target as HTMLElement;
+          if (target === event.currentTarget || target.tagName === 'CANVAS') {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            const rawFrame = Math.max(0, (event.clientX - rect.left) / pixelsPerFrame);
+            onTroughContextMenu?.(event, track, rawFrame);
+          }
+        }}
+        onDragOver={(event) => {
+          if (track.locked) return;
+          const isInternalDrag = [...event.dataTransfer.types].includes(TIMELINE_DRAG_MIME);
+          const isFileDrag = event.dataTransfer.types.includes('Files');
+          if (!isInternalDrag && !isFileDrag) return;
+
+          event.stopPropagation();
+          const rect = event.currentTarget.getBoundingClientRect();
+          const rawFrame = Math.max(0, (event.clientX - rect.left) / pixelsPerFrame);
+
+          if (isInternalDrag) {
+            const frame = onDropHover(track, rawFrame, event.altKey);
+            if (frame === null) {
+              event.dataTransfer.dropEffect = 'none';
+              return;
+            }
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            event.currentTarget.style.setProperty(
+              '--drop-x',
+              `${(track.magnetic ? slotFrameFor(placed, frame) : frame) * pixelsPerFrame}px`,
+            );
+          } else if (isFileDrag) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+            event.currentTarget.style.setProperty(
+              '--drop-x',
+              `${rawFrame * pixelsPerFrame}px`,
+            );
+          }
         }}
         onDrop={(event) => {
           if (track.locked) return;
           const payload = event.dataTransfer.getData(TIMELINE_DRAG_MIME);
-          if (!payload) return;
+          const hasFiles = event.dataTransfer.types.includes('Files');
+          if (!payload && !hasFiles) return;
+
           event.preventDefault();
           event.stopPropagation();
           const rect = event.currentTarget.getBoundingClientRect();
           const rawFrame = Math.max(0, (event.clientX - rect.left) / pixelsPerFrame);
-          const frame = onDropHover(track, rawFrame, event.altKey);
-          if (frame === null) return;
-          onDropFile(track, payload, frame);
+
+          if (payload) {
+            const frame = onDropHover(track, rawFrame, event.altKey);
+            if (frame === null) return;
+            onDropFile(track, payload, frame);
+          } else if (hasFiles && event.dataTransfer.files.length > 0 && onDropExternalFiles) {
+            const droppedPaths = Array.from(event.dataTransfer.files)
+              .map((file) => {
+                try {
+                  return window.api?.webUtils?.getPathForFile?.(file) || (file as any).path;
+                } catch {
+                  return (file as any).path;
+                }
+              })
+              .filter((p): p is string => Boolean(p));
+            if (droppedPaths.length > 0) {
+              onDropExternalFiles(track, droppedPaths, rawFrame);
+            }
+          }
         }}
       >
         {/* S200 — the insertion ghost: one translucent block per dragged
@@ -572,6 +713,23 @@ export function TimelineTrackRow({
             ))}
           </div>
         ) : null}
+        {/* S17 — visual highlight when an empty space gap on this track is inspected / targeted */}
+        {activeGap && activeGap.trackId === track.id ? (
+          <div
+            aria-label={`Gap: ${activeGap.durationFrames} frames`}
+            className="pointer-events-none absolute inset-y-1 rounded border border-dashed border-amber-400/70 bg-amber-500/20 z-10 flex items-center justify-center overflow-hidden"
+            style={{
+              left: `${activeGap.startFrames * pixelsPerFrame}px`,
+              width: `${Math.max(4, activeGap.durationFrames * pixelsPerFrame)}px`,
+            }}
+          >
+            {activeGap.durationFrames * pixelsPerFrame >= 48 ? (
+              <span className="text-[10px] font-mono font-semibold text-amber-300 px-1.5 py-0.5 rounded bg-bg-panel/90 border border-amber-500/30 whitespace-nowrap shadow-sm">
+                Gap {activeGap.durationFrames}f
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {placed.map((item) => (
           <TimelineClip
             key={item.clip.id}
@@ -594,19 +752,31 @@ export function TimelineTrackRow({
             onMoveStart={track.locked ? () => undefined : onMoveStart}
             onTrimStart={track.locked ? () => undefined : onTrimStart}
             onContextMenu={track.locked ? (event) => event.preventDefault() : onClipContextMenu}
+            onGainChange={track.locked ? () => undefined : onGainChange}
+            onFadeChange={track.locked ? () => undefined : onFadeChange}
           />
         ))}
         {/* S182 — the video lane's sibling of the waveform canvas, on the same
             one-per-lane rule. Density follows the lane's height; see
             `FilmstripCanvas`. */}
         {track.kind === 'video' && placed.length > 0 ? (
-          <FilmstripCanvas
-            placed={placed}
-            fps={fps}
-            pixelsPerSecond={pixelsPerSecond}
-            widthPx={Math.max(widthPx, 1)}
-            heightPx={height}
-          />
+          <>
+            <FilmstripCanvas
+              placed={placed}
+              fps={fps}
+              pixelsPerSecond={pixelsPerSecond}
+              widthPx={Math.max(widthPx, 1)}
+              heightPx={height}
+            />
+            <WaveformCanvas
+              placed={placed}
+              fps={fps}
+              pixelsPerSecond={pixelsPerSecond}
+              widthPx={Math.max(widthPx, 1)}
+              heightPx={height}
+              laneKind="video"
+            />
+          </>
         ) : null}
         {/* One canvas for the whole track's waveforms (§4.4 / Beta S151 H3) —
             one backing store and one redraw however many clips sit here. */}
@@ -620,6 +790,20 @@ export function TimelineTrackRow({
           />
         ) : null}
       </div>
+      {/* S16 — Interactive track height resize handle along the bottom border */}
+      <div
+        role="separator"
+        aria-label={`Resize height for ${track.name}`}
+        title={`${track.name} height: ${height}px — drag to resize, double-click to reset (${defaultHeight}px)`}
+        className={`absolute inset-x-0 bottom-0 z-30 h-1.5 cursor-row-resize select-none transition-colors ${
+          resizing ? 'bg-accent-ai' : 'hover:bg-accent-ai/50'
+        }`}
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={handleResizePointerUp}
+        onPointerCancel={handleResizePointerUp}
+        onDoubleClick={handleResizeDoubleClick}
+      />
     </div>
   );
 }

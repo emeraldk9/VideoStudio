@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  CLIP_COLOR_LABELS,
   CLIP_OVERRIDABLE_FIELDS,
   CLIP_TRANSITIONS,
   MARKER_COLORS,
@@ -75,6 +76,9 @@ export const sequenceClipSchema = z.object({
   duckExempt: z.boolean().optional(),
   label: z.string().max(500),
   overrides: z.array(z.enum(CLIP_OVERRIDABLE_FIELDS)),
+  colorLabel: z.enum(CLIP_COLOR_LABELS).optional(),
+  linkedClipId: z.string().min(1).nullable().optional(),
+  syncOffsetFrames: z.number().int().optional(),
   effects: clipEffectsSchema.optional(),
   keyframes: z
     .array(
@@ -82,8 +86,20 @@ export const sequenceClipSchema = z.object({
         .object({
           property: z.enum(KEYFRAME_PROPERTIES),
           frame: frameCountSchema,
-          value: z.number().min(-40).max(40),
+          value: z.number().finite(),
           interpolation: z.enum(KEYFRAME_INTERPOLATIONS),
+          handleIn: z
+            .object({
+              frameOffset: z.number().finite(),
+              valueOffset: z.number().finite(),
+            })
+            .optional(),
+          handleOut: z
+            .object({
+              frameOffset: z.number().finite(),
+              valueOffset: z.number().finite(),
+            })
+            .optional(),
         })
         .strict(),
     )
@@ -146,6 +162,7 @@ export const IPC_SCHEMAS = {
     sequenceId: z.string().min(1),
     frame: frameCountSchema,
     name: z.string().max(MAX_SEQUENCE_NAME_LENGTH).optional(),
+    notes: z.string().max(10000).optional(),
     color: z.enum(MARKER_COLORS).optional(),
     locked: z.boolean().optional(),
   }),
@@ -154,6 +171,7 @@ export const IPC_SCHEMAS = {
     markerId: z.string().min(1),
     frame: frameCountSchema.optional(),
     name: z.string().max(MAX_SEQUENCE_NAME_LENGTH).optional(),
+    notes: z.string().max(10000).optional(),
     color: z.enum(MARKER_COLORS).optional(),
     locked: z.boolean().optional(),
   }),
@@ -206,6 +224,11 @@ export const IPC_SCHEMAS = {
   [IPC_CHANNELS.SEQUENCE_EXPORT_OTIO]: z.object({ sequenceId: z.string().min(1) }),
   [IPC_CHANNELS.SEQUENCE_EXPORT_TIMELINE_SETUP]: z.object({ sequenceId: z.string().min(1) }),
   [IPC_CHANNELS.SEQUENCE_IMPORT_TIMELINE_SETUP]: z.object({ sequenceId: z.string().min(1) }),
+  [IPC_CHANNELS.SEQUENCE_EXPORT_FULL_JSON]: z.object({ sequenceId: z.string().min(1) }),
+  [IPC_CHANNELS.SEQUENCE_IMPORT_FULL_JSON]: z.object({
+    sequenceId: z.string().min(1),
+    mode: z.enum(['patch', 'reconstruct']).optional(),
+  }),
   [IPC_CHANNELS.SEQUENCE_PICK_STILL_DURATIONS]: z.object({}),
   [IPC_CHANNELS.SEQUENCE_PICK_MEDIA]: z.object({
     kind: z.enum(['still', 'video', 'audio']),
@@ -248,6 +271,11 @@ export const IPC_SCHEMAS = {
     kind: z.enum(TRACK_KINDS),
     orderedIds: z.array(z.string().min(1)).min(1).max(MAX_SEQUENCE_TRACKS),
   }),
+  [IPC_CHANNELS.SEQUENCE_CAPTURE_FRAME]: z.object({
+    sourcePath: z.string().min(1),
+    atSeconds: z.number().min(0),
+    sequenceId: z.string().optional(),
+  }),
 
   // Projects
   [IPC_CHANNELS.PROJECT_LIST]: z.void(),
@@ -268,8 +296,29 @@ export const IPC_SCHEMAS = {
     fps: z.number().int().min(1).max(120).optional(),
   }),
 
+  // Veo3Flow
+  [IPC_CHANNELS.VEO3FLOW_OPEN_FOLDER]: z.void(),
+  [IPC_CHANNELS.VEO3FLOW_PARSE_FOLDER]: z.object({ folderPath: z.string().min(1) }),
+  [IPC_CHANNELS.VEO3FLOW_INGEST_TO_PROJECT]: z.object({
+    folderPath: z.string().min(1),
+    projectId: z.string().min(1),
+  }),
+  [IPC_CHANNELS.VEO3FLOW_WATCH_FOLDER]: z.object({ folderPath: z.string().min(1) }),
+  [IPC_CHANNELS.VEO3FLOW_UNWATCH_FOLDER]: z.void(),
+
   // Watermark
   [IPC_CHANNELS.WATERMARK_START_BATCH]: z.object({
+    sources: z
+      .array(
+        z.object({
+          kind: z.enum(WATERMARK_SOURCE_KINDS),
+          sourceId: z.string().min(1),
+          sourcePath: z.string().optional(),
+        }),
+      )
+      .min(1)
+      .max(200)
+      .optional(),
     items: z
       .array(
         z.object({
@@ -279,12 +328,72 @@ export const IPC_SCHEMAS = {
         }),
       )
       .min(1)
-      .max(200),
+      .max(200)
+      .optional(),
+    region: z
+      .discriminatedUnion('kind', [
+        z.object({ kind: z.literal('preset'), presetId: z.string().min(1) }),
+        z.object({
+          kind: z.literal('manual'),
+          rect: z.object({
+            x: z.number(),
+            y: z.number(),
+            w: z.number(),
+            h: z.number(),
+          }),
+        }),
+      ])
+      .optional(),
     outputMode: z.enum(WATERMARK_OUTPUT_MODES),
-    engine: z.enum(WATERMARK_ENGINES).optional(),
+    engineOverride: z.enum(WATERMARK_ENGINES).optional(),
+    exportDirToken: z.string().optional(),
+    lossless: z.boolean().optional(),
+    perItemBudgetMs: z.number().optional(),
   }),
   [IPC_CHANNELS.WATERMARK_CANCEL_BATCH]: z.void(),
   [IPC_CHANNELS.WATERMARK_CHECK_CAPABILITIES]: z.void(),
+  [IPC_CHANNELS.WATERMARK_LIST_PRESETS]: z.void(),
+  [IPC_CHANNELS.WATERMARK_FRAME]: z.object({
+    source: z.object({
+      kind: z.enum(WATERMARK_SOURCE_KINDS),
+      sourceId: z.string().min(1),
+    }),
+    atSeconds: z.number().min(0).optional(),
+  }),
+  [IPC_CHANNELS.WATERMARK_PREVIEW]: z.object({
+    source: z.object({
+      kind: z.enum(WATERMARK_SOURCE_KINDS),
+      sourceId: z.string().min(1),
+    }),
+    region: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('preset'), presetId: z.string().min(1) }),
+      z.object({
+        kind: z.literal('manual'),
+        rect: z.object({
+          x: z.number(),
+          y: z.number(),
+          w: z.number(),
+          h: z.number(),
+        }),
+      }),
+    ]),
+    atSeconds: z.number().min(0).optional(),
+  }),
+  [IPC_CHANNELS.WATERMARK_GET_BATCH]: z.object({ batchId: z.string().min(1) }),
+  [IPC_CHANNELS.WATERMARK_INPAINT_STATUS]: z.void(),
+  [IPC_CHANNELS.WATERMARK_DOWNLOAD_MODEL]: z.void(),
+  [IPC_CHANNELS.WATERMARK_REMOVE_MODEL]: z.void(),
+  [IPC_CHANNELS.WATERMARK_CANCEL_MODEL_DOWNLOAD]: z.void(),
+  [IPC_CHANNELS.WATERMARK_PICK_EXTERNAL_FILES]: z.void(),
+  [IPC_CHANNELS.WATERMARK_PICK_EXPORT_DIR]: z.void(),
+  [IPC_CHANNELS.WATERMARK_CLEAN_STATUS]: z.object({
+    refs: z.array(
+      z.object({
+        kind: z.string().min(1),
+        sourceId: z.string().min(1),
+      }),
+    ),
+  }),
 
   // Dialogs & Files
   [IPC_CHANNELS.DIALOG_OPEN_FILE]: z.object({

@@ -10,6 +10,7 @@ import { SequenceRepository } from './db/repositories/sequence-repository';
 import { registerDialogIpc } from './ipc/dialog-ipc';
 import { registerProjectsIpc } from './ipc/projects-ipc';
 import { registerSequenceIpcHandlers } from './ipc/sequence-ipc';
+import { registerVeo3FlowIpc } from './ipc/veo3flow-ipc';
 import { registerWatermarkIpc } from './ipc/watermark-ipc';
 import { Logger } from './logging/logger';
 import { resolveFfmpegPath } from './media/ffmpeg-path';
@@ -64,8 +65,9 @@ export function bootstrapApp(): AppServices {
 
   // Register IPC handlers
   registerProjectsIpc(projects);
+  registerVeo3FlowIpc(sequences);
   registerDialogIpc();
-  registerWatermarkIpc();
+  registerWatermarkIpc(sequences, windowManager);
   registerSequenceIpcHandlers({
     logger: sequenceLogger,
     sequences,

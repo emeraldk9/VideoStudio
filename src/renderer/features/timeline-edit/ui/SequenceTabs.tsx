@@ -39,6 +39,8 @@ export function SequenceTabs() {
   const createSequence = useSequenceStore((state) => state.createSequence);
   const deleteSequence = useSequenceStore((state) => state.deleteSequence);
   const renameSequence = useSequenceStore((state) => state.renameSequence);
+  const parentSequenceStack = useSequenceStore((state) => state.parentSequenceStack);
+  const stepOutOfCompoundClip = useSequenceStore((state) => state.stepOutOfCompoundClip);
 
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -109,6 +111,17 @@ export function SequenceTabs() {
         if (!event.currentTarget.contains(event.relatedTarget)) setConfirmingId(null);
       }}
     >
+      {parentSequenceStack.length > 0 && (
+        <button
+          type="button"
+          onClick={() => void stepOutOfCompoundClip()}
+          title="Step out to parent sequence"
+          className="flex items-center gap-1 rounded bg-accent-ai/15 px-2 py-1 text-xs font-semibold text-accent-ai hover:bg-accent-ai/25 transition-colors border border-accent-ai/40 shrink-0"
+        >
+          <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+          <span>Back to Parent</span>
+        </button>
+      )}
       <div
         role="tablist"
         aria-label="Sequences"

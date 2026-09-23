@@ -6,7 +6,8 @@ import { useProjectStore } from '../../../entities/project';
 import { useSequenceStore } from '../../../entities/sequence';
 import { ProjectModal } from '../../../features/project-management/ui/ProjectModal';
 import { SettingsModal } from '../../../features/settings';
-import { ExportModal } from '../../../features/timeline-render';
+import { TimelineJsonModal } from '../../../features/timeline-edit/ui/TimelineJsonModal';
+import { ExportModal, useRenderQueueStore } from '../../../features/timeline-render';
 import { Button } from '../../../shared/ui/Button';
 import { IconButton } from '../../../shared/ui/IconButton';
 
@@ -34,6 +35,12 @@ export function TopNavigation() {
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [jsonModalOpen, setJsonModalOpen] = useState(false);
+
+  const queueCount = useRenderQueueStore((state) => state.jobs.length);
+  const isRenderingQueue = useRenderQueueStore((state) =>
+    state.jobs.some((j) => j.status === 'rendering'),
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -76,7 +83,7 @@ export function TopNavigation() {
         {/* Left: Branding & Project Selector */}
         <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <div className="flex items-center gap-2 group cursor-default">
-            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent-ai/15 text-accent-ai shadow-xs">
+            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent-ai/15 text-accent-ai">
               <span className="material-symbols-outlined text-[17px]">movie_filter</span>
             </div>
             <span className="text-[13px] font-semibold tracking-tight text-text-primary">
@@ -99,6 +106,7 @@ export function TopNavigation() {
             </span>
             <span className="material-symbols-outlined text-[15px] text-text-disabled">expand_more</span>
           </button>
+
         </div>
 
         {/* Center: Aspect Ratio & Undo/Redo */}
@@ -114,7 +122,7 @@ export function TopNavigation() {
                   onClick={() => handleAspectChange(aspect)}
                   className={`rounded-button px-2.5 py-1 text-[11px] font-medium transition-all ${
                     active
-                      ? 'bg-bg-selected text-text-primary font-semibold shadow-xs'
+                      ? 'bg-bg-selected text-text-primary font-semibold'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
                   }`}
                   title={`Switch sequence to ${aspect}`}
@@ -148,6 +156,14 @@ export function TopNavigation() {
 
         {/* Right: Settings, Export & Window Controls spacing */}
         <div className="flex items-center gap-2 pr-36" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          {/* Timeline JSON Control */}
+          <IconButton
+            icon="data_object"
+            label="Timeline JSON Control (Export / Import)"
+            size="sm"
+            onClick={() => setJsonModalOpen(true)}
+          />
+
           <IconButton
             icon="settings"
             label="Settings (Ctrl+,)"
@@ -155,10 +171,18 @@ export function TopNavigation() {
             onClick={() => setSettingsOpen(true)}
           />
 
+          <IconButton
+            icon={isRenderingQueue ? 'sync' : 'queue_play_next'}
+            label={`Render Queue${queueCount > 0 ? ` (${queueCount})` : ''}`}
+            size="sm"
+            className={isRenderingQueue ? 'text-accent-ai animate-spin' : queueCount > 0 ? 'text-accent-ai' : undefined}
+            onClick={() => useRenderQueueStore.getState().toggleQueueDrawer(true)}
+          />
+
           <Button
             size="sm"
             variant="primary"
-            className="flex items-center gap-1.5 shadow-sm font-medium"
+            className="flex items-center gap-1.5 font-medium"
             onClick={() => setExportOpen(true)}
           >
             <span className="material-symbols-outlined text-[16px]">ios_share</span>
@@ -170,6 +194,11 @@ export function TopNavigation() {
       <ProjectModal
         isOpen={projectModalOpen}
         onClose={() => setProjectModalOpen(false)}
+      />
+
+      <TimelineJsonModal
+        isOpen={jsonModalOpen}
+        onClose={() => setJsonModalOpen(false)}
       />
 
       <SettingsModal

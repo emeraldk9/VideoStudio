@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
-import { snapFrame, type SequenceClip } from '@shared';
+import { snapFrame, snapFrameWithMeta, type SequenceClip, type SnapTargetEntry } from '@shared';
 
 /**
  * Beta S145 — continuous timeline gestures, on Pointer Events.
@@ -64,6 +64,10 @@ export interface TimelineDragOptions {
    */
   scrubTargets?: number[];
   /**
+   * S28 — semantic snap targets with labels for Smart Magnetic HUD.
+   */
+  metaTargets?: SnapTargetEntry[];
+  /**
    * S175 — the magnet toggle. Defaults on. Composes with Alt as XOR: Alt
    * bypasses while the magnet is on **and** momentarily enables while it is
    * off — the Premiere/Resolve behaviour, one modifier useful in both
@@ -73,13 +77,12 @@ export interface TimelineDragOptions {
   onCommit: (state: DragState) => void;
   onScrub?: (frame: number) => void;
   /**
-   * S175 — fired per move with the live (already-snapped) delta and the
-   * target frame the gesture is currently held to, `null` when free. The
-   * panel drives the snap indicator (and, S176, the live clip transform)
-   * from this imperatively — no per-move React state beyond the existing
-   * `drag` object.
+   * S175 & S28 — fired per move with the live (already-snapped) delta, the
+   * target frame the gesture is currently held to (`null` when free), and the
+   * semantic snap label for the Smart Magnetic HUD. The panel drives the snap
+   * indicator and HUD badge imperatively.
    */
-  onDelta?: (deltaFrames: number, snappedTarget: number | null) => void;
+  onDelta?: (deltaFrames: number, snappedTarget: number | null, snapLabel?: string) => void;
 }
 
 export function useTimelineDrag(options: TimelineDragOptions) {
@@ -143,8 +146,20 @@ export function useTimelineDrag(options: TimelineDragOptions) {
       const targets =
         drag.kind === 'scrub' ? (options.scrubTargets ?? options.targets) : options.targets;
 
-      /** Snap one point; report the target only when one actually held it. */
-      const snapPoint = (frame: number): { frame: number; target: number | null } => {
+      /** Snap one point; report the target only when one actually held it, with label if metaTargets provided. */
+      const snapPoint = (
+        frame: number,
+      ): { frame: number; target: number | null; label?: string } => {
+        if (options.metaTargets && options.metaTargets.length > 0) {
+          const metaRes = snapFrameWithMeta(frame, options.metaTargets, tolerance);
+          if (metaRes.didSnap && metaRes.target) {
+            return {
+              frame: metaRes.snappedFrame,
+              target: metaRes.target.frame,
+              label: metaRes.target.label,
+            };
+          }
+        }
         const result = snapFrame(frame, targets, tolerance);
         const held = Math.abs(result - frame) <= tolerance && targets.includes(result);
         return held ? { frame: result, target: result } : { frame, target: null };
@@ -152,6 +167,7 @@ export function useTimelineDrag(options: TimelineDragOptions) {
 
       let snapped = rounded;
       let snappedTarget: number | null = null;
+      let snappedLabel: string | undefined = undefined;
       if (snapping) {
         // S175 — the nearer edge wins on a move: a clip can butt its tail
         // against a neighbour's head, not just its own head against a tail.
@@ -159,6 +175,7 @@ export function useTimelineDrag(options: TimelineDragOptions) {
         const lead = snapPoint(rounded);
         let frame = lead.frame;
         let target = lead.target;
+        let label = lead.label;
         const span = origin.current.span;
         if (drag.kind === 'move' && span > 0) {
           const tail = snapPoint(rounded + span);
@@ -167,10 +184,12 @@ export function useTimelineDrag(options: TimelineDragOptions) {
           if (tailAdjust < leadAdjust) {
             frame = tail.frame - span;
             target = tail.target;
+            label = tail.label;
           }
         }
         snapped = Math.max(0, frame);
         snappedTarget = target;
+        snappedLabel = label;
       }
 
       let deltaFrames = snapped - origin.current.frame;
@@ -184,6 +203,7 @@ export function useTimelineDrag(options: TimelineDragOptions) {
         if (clamped !== deltaFrames) {
           deltaFrames = clamped;
           snappedTarget = null;
+          snappedLabel = undefined;
         }
       }
 
@@ -191,7 +211,7 @@ export function useTimelineDrag(options: TimelineDragOptions) {
       // travels through `onDelta` and the `lastDeltaFrames` ref, so a drag
       // renders React exactly twice (begin, end) however long it runs.
       origin.current.lastDeltaFrames = deltaFrames;
-      options.onDelta?.(deltaFrames, snappedTarget);
+      options.onDelta?.(deltaFrames, snappedTarget, snappedLabel);
 
       if (drag.kind === 'scrub') {
         options.onScrub?.(origin.current.frame + deltaFrames);

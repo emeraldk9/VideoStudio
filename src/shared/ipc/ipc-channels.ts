@@ -26,6 +26,8 @@ export const IPC_CHANNELS = {
   SEQUENCE_PICK_STILL_DURATIONS: 'sequence:pickStillDurations',
   SEQUENCE_EXPORT_TIMELINE_SETUP: 'sequence:exportTimelineSetup',
   SEQUENCE_IMPORT_TIMELINE_SETUP: 'sequence:importTimelineSetup',
+  SEQUENCE_EXPORT_FULL_JSON: 'sequence:exportFullJson',
+  SEQUENCE_IMPORT_FULL_JSON: 'sequence:importFullJson',
   SEQUENCE_LIST_MEDIA: 'sequence:listMedia',
   SEQUENCE_IMPORT_DROPPED_MEDIA: 'sequence:importDroppedMedia',
   SEQUENCE_REMOVE_MEDIA: 'sequence:removeMedia',
@@ -33,6 +35,7 @@ export const IPC_CHANNELS = {
   SEQUENCE_UPDATE_TRACK: 'sequence:updateTrack',
   SEQUENCE_DELETE_TRACK: 'sequence:deleteTrack',
   SEQUENCE_REORDER_TRACKS: 'sequence:reorderTracks',
+  SEQUENCE_CAPTURE_FRAME: 'sequence:captureFrame',
 
   // Projects
   PROJECT_LIST: 'projects:list',
@@ -42,10 +45,28 @@ export const IPC_CHANNELS = {
   PROJECT_DELETE: 'projects:delete',
   PROJECT_UPDATE_SETTINGS: 'projects:updateSettings',
 
+  // Veo3Flow Story Studio
+  VEO3FLOW_OPEN_FOLDER: 'veo3flow:openFolder',
+  VEO3FLOW_PARSE_FOLDER: 'veo3flow:parseFolder',
+  VEO3FLOW_INGEST_TO_PROJECT: 'veo3flow:ingestToProject',
+  VEO3FLOW_WATCH_FOLDER: 'veo3flow:watchFolder',
+  VEO3FLOW_UNWATCH_FOLDER: 'veo3flow:unwatchFolder',
+
   // Watermark
   WATERMARK_START_BATCH: 'watermark:startBatch',
   WATERMARK_CANCEL_BATCH: 'watermark:cancelBatch',
   WATERMARK_CHECK_CAPABILITIES: 'watermark:checkCapabilities',
+  WATERMARK_LIST_PRESETS: 'watermark:listPresets',
+  WATERMARK_FRAME: 'watermark:frame',
+  WATERMARK_PREVIEW: 'watermark:preview',
+  WATERMARK_GET_BATCH: 'watermark:getBatch',
+  WATERMARK_INPAINT_STATUS: 'watermark:inpaintStatus',
+  WATERMARK_DOWNLOAD_MODEL: 'watermark:downloadModel',
+  WATERMARK_REMOVE_MODEL: 'watermark:removeModel',
+  WATERMARK_CANCEL_MODEL_DOWNLOAD: 'watermark:cancelModelDownload',
+  WATERMARK_PICK_EXTERNAL_FILES: 'watermark:pickExternalFiles',
+  WATERMARK_PICK_EXPORT_DIR: 'watermark:pickExportDir',
+  WATERMARK_CLEAN_STATUS: 'watermark:cleanStatus',
 
   // Dialogs & Files
   DIALOG_OPEN_FILE: 'dialog:openFile',
@@ -59,4 +80,6 @@ export const IPC_CHANNELS = {
 export const IPC_EVENTS = {
   SEQUENCE_RENDER_PROGRESS: 'sequence:renderProgress',
   WATERMARK_PROGRESS: 'watermark:progress',
+  WATERMARK_MODEL_DOWNLOAD: 'watermark:modelDownload',
+  VEO3FLOW_FOLDER_UPDATED: 'veo3flow:folderUpdated',
 } as const;

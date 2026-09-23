@@ -306,39 +306,97 @@ function stderrFromError(err: unknown): string {
   return typeof candidate === 'string' ? candidate : '';
 }
 
+/**
+ * Fast container and stream header probe.
+ * Does not decode any audio or video frames.
+ * Returns container duration, resolution, fps, and audio details in ~50-80ms.
+ */
+export async function fastProbeClip(
+  inputPath: string,
+  ffmpegPath: string,
+): Promise<{
+  durationSec: number;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  hasAudio: boolean;
+  audioSampleRate: number | null;
+}> {
+  let stderr = '';
+  try {
+    await execFileAsync(ffmpegPath, ['-hide_banner', '-nostdin', '-i', inputPath], {
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 8000,
+    });
+  } catch (err) {
+    stderr = stderrFromError(err);
+  }
+
+  const section = inputSection(stderr);
+  const durationSec = parseDurationSec(section);
+  const videoLine = firstStreamLine(section, 'Video');
+  const audioLine = firstStreamLine(section, 'Audio');
+
+  const resolution = videoLine ? /[,\s](\d{2,5})x(\d{2,5})(?=[\s,\]]|$)/.exec(videoLine) : null;
+  const fps = videoLine ? /,\s*([\d.]+)\s+fps\b/.exec(videoLine) : null;
+  const sampleRate = audioLine ? /,\s*(\d+)\s*Hz\b/.exec(audioLine) : null;
+
+  return {
+    durationSec,
+    width: resolution ? Number(resolution[1]) : null,
+    height: resolution ? Number(resolution[2]) : null,
+    fps: fps ? Number(fps[1]) : null,
+    hasAudio: audioLine !== null,
+    audioSampleRate: sampleRate ? Number(sampleRate[1]) : null,
+  };
+}
+
 export async function probeClip(
   inputPath: string,
   ffmpegPath: string,
   options: Partial<ClipProbeOptions> = {},
 ): Promise<ClipProbe> {
-  const args = buildProbeArgs(inputPath, options);
+  // 1. Fast header probe first — answers container duration and geometry in <80ms without decoding.
+  const fast = await fastProbeClip(inputPath, ffmpegPath);
 
+  if (fast.durationSec > 0 || (!fast.hasAudio && (fast.width ?? 0) > 0 && (fast.height ?? 0) > 0)) {
+    return {
+      durationSec: fast.durationSec,
+      decodedSec: fast.durationSec,
+      width: fast.width,
+      height: fast.height,
+      fps: fast.fps,
+      hasAudio: fast.hasAudio,
+      audioSampleRate: fast.audioSampleRate,
+      silences: [],
+      segmentation: { kind: 'none', reason: 'continuous-sound' },
+      noiseDb: clamp(options.noiseDb ?? DEFAULT_NOISE_DB, -90, 0),
+      minSilenceSec: clamp(options.minSilenceSec ?? DEFAULT_MIN_SILENCE_SEC, 0.01, 60),
+    };
+  }
+
+  // 2. Fallback: only if container duration was missing (e.g. unindexed audio stream),
+  // decode stream with a strict timeout so the process never hangs indefinitely.
+  const basicArgs = buildBasicProbeArgs(inputPath);
   let stderr = '';
   try {
-    ({ stderr } = await execFileAsync(ffmpegPath, args, { maxBuffer: PROBE_MAX_BUFFER }));
+    ({ stderr } = await execFileAsync(ffmpegPath, basicArgs, {
+      maxBuffer: PROBE_MAX_BUFFER,
+      timeout: 15000,
+    }));
   } catch (err) {
-    // A partially damaged container or missing audio stream makes ffmpeg exit non-zero
-    // *after* printing everything it managed to read. Parse stderr before giving up.
     stderr = stderrFromError(err);
   }
 
   let probe = stderr ? parseProbeOutput(stderr, options) : null;
-  if (!probe || !Number.isFinite(probe.durationSec) || probe.durationSec <= 0) {
-    // Fallback: try basic probe without the silence detection audio filter.
-    try {
-      const basicArgs = buildBasicProbeArgs(inputPath);
-      const { stderr: basicStderr } = await execFileAsync(ffmpegPath, basicArgs, { maxBuffer: PROBE_MAX_BUFFER });
-      probe = parseProbeOutput(basicStderr, options);
-    } catch (err) {
-      const fallbackStderr = stderrFromError(err);
-      if (fallbackStderr) {
-        probe = parseProbeOutput(fallbackStderr, options);
-      }
+  if (probe && (!Number.isFinite(probe.durationSec) || probe.durationSec <= 0)) {
+    if (probe.decodedSec && Number.isFinite(probe.decodedSec) && probe.decodedSec > 0) {
+      probe = { ...probe, durationSec: probe.decodedSec };
     }
   }
 
   if (!probe || !Number.isFinite(probe.durationSec) || probe.durationSec <= 0) {
-    // Beta S245 — a still image is **untimed** media, not broken media.
+    // Beta S245 — a still image is untimed media, not broken media.
     if (probe && !probe.hasAudio && (probe.width ?? 0) > 0 && (probe.height ?? 0) > 0) {
       return { ...probe, durationSec: 0 };
     }

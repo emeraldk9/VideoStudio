@@ -13,6 +13,7 @@ import {
   type SequenceMarker,
   type SequenceRenderProgress,
   type SequenceRenderResult,
+  type Veo3FlowProjectData,
   type WatermarkInpaintStatus,
   type WhiteboardTraceMapPayload,
 } from '@shared';
@@ -62,6 +63,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_TRACE_WHITEBOARD, request) as Promise<WhiteboardTraceMapPayload>,
     getFilmstrip: (sourcePath: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_GET_FILMSTRIP, { sourcePath }) as Promise<any>,
+    captureFrame: (request: { sourcePath: string; atSeconds: number; sequenceId?: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_CAPTURE_FRAME, request) as Promise<{ imagePath: string; url: string } | null>,
     getEncoder: () =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_GET_ENCODER) as Promise<RenderEncoderInfo>,
     render: (request: any) =>
@@ -82,6 +85,10 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_EXPORT_TIMELINE_SETUP, { sequenceId }) as Promise<string | null>,
     importTimelineSetup: (sequenceId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_IMPORT_TIMELINE_SETUP, { sequenceId }) as Promise<any>,
+    exportFullJson: (sequenceId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_EXPORT_FULL_JSON, { sequenceId }) as Promise<string | null>,
+    importFullJson: (sequenceId: string, mode?: 'patch' | 'reconstruct') =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_IMPORT_FULL_JSON, { sequenceId, mode }) as Promise<any>,
     listMedia: (projectId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_LIST_MEDIA, { projectId }) as Promise<ImportedMediaFile[]>,
     importDroppedMedia: (projectId: string, paths: string[]) =>
@@ -110,6 +117,21 @@ const api = {
     updateSettings: (projectId: string, settings: { aspectRatio?: AspectRatioOption; fps?: number }) =>
       ipcRenderer.invoke(IPC_CHANNELS.PROJECT_UPDATE_SETTINGS, { projectId, ...settings }) as Promise<ProjectRecord | null>,
   },
+  veo3flow: {
+    openFolder: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.VEO3FLOW_OPEN_FOLDER) as Promise<Veo3FlowProjectData | null>,
+    parseFolder: (folderPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VEO3FLOW_PARSE_FOLDER, { folderPath }) as Promise<Veo3FlowProjectData>,
+    ingestToProject: (folderPath: string, projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VEO3FLOW_INGEST_TO_PROJECT, { folderPath, projectId }) as Promise<{
+        projectData: Veo3FlowProjectData;
+        recorded: ImportedMediaFile[];
+      }>,
+    watchFolder: (folderPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VEO3FLOW_WATCH_FOLDER, { folderPath }) as Promise<{ watching: boolean }>,
+    unwatchFolder: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.VEO3FLOW_UNWATCH_FOLDER) as Promise<{ watching: boolean }>,
+  },
   dialog: {
     openFile: (options?: any) => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_OPEN_FILE, options),
     saveFile: (options?: any) => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SAVE_FILE, options),
@@ -122,90 +144,35 @@ const api = {
     startBatch: (payload: any) => ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_START_BATCH, payload) as Promise<any>,
     cancelBatch: () => ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_CANCEL_BATCH) as Promise<void>,
     checkCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_CHECK_CAPABILITIES) as Promise<any>,
-    listPresets: () => Promise.resolve([] as any[]),
+    listPresets: () => ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_LIST_PRESETS) as Promise<any[]>,
     inpaintStatus: (): Promise<WatermarkInpaintStatus> =>
-      Promise.resolve({
-        runtimeAvailable: false,
-        accelerator: null,
-        model: {
-          installed: false,
-          fileName: 'lama.onnx',
-          sizeBytes: 0,
-          sha256: '',
-          license: 'Apache 2.0',
-          sourceHost: 'huggingface.co',
-        },
-        download: {
-          state: 'idle',
-          receivedBytes: 0,
-          totalBytes: 0,
-          error: null,
-        },
-      }),
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_INPAINT_STATUS) as Promise<WatermarkInpaintStatus>,
     downloadModel: (): Promise<WatermarkInpaintStatus> =>
-      Promise.resolve({
-        runtimeAvailable: false,
-        accelerator: null,
-        model: {
-          installed: false,
-          fileName: 'lama.onnx',
-          sizeBytes: 0,
-          sha256: '',
-          license: 'Apache 2.0',
-          sourceHost: 'huggingface.co',
-        },
-        download: {
-          state: 'idle',
-          receivedBytes: 0,
-          totalBytes: 0,
-          error: null,
-        },
-      }),
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_DOWNLOAD_MODEL) as Promise<WatermarkInpaintStatus>,
     removeModel: (): Promise<WatermarkInpaintStatus> =>
-      Promise.resolve({
-        runtimeAvailable: false,
-        accelerator: null,
-        model: {
-          installed: false,
-          fileName: 'lama.onnx',
-          sizeBytes: 0,
-          sha256: '',
-          license: 'Apache 2.0',
-          sourceHost: 'huggingface.co',
-        },
-        download: {
-          state: 'idle',
-          receivedBytes: 0,
-          totalBytes: 0,
-          error: null,
-        },
-      }),
-    pickExternalFiles: () => Promise.resolve([] as any[]),
-    pickExportDir: (): Promise<{ token: string; label: string } | null> => Promise.resolve(null),
-    preview: (_opts?: any) => Promise.resolve(null as any),
-    frame: (_opts?: any) => Promise.resolve(null as any),
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_REMOVE_MODEL) as Promise<WatermarkInpaintStatus>,
+    cancelModelDownload: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_CANCEL_MODEL_DOWNLOAD) as Promise<void>,
+    pickExternalFiles: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_PICK_EXTERNAL_FILES) as Promise<any[]>,
+    pickExportDir: (): Promise<{ token: string; label: string } | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_PICK_EXPORT_DIR) as Promise<{ token: string; label: string } | null>,
+    preview: (opts?: any) => ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_PREVIEW, opts) as Promise<any>,
+    frame: (opts?: any) => ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_FRAME, opts) as Promise<any>,
     getBatch: (id: string) =>
-      Promise.resolve({
-        batch: {
-          id,
-          status: 'completed',
-          createdAt: new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          options: {} as any,
-          itemCount: 0,
-          doneCount: 0,
-          failedCount: 0,
-        } as any,
-        items: [] as any[],
-      }),
-    cancelModelDownload: () => Promise.resolve(),
-    cleanStatus: (_refs: any[]) => Promise.resolve({} as Record<string, any>),
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_GET_BATCH, { batchId: id }) as Promise<any>,
+    cleanStatus: (refs: any[]) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WATERMARK_CLEAN_STATUS, { refs }) as Promise<Record<string, boolean>>,
   },
   events: {
     onSequenceRenderProgress: (callback: (progress: SequenceRenderProgress) => void) =>
       subscribe<SequenceRenderProgress>(IPC_EVENTS.SEQUENCE_RENDER_PROGRESS, callback),
     onWatermarkProgress: (callback: (progress: any) => void) =>
       subscribe<any>(IPC_EVENTS.WATERMARK_PROGRESS, callback),
+    onWatermarkModelDownload: (callback: (progress: any) => void) =>
+      subscribe<any>(IPC_EVENTS.WATERMARK_MODEL_DOWNLOAD, callback),
+    onVeo3FlowFolderUpdated: (callback: (data: Veo3FlowProjectData) => void) =>
+      subscribe<Veo3FlowProjectData>(IPC_EVENTS.VEO3FLOW_FOLDER_UPDATED, callback),
   },
 };
 

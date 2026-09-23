@@ -24,6 +24,7 @@ export interface MenuButtonProps {
    * Close, where a worded button would outweigh the title it belongs to.
    */
   icon?: string;
+  size?: 'sm' | 'md';
 }
 
 /**
@@ -44,6 +45,7 @@ export function MenuButton({
   align = 'left',
   title,
   icon,
+  size,
 }: MenuButtonProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,6 +60,7 @@ export function MenuButton({
           icon={icon}
           label={label}
           disabled={disabled}
+          size={size}
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen(!open)}
@@ -65,6 +68,7 @@ export function MenuButton({
       ) : (
       <Button
         variant="secondary"
+        size={size}
         disabled={disabled}
         title={title}
         aria-haspopup="menu"

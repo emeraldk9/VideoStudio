@@ -3,8 +3,10 @@ import {
   FLASH_DEFAULT_COLOR_HEX,
   NEUTRAL_FILTER_VALUES,
   resolveFilterValues,
+  resolveGpuEffects,
   type ClipTransition,
   type ClipTransitionParams,
+  type GlLayerGpuEffects,
   type MotionViewpoint,
   type ResolvedFilterValues,
 } from '@shared';
@@ -92,6 +94,7 @@ export interface GlLayer {
   /** Where in the source the frame is sampled from: centre + zoom, source fractions. */
   viewport: MotionViewpoint;
   filters: ResolvedFilterValues;
+  gpuEffects?: GlLayerGpuEffects;
 }
 
 /**
@@ -243,6 +246,7 @@ export function layerFor(input: {
   clipId: string;
   motion: MotionViewpoint | undefined;
   effects: Parameters<typeof resolveFilterValues>[0];
+  playheadFrame?: number;
 }): GlLayer {
   return {
     slot: input.slot,
@@ -250,6 +254,7 @@ export function layerFor(input: {
     fit: input.motion ? 'cover' : 'contain',
     viewport: input.motion ?? STATIC_VIEWPORT,
     filters: resolveFilterValues(input.effects),
+    gpuEffects: resolveGpuEffects(input.effects, input.playheadFrame ?? 0),
   };
 }
 

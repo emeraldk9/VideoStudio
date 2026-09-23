@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import {
   renumberTrack,
   transportDurationFrames,
+  clampInPoint,
+  clampOutPoint,
   type Sequence,
   type SequenceClip,
   type SequenceDocument,
@@ -16,6 +18,15 @@ import {
   type StillFrameSource,
   type TrackKind,
   type TrackRole,
+  type TimelineClipboardPayload,
+  createTimelineClipboard,
+  executeCutClips,
+  executePasteClips,
+  executeLiftOrExtractWorkArea,
+  packCompoundClip,
+  unpackCompoundClip,
+  isCompoundClip,
+  getCompoundClipMetadata,
 } from '@shared';
 
 import { readLocalSetting, writeLocalSetting } from '../../../shared/lib/localSetting';
@@ -78,6 +89,10 @@ export interface SequenceState {
 
   selectedClipIds: string[];
   playheadFrame: number;
+  /** S20 — Timeline Work Area (In / Out) bounds and loop playback state */
+  inPointFrame: number | null;
+  outPointFrame: number | null;
+  looping: boolean;
   /** Timeline zoom, in pixels per second. */
   pixelsPerSecond: number;
   playing: boolean;
@@ -248,6 +263,13 @@ export interface SequenceState {
   undo: () => void;
   redo: () => void;
 
+  // S64 — Compound Clips & Nested Sequence Packaging
+  parentSequenceStack: string[];
+  createCompoundClipFromSelection: (name?: string) => Promise<SequenceClip | null>;
+  decomposeCompoundClip: (clipId: string) => Promise<void>;
+  stepIntoCompoundClip: (compoundClip: SequenceClip) => Promise<void>;
+  stepOutOfCompoundClip: () => Promise<void>;
+
   /**
    * S160 — the active pointer tool. `'select'` is every gesture the panel
    * always had; `'split'` turns a clip click into a blade cut at the click's
@@ -255,7 +277,7 @@ export interface SequenceState {
    * sweep. Renderer-local, never persisted — a timeline that reopens in
    * blade mode cuts something before the user notices.
    */
-  toolMode: 'select' | 'split' | 'select-left' | 'select-right';
+  toolMode: 'select' | 'split' | 'select-left' | 'select-right' | 'ripple' | 'roll';
   setToolMode: (mode: SequenceState['toolMode']) => void;
 
   /**
@@ -264,10 +286,15 @@ export interface SequenceState {
    * an undo of a clip edit must not delete a note written after it.
    */
   markers: SequenceMarker[];
-  addMarker: (frame: number) => Promise<void>;
+  editingMarkerId: string | null;
+  setEditingMarkerId: (markerId: string | null) => void;
+  addMarker: (
+    frame: number,
+    options?: { name?: string; notes?: string; color?: MarkerColor; locked?: boolean },
+  ) => Promise<void>;
   updateMarker: (
     markerId: string,
-    patch: { frame?: number; name?: string; color?: MarkerColor; locked?: boolean },
+    patch: { frame?: number; name?: string; notes?: string; color?: MarkerColor; locked?: boolean },
   ) => Promise<void>;
   /**
    * S233 — the setup import's markers: added in file order through the same
@@ -275,12 +302,17 @@ export interface SequenceState {
    * exists. Never deletes — an import adds facts, it does not tidy.
    */
   importMarkers: (
-    entries: { frame: number; name?: string; color?: MarkerColor; locked?: boolean }[],
+    entries: { frame: number; name?: string; notes?: string; color?: MarkerColor; locked?: boolean }[],
   ) => Promise<number>;
   removeMarker: (markerId: string) => Promise<void>;
 
   select: (clipIds: string[]) => void;
   setPlayhead: (frame: number) => void;
+  setInPoint: (frame: number | null) => void;
+  setOutPoint: (frame: number | null) => void;
+  clearInOutPoints: () => void;
+  setLooping: (looping: boolean) => void;
+  toggleLooping: () => void;
   setPlaying: (playing: boolean) => void;
   setPlaybackRate: (rate: number) => void;
   setZoom: (pixelsPerSecond: number) => void;
@@ -292,8 +324,20 @@ export interface SequenceState {
    */
   snapEnabled: boolean;
   setSnapEnabled: (enabled: boolean) => void;
+  /** S29 — Audio Scrubbing: preview audio snippets on timeline scrub/step (Shift+S) */
+  audioScrubEnabled: boolean;
+  setAudioScrubEnabled: (enabled: boolean) => void;
+  toggleAudioScrub: () => void;
   requestFit: () => void;
   setRenderProgress: (progress: SequenceRenderProgress | null) => void;
+
+  /** S27 — Timeline Clipboard & 3-Point Assembly */
+  timelineClipboard: TimelineClipboardPayload | null;
+  copySelection: () => boolean;
+  cutSelection: (ripple?: boolean) => boolean;
+  pasteClipboard: (options?: { ripple?: boolean; targetTrackId?: string }) => boolean;
+  liftWorkArea: () => boolean;
+  extractWorkArea: () => boolean;
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -394,9 +438,14 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
   error: null,
   selectedClipIds: [],
   playheadFrame: 0,
+  inPointFrame: null,
+  outPointFrame: null,
+  looping: false,
   pixelsPerSecond: 40,
   // S175 — persisted preference; anything but the stored 'off' means on.
   snapEnabled: readLocalSetting('ai_video_studio_timeline_snap') !== 'off',
+  // S29 — persisted audio scrubbing preference; default on.
+  audioScrubEnabled: readLocalSetting('ai_video_studio_audio_scrub') !== 'off',
   playing: false,
   playbackRate: 1,
   fitVersion: 0,
@@ -406,6 +455,8 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
   storyboardReport: { unplacedHeadingByShotId: {}, staleShotIds: [] },
   undoStack: [],
   redoStack: [],
+  timelineClipboard: null,
+  parentSequenceStack: [],
 
   loadSequences: async (projectId) => {
     set({ loading: true, error: null });
@@ -430,6 +481,8 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
         loading: false,
         selectedClipIds: [],
         playheadFrame: 0,
+        inPointFrame: null,
+        outPointFrame: null,
         playing: false,
         // A fresh document has no history — carrying the previous sequence's
         // stack over would let undo apply one timeline's clips to another.
@@ -453,6 +506,8 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
         sequences: [document.sequence, ...state.sequences],
         selectedClipIds: [],
         playheadFrame: 0,
+        inPointFrame: null,
+        outPointFrame: null,
         undoStack: [],
         redoStack: [],
       }));
@@ -508,6 +563,8 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
       toolMode: 'select',
       selectedClipIds: [],
       playheadFrame: 0,
+      inPointFrame: null,
+      outPointFrame: null,
       playing: false,
       undoStack: [],
       redoStack: [],
@@ -625,12 +682,18 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
   setToolMode: (toolMode) => set({ toolMode }),
 
   markers: [],
-  addMarker: async (frame) => {
+  editingMarkerId: null,
+  setEditingMarkerId: (editingMarkerId) => set({ editingMarkerId }),
+  addMarker: async (frame, options) => {
     const document = get().document;
     if (!document) return;
     const markers = await window.api.sequence.addMarker({
       sequenceId: document.sequence.id,
       frame: Math.max(0, Math.round(frame)),
+      name: options?.name,
+      notes: options?.notes,
+      color: options?.color,
+      locked: options?.locked,
     });
     if (markers) set({ markers });
   },
@@ -659,6 +722,7 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
         sequenceId: document.sequence.id,
         frame,
         name: entry.name,
+        notes: entry.notes,
         color: entry.color,
         locked: entry.locked,
       });
@@ -670,12 +734,14 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
   removeMarker: async (markerId) => {
     const document = get().document;
     if (!document) return;
-    set({
-      markers: await window.api.sequence.deleteMarker({
-        sequenceId: document.sequence.id,
-        markerId,
-      }),
+    const nextMarkers = await window.api.sequence.deleteMarker({
+      sequenceId: document.sequence.id,
+      markerId,
     });
+    set((state) => ({
+      markers: nextMarkers,
+      editingMarkerId: state.editingMarkerId === markerId ? null : state.editingMarkerId,
+    }));
   },
 
   soloTrackIds: [],
@@ -813,6 +879,21 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
 
   select: (selectedClipIds) => set({ selectedClipIds }),
   setPlayhead: (playheadFrame) => set({ playheadFrame: Math.max(0, Math.round(playheadFrame)) }),
+  setInPoint: (frame) =>
+    set((state) => {
+      const duration = selectDurationFrames(state);
+      const res = clampInPoint(frame, state.outPointFrame, duration);
+      return { inPointFrame: res.inPointFrame, outPointFrame: res.outPointFrame };
+    }),
+  setOutPoint: (frame) =>
+    set((state) => {
+      const duration = selectDurationFrames(state);
+      const res = clampOutPoint(frame, state.inPointFrame, duration);
+      return { inPointFrame: res.inPointFrame, outPointFrame: res.outPointFrame };
+    }),
+  clearInOutPoints: () => set({ inPointFrame: null, outPointFrame: null }),
+  setLooping: (looping) => set({ looping }),
+  toggleLooping: () => set((state) => ({ looping: !state.looping })),
   // Stopping always returns to 1x. A paused transport that silently remembers
   // "4x reverse" would make the next press of Space behave inexplicably.
   setPlaying: (playing) => set(playing ? { playing } : { playing, playbackRate: 1 }),
@@ -823,6 +904,15 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
   setSnapEnabled: (enabled) => {
     writeLocalSetting('ai_video_studio_timeline_snap', enabled ? 'on' : 'off');
     set({ snapEnabled: enabled });
+  },
+  setAudioScrubEnabled: (enabled) => {
+    writeLocalSetting('ai_video_studio_audio_scrub', enabled ? 'on' : 'off');
+    set({ audioScrubEnabled: enabled });
+  },
+  toggleAudioScrub: () => {
+    const next = !get().audioScrubEnabled;
+    writeLocalSetting('ai_video_studio_audio_scrub', next ? 'on' : 'off');
+    set({ audioScrubEnabled: next });
   },
 
   setZoom: (pixelsPerSecond) =>
@@ -868,6 +958,234 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
                   Date.now(),
           },
     ),
+
+  // ------------------------------------------------- S27 — Clipboard & 3-Point Assembly
+  copySelection: () => {
+    const { document, selectedClipIds } = get();
+    if (!document || selectedClipIds.length === 0) return false;
+    const clipboard = createTimelineClipboard(document.clips, document.tracks, selectedClipIds);
+    if (!clipboard) return false;
+    set({ timelineClipboard: clipboard });
+    return true;
+  },
+
+  cutSelection: (ripple = false) => {
+    const { document, selectedClipIds } = get();
+    if (!document || selectedClipIds.length === 0) return false;
+    const { nextClips, clipboard } = executeCutClips(
+      document.clips,
+      document.tracks,
+      selectedClipIds,
+      ripple,
+    );
+    if (!clipboard) return false;
+    set({ timelineClipboard: clipboard });
+    get().commitClips(nextClips);
+    get().select([]);
+    return true;
+  },
+
+  pasteClipboard: (options = {}) => {
+    const { document, timelineClipboard } = get();
+    if (!document || !timelineClipboard) return false;
+    const playheadFrame = currentPlayheadFrame();
+    const { nextClips, pastedClips } = executePasteClips(
+      document.clips,
+      document.tracks,
+      timelineClipboard,
+      playheadFrame,
+      {
+        ripple: options.ripple ?? false,
+        targetTrackId: options.targetTrackId,
+        mintId: () => crypto.randomUUID(),
+      },
+    );
+    get().commitClips(nextClips);
+    if (pastedClips.length > 0) {
+      get().select(pastedClips.map((c) => c.id));
+    }
+    return true;
+  },
+
+  liftWorkArea: () => {
+    const { document, inPointFrame, outPointFrame } = get();
+    if (!document || inPointFrame === null || outPointFrame === null) return false;
+    const { nextClips, clipboard } = executeLiftOrExtractWorkArea(
+      document.clips,
+      document.tracks,
+      inPointFrame,
+      outPointFrame,
+      false,
+      () => crypto.randomUUID(),
+    );
+    if (!clipboard) return false;
+    set({ timelineClipboard: clipboard });
+    get().commitClips(nextClips);
+    return true;
+  },
+
+  extractWorkArea: () => {
+    const { document, inPointFrame, outPointFrame } = get();
+    if (!document || inPointFrame === null || outPointFrame === null) return false;
+    const { nextClips, clipboard } = executeLiftOrExtractWorkArea(
+      document.clips,
+      document.tracks,
+      inPointFrame,
+      outPointFrame,
+      true,
+      () => crypto.randomUUID(),
+    );
+    if (!clipboard) return false;
+    set({ timelineClipboard: clipboard });
+    get().commitClips(nextClips);
+    return true;
+  },
+
+  createCompoundClipFromSelection: async (customName?: string) => {
+    const { document, selectedClipIds, sequences } = get();
+    if (!document || selectedClipIds.length === 0) return null;
+
+    const count = sequences.filter((s) => s.name.startsWith('Compound Clip')).length + 1;
+    const name = customName?.trim() || `Compound Clip ${count}`;
+
+    const { updatedClips, compoundClip, nestedDocument } = packCompoundClip({
+      clips: document.clips,
+      tracks: document.tracks,
+      targetClipIds: selectedClipIds,
+      compoundName: name,
+      sequenceId: document.sequence.id,
+      parentFps: document.sequence.fps,
+      parentWidth: document.sequence.width,
+      parentHeight: document.sequence.height,
+      mintId: () => crypto.randomUUID(),
+    });
+
+    let finalCompoundClip = compoundClip;
+    let createdSequence = nestedDocument.sequence;
+
+    try {
+      if (window.api?.sequence?.create) {
+        const backendDoc = await window.api.sequence.create({
+          projectId: document.sequence.projectId,
+          name,
+        });
+        if (backendDoc) {
+          createdSequence = backendDoc.sequence;
+          const remappedTracks = nestedDocument.tracks.map((t) => ({
+            ...t,
+            sequenceId: backendDoc.sequence.id,
+          }));
+          if (window.api?.sequence?.replaceDocument) {
+            await window.api.sequence.replaceDocument({
+              sequenceId: backendDoc.sequence.id,
+              tracks: remappedTracks,
+              clips: nestedDocument.clips,
+              spineTrackId: null,
+            });
+          }
+          if (finalCompoundClip.effects?.compound) {
+            finalCompoundClip = {
+              ...finalCompoundClip,
+              effects: {
+                ...finalCompoundClip.effects,
+                compound: {
+                  ...finalCompoundClip.effects.compound,
+                  nestedSequenceId: backendDoc.sequence.id,
+                  nestedSequenceName: backendDoc.sequence.name,
+                  nestedTracks: remappedTracks,
+                },
+              },
+            };
+          }
+        }
+      }
+    } catch {
+      // Offline / fallback to in-memory nested document
+    }
+
+    set((state) => ({
+      sequences: state.sequences.some((s) => s.id === createdSequence.id)
+        ? state.sequences
+        : [createdSequence, ...state.sequences],
+    }));
+
+    const finalNextClips = updatedClips.map((c: SequenceClip) =>
+      c.id === compoundClip.id ? finalCompoundClip : c,
+    );
+    get().commitClips(finalNextClips);
+    get().select([finalCompoundClip.id]);
+    return finalCompoundClip;
+  },
+
+  decomposeCompoundClip: async (clipId: string) => {
+    const { document } = get();
+    if (!document) return;
+    const target = document.clips.find((c) => c.id === clipId);
+    if (!target || !isCompoundClip(target)) return;
+
+    const { updatedClips, unpackedClips } = unpackCompoundClip({
+      clips: document.clips,
+      tracks: document.tracks,
+      compoundClipId: clipId,
+      mintId: () => crypto.randomUUID(),
+    });
+
+    get().commitClips(updatedClips);
+    if (unpackedClips.length > 0) {
+      get().select(unpackedClips.map((c: SequenceClip) => c.id));
+    }
+  },
+
+  stepIntoCompoundClip: async (compoundClip: SequenceClip) => {
+    const meta = getCompoundClipMetadata(compoundClip);
+    if (!meta) return;
+    const currentDoc = get().document;
+    if (!currentDoc) return;
+
+    set((state) => ({
+      parentSequenceStack: [...state.parentSequenceStack, currentDoc.sequence.id],
+    }));
+
+    try {
+      await get().openSequence(meta.nestedSequenceId);
+    } catch {
+      const nestedDoc: SequenceDocument = {
+        sequence: {
+          id: meta.nestedSequenceId,
+          projectId: currentDoc.sequence.projectId,
+          name: meta.nestedSequenceName,
+          fps: currentDoc.sequence.fps,
+          width: currentDoc.sequence.width,
+          height: currentDoc.sequence.height,
+          spineTrackId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        tracks: (meta.nestedTracks as SequenceTrack[] | undefined) ?? [],
+        clips: (meta.nestedClips as SequenceClip[] | undefined) ?? [],
+      };
+      set({
+        document: nestedDoc,
+        selectedClipIds: [],
+        playheadFrame: 0,
+        inPointFrame: null,
+        outPointFrame: null,
+        playing: false,
+        undoStack: [],
+        redoStack: [],
+      });
+    }
+  },
+
+  stepOutOfCompoundClip: async () => {
+    const { parentSequenceStack } = get();
+    if (parentSequenceStack.length === 0) return;
+    const parentId = parentSequenceStack[parentSequenceStack.length - 1];
+    set((state) => ({
+      parentSequenceStack: state.parentSequenceStack.slice(0, -1),
+    }));
+    await get().openSequence(parentId);
+  },
 }));
 
 /**

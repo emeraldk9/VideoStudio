@@ -14,16 +14,18 @@ export interface ModalProps {
   dismissible?: boolean;
   /** Custom overlay CSS classes (e.g. left-14 to offset backdrop from vertical NavRail). */
   overlayClassName?: string;
+  /** Custom CSS classes for the inner dialog panel (e.g. override max-w or padding). */
+  className?: string;
   /**
-   * Dialog panel size. `'md'` (default, `max-w-md`) fits every existing
-   * caller's form-shaped content; `'lg'` (`max-w-2xl`) is for a long single
-   * column of rows, where `md` crowds a label against its control but `xl`
-   * strands them at opposite edges; `'xl'` (`max-w-4xl`) is for wider content
-   * like a card grid; `'2xl'` (`max-w-6xl`) is for a form wide enough that its
-   * columns stop fighting for room; `'media'` is for a dialog whose subject is
-   * one large picture.
+   * Dialog panel size:
+   * - `'sm'` (`max-w-[420px]`): For confirmations and short prompt alerts.
+   * - `'md'` (`max-w-[540px]`): Standard HUD, gain/speed retiming, marker editing.
+   * - `'lg'` (`max-w-[720px]`): Multi-column layouts, project selector, shortcuts.
+   * - `'xl'` (`max-w-[920px]`): Preferences, JSON code editor, timeline setup.
+   * - `'2xl'` (`max-w-[1140px]`): Heavy multi-column dashboards (Export sequence).
+   * - `'media'` (`max-w-[1180px] h-[85vh]`): Full canvas media editing.
    */
-  size?: 'md' | 'lg' | 'xl' | '2xl' | 'media';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'media';
   /**
    * Beta Step 72 — hands the body's scrolling to the caller.
    *
@@ -63,11 +65,12 @@ export interface ModalProps {
  * height a number the panel can divide, which is what lets the frame flex.
  */
 const SIZE_CLASSES: Record<NonNullable<ModalProps['size']>, string> = {
-  md: 'max-w-md max-h-[85vh]',
-  lg: 'max-w-2xl max-h-[85vh]',
-  xl: 'max-w-4xl max-h-[85vh]',
-  '2xl': 'max-w-6xl max-h-[85vh]',
-  media: 'max-w-6xl h-[85vh]',
+  sm: 'max-w-[420px] max-h-[85vh]',
+  md: 'max-w-[540px] max-h-[85vh]',
+  lg: 'max-w-[720px] max-h-[85vh]',
+  xl: 'max-w-[920px] max-h-[85vh]',
+  '2xl': 'max-w-[1140px] max-h-[85vh]',
+  media: 'max-w-[1180px] h-[85vh]',
 };
 
 export function Modal({
@@ -77,6 +80,7 @@ export function Modal({
   children,
   dismissible = true,
   overlayClassName = '',
+  className = '',
   size = 'md',
   bodyScroll = true,
   subtitle,
@@ -166,12 +170,17 @@ export function Modal({
     // cursor, taking its tab bar with it. The tabs you are aiming at should not
     // move because of what is below them.
     //
-    // `pt-[8vh]` rather than a fixed offset so short dialogs still sit in a
+    // `pt-[6vh]` rather than a fixed offset so short dialogs still sit in a
     // comfortable optical position rather than jammed against the window edge,
     // and `items-start` with `max-h-[85vh]` on the dialog keeps a tall one from
     // running off the bottom.
     <div
-      className={`fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim pt-[8vh] pb-8 ${overlayClassName}`}
+      className={`fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim/80 backdrop-blur-xs pt-[6vh] pb-8 px-4 ${overlayClassName}`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && dismissible) {
+          onClose?.();
+        }
+      }}
     >
       <div
         ref={dialogRef}
@@ -179,7 +188,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby="modal-title"
         tabIndex={-1}
-        className={`flex w-full ${SIZE_CLASSES[size]} flex-col rounded-[var(--radius-dialog)] bg-bg-workspace p-6 outline-none`}
+        className={`relative flex w-full ${SIZE_CLASSES[size]} flex-col rounded-[var(--radius-dialog)] border border-hairline bg-bg-workspace p-6 outline-none shadow-2xl transition-all ${className}`}
         style={{ boxShadow: 'var(--shadow-elevated)' }}
         onClick={(event) => event.stopPropagation()}
       >

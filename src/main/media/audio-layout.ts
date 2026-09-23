@@ -107,6 +107,11 @@ export interface DubSegmentInput {
    * byte-identical to every graph before this phase.
    */
   volumeExpression?: string;
+  /**
+   * Beta S66 — Synthesized FFmpeg audio filter chain (EQ, compressor, gate,
+   * reverb, pitch, pan, isolation, denoiser). Runs clip-local before adelay.
+   */
+  audioFilter?: string;
 }
 
 export interface AudioLayoutOptions {

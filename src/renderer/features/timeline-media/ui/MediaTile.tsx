@@ -27,6 +27,7 @@ const KIND_ICONS: Record<SequenceSourceKind, string> = {
   audio: 'graphic_eq',
   text: 'title',
   effect: 'auto_fix_high',
+  compound: 'auto_awesome_motion',
 };
 
 export interface MediaTileProps {
@@ -74,6 +75,8 @@ export interface MediaTileProps {
    * touches disk. A tile labelled "Delete" would promise otherwise.
    */
   onRemove?: () => void;
+  /** Hover button to open watermark removal dialog for this file. */
+  onCleanWatermark?: () => void;
 
   /* ── S200 — supplied by the grid, never by a pane ───────────────────── */
 
@@ -108,6 +111,7 @@ export function MediaTile({
   badgeTone = 'neutral',
   ordinal,
   onRemove,
+  onCleanWatermark,
   selected = false,
   focusable = false,
   onPointerSelect,
@@ -225,10 +229,26 @@ export function MediaTile({
       </div>
 
       {/* S200 — the hover controls: `+` adds at the playhead, `×` removes
-          from the pool. Both stop the click from reaching the tile — a click
-          on a control means the one thing, not that and a selection change. */}
-      {onAdd || onRemove ? (
+          from the pool, and clean watermark opens the cleaner. Both stop the click from reaching the tile. */}
+      {onAdd || onRemove || onCleanWatermark ? (
         <span className="absolute right-0.5 top-0.5 flex gap-0.5">
+          {onCleanWatermark ? (
+            <button
+              type="button"
+              aria-label={`Remove watermark from ${label}`}
+              title="Remove watermark"
+              className="flex h-5 w-5 items-center justify-center rounded-[4px] text-media-text opacity-0 transition-opacity duration-100 focus-visible:opacity-100 group-hover:opacity-100 hover:text-accent-ai"
+              style={{ backgroundColor: 'var(--media-scrim)' }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCleanWatermark();
+              }}
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
+                auto_fix_high
+              </span>
+            </button>
+          ) : null}
           {onAdd ? (
             <button
               type="button"

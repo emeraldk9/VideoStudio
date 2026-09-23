@@ -10,6 +10,12 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /** Warning tone for destructive entries (delete, ripple delete). */
   danger?: boolean;
+  /** Visual shortcut hint (e.g., 'Ctrl+D', 'Alt+F'). */
+  shortcut?: string;
+  /** Material Symbols icon glyph */
+  icon?: string;
+  /** Color dot class for color labels (e.g., 'bg-rose-500') */
+  dotColor?: string;
 }
 
 export interface ContextMenuProps {
@@ -63,7 +69,7 @@ export function ContextMenu({ position, items, onClose, 'aria-label': ariaLabel 
   // Clamped on-screen; flipped above/left of the pointer when the viewport
   // edge would clip it. Estimated panel metrics — a menu this small does not
   // warrant a measure-then-position double render.
-  const PANEL_WIDTH = 208;
+  const PANEL_WIDTH = 270;
   const itemHeight = 30;
   const panelHeight = items.length * itemHeight + 8;
   const left = Math.min(position.x, window.innerWidth - PANEL_WIDTH - 8);
@@ -78,7 +84,7 @@ export function ContextMenu({ position, items, onClose, 'aria-label': ariaLabel 
       role="menu"
       aria-label={ariaLabel}
       style={{ top, left }}
-      className="fixed z-[60] flex w-52 flex-col gap-0.5 rounded-[var(--radius-button)] border border-hairline bg-bg-workspace p-1 shadow-lg"
+      className="fixed z-[60] flex w-[270px] min-w-[260px] flex-col gap-0.5 rounded-[var(--radius-button)] border border-hairline bg-bg-workspace p-1 shadow-xl"
     >
       {items.map((item) => (
         <button
@@ -86,7 +92,7 @@ export function ContextMenu({ position, items, onClose, 'aria-label': ariaLabel 
           type="button"
           role="menuitem"
           disabled={item.disabled}
-          className={`flex w-full items-center rounded-[var(--radius-button)] px-2 py-1.5 text-left text-xs transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`flex w-full items-center justify-between gap-2 rounded-[var(--radius-button)] px-2.5 py-1.5 text-left text-xs transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-50 ${
             item.danger
               ? 'text-accent-warning hover:bg-accent-warning/15'
               : 'text-text-primary hover:bg-bg-hover'
@@ -96,7 +102,21 @@ export function ContextMenu({ position, items, onClose, 'aria-label': ariaLabel 
             item.onSelect();
           }}
         >
-          {item.label}
+          <span className="flex items-center gap-2 truncate">
+            {item.dotColor ? (
+              <span className={`h-2 w-2 rounded-full shrink-0 ${item.dotColor}`} />
+            ) : item.icon ? (
+              <span className="material-symbols-outlined text-[15px] shrink-0 text-text-secondary">
+                {item.icon}
+              </span>
+            ) : null}
+            <span className="truncate">{item.label}</span>
+          </span>
+          {item.shortcut ? (
+            <span className="shrink-0 rounded bg-bg-hover/80 px-1.5 py-0.5 text-[10px] font-mono font-medium text-text-secondary">
+              {item.shortcut}
+            </span>
+          ) : null}
         </button>
       ))}
     </div>,

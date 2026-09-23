@@ -188,12 +188,12 @@ const TRANSITIONS_METADATA: readonly TransitionMeta[] = [
   },
 ];
 
-const CATEGORY_TABS: { id: TransitionCategory; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'dissolves', label: 'Dissolves' },
-  { id: 'fades', label: 'Fades' },
-  { id: 'wipes', label: 'Wipes & Slides' },
-  { id: 'stylized', label: 'Stylized' },
+const CATEGORY_TABS: { id: TransitionCategory; label: string; icon: string }[] = [
+  { id: 'all', label: 'All', icon: 'auto_awesome_motion' },
+  { id: 'dissolves', label: 'Dissolves', icon: 'blur_linear' },
+  { id: 'fades', label: 'Fades', icon: 'tonality' },
+  { id: 'wipes', label: 'Wipes & Slides', icon: 'swipe' },
+  { id: 'stylized', label: 'Stylized', icon: 'flare' },
 ];
 
 const DURATION_PRESETS = [
@@ -258,90 +258,113 @@ export function TransitionsPane() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-canvas text-text-primary select-none">
-      {/* Top Controls Header */}
-      <div className="flex flex-col gap-2.5 border-b border-hairline p-3 bg-bg-card/40">
-        {/* Search Bar */}
-        <div className="relative flex items-center">
-          <span className="material-symbols-outlined absolute left-2.5 text-[16px] text-text-disabled pointer-events-none">
-            search
-          </span>
-          <input
-            type="text"
-            placeholder="Search transitions..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-md border border-hairline bg-bg-app pl-8 pr-7 py-1 text-xs text-text-primary placeholder:text-text-disabled focus:border-accent-ai focus:outline-none transition-colors"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2 text-text-disabled hover:text-text-secondary"
-            >
-              <span className="material-symbols-outlined text-[14px]">close</span>
-            </button>
-          )}
-        </div>
+    <div className="flex h-full min-h-0 w-full overflow-hidden bg-bg-canvas text-text-primary select-none">
+      {/* Left Vertical Sub-Sidebar (CapCut style) */}
+      <div className="flex w-36 shrink-0 flex-col gap-1 border-r border-hairline/60 bg-bg-sidebar/40 p-2 select-none overflow-y-auto">
+        <span className="px-1 pb-1 text-[10px] font-bold uppercase tracking-wider text-text-disabled">
+          Transitions
+        </span>
+        {CATEGORY_TABS.map((tab) => {
+          const active = selectedCategory === tab.id;
+          const count =
+            tab.id === 'all'
+              ? TRANSITIONS_METADATA.length
+              : TRANSITIONS_METADATA.filter((t) => t.category === tab.id).length;
 
-        {/* Category Filter Pills */}
-        <div className="flex flex-wrap items-center gap-1">
-          {CATEGORY_TABS.map((tab) => (
+          return (
             <button
               key={tab.id}
               type="button"
               onClick={() => setSelectedCategory(tab.id)}
-              className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-all ${
-                selectedCategory === tab.id
-                  ? 'bg-accent-ai text-text-on-accent shadow-xs'
-                  : 'bg-bg-app border border-hairline text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+              className={`flex items-center justify-between rounded-button px-2 py-1.5 text-xs transition-all text-left ${
+                active
+                  ? 'bg-accent-ai/15 font-semibold text-accent-ai'
+                  : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
               }`}
             >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Duration selector & Target clip hint */}
-        <div className="flex items-center justify-between pt-1 border-t border-hairline/60 text-[11px]">
-          <div className="flex items-center gap-1.5">
-            <span className="text-text-disabled">Duration:</span>
-            <div className="flex items-center gap-0.5 bg-bg-app border border-hairline rounded p-0.5">
-              {DURATION_PRESETS.map((preset) => (
-                <button
-                  key={preset.frames}
-                  type="button"
-                  onClick={() => setDurationFrames(preset.frames)}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
-                    durationFrames === preset.frames
-                      ? 'bg-accent-ai/20 text-accent-ai font-semibold'
-                      : 'text-text-disabled hover:text-text-secondary'
-                  }`}
+              <div className="flex items-center gap-1.5 truncate">
+                <span
+                  className={`material-symbols-outlined text-[16px] ${active ? 'text-accent-ai' : ''}`}
                 >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1 text-text-secondary">
-            <span className="material-symbols-outlined text-[14px] text-accent-ai">layers</span>
-            <span>
-              {selectedClipIds.length > 0
-                ? `${selectedClipIds.length} clip(s) selected`
-                : 'Select clip to apply'}
-            </span>
-          </div>
-        </div>
+                  {tab.icon}
+                </span>
+                <span className="truncate">{tab.label}</span>
+              </div>
+              <span className="font-mono text-[10px] text-text-disabled ml-1 shrink-0">
+                {count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Applied Feedback Banner */}
-      {appliedFeedback && (
-        <div className="flex items-center justify-center gap-1.5 bg-accent-ai/15 border-b border-accent-ai/30 py-1.5 px-3 text-xs text-accent-ai font-medium animate-fadeIn">
-          <span className="material-symbols-outlined text-[14px]">check_circle</span>
-          {appliedFeedback}
+      {/* Right Content Area */}
+      <div className="flex flex-1 min-w-0 flex-col overflow-hidden bg-bg-canvas">
+        {/* Top Controls Header */}
+        <div className="flex flex-col gap-2 border-b border-hairline p-3 bg-bg-card/30">
+          {/* Search Bar */}
+          <div className="relative flex items-center">
+            <span className="material-symbols-outlined absolute left-2.5 text-[16px] text-text-disabled pointer-events-none">
+              search
+            </span>
+            <input
+              type="text"
+              placeholder="Search transitions..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-md border border-hairline bg-bg-app pl-8 pr-7 py-1 text-xs text-text-primary placeholder:text-text-disabled focus:border-accent-ai focus:outline-none transition-colors"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 text-text-disabled hover:text-text-secondary"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            )}
+          </div>
+
+          {/* Duration selector & Target clip hint */}
+          <div className="flex items-center justify-between pt-1 border-t border-hairline/60 text-[11px]">
+            <div className="flex items-center gap-1.5">
+              <span className="text-text-disabled">Duration:</span>
+              <div className="flex items-center gap-0.5 bg-bg-app border border-hairline rounded p-0.5">
+                {DURATION_PRESETS.map((preset) => (
+                  <button
+                    key={preset.frames}
+                    type="button"
+                    onClick={() => setDurationFrames(preset.frames)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                      durationFrames === preset.frames
+                        ? 'bg-accent-ai/20 text-accent-ai font-semibold'
+                        : 'text-text-disabled hover:text-text-secondary'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 text-text-secondary">
+              <span className="material-symbols-outlined text-[14px] text-accent-ai">layers</span>
+              <span>
+                {selectedClipIds.length > 0
+                  ? `${selectedClipIds.length} clip(s)`
+                  : 'Select clip'}
+              </span>
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Applied Feedback Banner */}
+        {appliedFeedback && (
+          <div className="flex items-center justify-center gap-1.5 bg-accent-ai/15 border-b border-accent-ai/30 py-1.5 px-3 text-xs text-accent-ai font-medium animate-fadeIn">
+            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+            {appliedFeedback}
+          </div>
+        )}
 
       {/* Grid of Transition Cards */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -350,7 +373,7 @@ export function TransitionsPane() {
             return (
               <div
                 key={t.id}
-                className="group relative flex flex-col justify-between overflow-hidden rounded-[var(--radius-button)] border border-hairline bg-bg-card p-2.5 transition-all duration-200 hover:border-accent-ai/50 hover:bg-bg-hover hover:shadow-md"
+                className="group relative flex flex-col justify-between overflow-hidden rounded-[var(--radius-button)] border border-hairline bg-bg-card p-2.5 transition-all duration-200 hover:border-accent-ai/50 hover:bg-bg-hover"
               >
                 {/* Visual Preview Box with CSS animation on hover */}
                 <div className="relative mb-2 flex h-20 w-full items-center justify-center overflow-hidden rounded bg-[#0b0d13] border border-hairline/40">
@@ -411,7 +434,7 @@ export function TransitionsPane() {
                     disabled={selectedClipIds.length === 0}
                     className={`flex-1 flex items-center justify-center gap-1 rounded py-1 text-[11px] font-medium transition-colors ${
                       selectedClipIds.length > 0
-                        ? 'bg-accent-ai text-text-on-accent hover:opacity-90 shadow-xs'
+                        ? 'bg-accent-ai text-text-on-accent hover:opacity-90'
                         : 'bg-bg-app border border-hairline text-text-disabled cursor-not-allowed'
                     }`}
                     title={
@@ -439,5 +462,6 @@ export function TransitionsPane() {
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 }

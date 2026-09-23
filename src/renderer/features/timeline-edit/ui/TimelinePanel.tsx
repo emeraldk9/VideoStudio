@@ -1,31 +1,67 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  DEFAULT_DROP_SECONDS,
   TIMELINE_DRAG_MIME,
   clipAllowedOnTrack,
   deleteToPlayhead,
   droppableOnTrack,
+  duplicateClips,
+  framesToSeconds,
+  insertFreezeFrame,
   isOverlayTrack,
   isTextTrack,
   layoutTrack,
+  mediaKindForPath,
   moveClipToTrack,
   moveSelectionBy,
+  separateClipAudio,
   parseTimelineDrag,
   placeSourcesAt,
   rippleDelete,
+  applyAutoRippleInsert,
+  resolveCollisionBumping,
   snapFrame,
   snapTargets,
   splitAtFrame,
   timelineSnapTargets,
+  buildSnapTargetsWithMeta,
+  executeRippleTrim,
+  executeRollingEdit,
+  type SnapTargetEntry,
   selectTimelineWatermarkTargets,
+  formatTimecode,
   splitClipAtFrame,
   tracksInDisplayOrder,
   trimClipEdge,
+  findTrackGaps,
+  findGapAtFrame,
+  closeTrackGap,
+  closeAllGapsOnTrack,
+  closeAllGapsAcrossTracks,
+  insertTextClipAt,
+  createAdjustmentLayerClip,
+  isCompoundClip,
+  rippleTrimToPlayhead,
+  toggleDefaultTransition,
+  removeClipTransition,
+  setClipColorLabel,
+  selectClipsByColorLabel,
+  COLOR_LABEL_DEFINITIONS,
+  CLIP_COLOR_LABELS,
+  propagateLinkedClipMove,
+  applyDualSystemAudioSync,
+  linkClips,
+  unlinkClips,
+  type ClipColorLabel,
+  type TimelineTrackGap,
   type SequenceClip,
+  type SequenceMarker,
   type SequenceTrack,
   type TimelineDragItem,
 } from '@shared';
 
+import { useProjectStore } from '../../../entities/project';
 import {
   correctDroppedDurations,
   currentPlayheadFrame,
@@ -33,15 +69,22 @@ import {
   useMediaDragStore,
   useSequenceStore,
   selectDurationFrames,
+  selectSelectedClip,
   transportClock,
 } from '../../../entities/sequence';
+import { MODAL_IDS } from '../../../shared/config/modal-ids';
 import { useModalStore } from '../../../shared/model/modalStore';
+import { useToastStore } from '../../../shared/model/toastStore';
 import { ContextMenu, type ContextMenuItem } from '../../../shared/ui/ContextMenu';
 import { IconButton } from '../../../shared/ui/IconButton';
 import { SNAP_THRESHOLD_PX, useTimelineDrag, type DragState } from '../lib/useTimelineDrag';
 
-import { RenameInput } from './RenameInput';
+import { MarkerModal } from './MarkerModal';
+import { SpeedModal } from './SpeedModal';
+import { AudioGainModal } from './AudioGainModal';
+import { SubtitleModal } from './SubtitleModal';
 import { LANE_LABEL_WIDTH_PX, TimelineTrackRow } from './TimelineLane';
+import { SketchKeyframeLane } from './SketchKeyframeLane';
 import { TIMELINE_RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler';
 
 /**
@@ -88,6 +131,7 @@ export function TimelinePanel() {
   const commitClips = useSequenceStore((state) => state.commitClips);
   const setZoom = useSequenceStore((state) => state.setZoom);
   const fitVersion = useSequenceStore((state) => state.fitVersion);
+  const toolMode = useSequenceStore((state) => state.toolMode);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** S174 — the content sizer, owner of `--playhead-x`/`--lane-label-w`. */
@@ -101,18 +145,30 @@ export function TimelinePanel() {
   const tracks = useMemo(() => document?.tracks ?? [], [document]);
   const displayTracks = useMemo(() => tracksInDisplayOrder(tracks), [tracks]);
   const spineTrackId = document?.sequence.spineTrackId ?? null;
+  const spineTrack = useMemo(
+    () => tracks.find((t) => t.id === spineTrackId) ?? null,
+    [tracks, spineTrackId],
+  );
+  const spineClips = useMemo(
+    () => (spineTrack ? clips.filter((c) => c.trackId === spineTrack.id) : []),
+    [clips, spineTrack],
+  );
+  const hasSpineSketches = useMemo(
+    () => spineClips.some((c) => Boolean(c.effects?.whiteboard)),
+    [spineClips],
+  );
   const fps = document?.sequence.fps ?? 24;
   const soloTrackIds = useSequenceStore((state) => state.soloTrackIds);
   const snapEnabled = useSequenceStore((state) => state.snapEnabled);
   const markersForTargets = useSequenceStore((state) => state.markers);
+  const inPointFrame = useSequenceStore((state) => state.inPointFrame);
+  const outPointFrame = useSequenceStore((state) => state.outPointFrame);
 
   /**
-   * S175 — three target sets, deliberately layered for stability. Clip edges
+   * S175 & S28 — target sets layered for stability. Clip edges
    * are a document fact and rebuild only on a commit; the static set adds
-   * markers and the sequence end; the move set adds the playhead. Split
-   * because the playhead moves per scrub — folding it into one memo would
-   * rebuild the array per pointer event — and because a scrub snapping to
-   * the playhead's own parked position would fight the gesture.
+   * markers, sequence end, and In/Out points; the move set adds the playhead.
+   * `metaSnapTargets` adds semantic labels for the Smart Magnetic HUD.
    */
   const clipTargets = useMemo(() => snapTargets(tracks, clips), [tracks, clips]);
   const markerFrames = useMemo(
@@ -126,8 +182,10 @@ export function TimelinePanel() {
         markerFrames,
         playheadFrame: null,
         sequenceEndFrame: durationFrames,
+        inPointFrame,
+        outPointFrame,
       }),
-    [clipTargets, markerFrames, durationFrames],
+    [clipTargets, markerFrames, durationFrames, inPointFrame, outPointFrame],
   );
   const moveTargets = useMemo(
     () =>
@@ -136,8 +194,23 @@ export function TimelinePanel() {
         markerFrames,
         playheadFrame,
         sequenceEndFrame: durationFrames,
+        inPointFrame,
+        outPointFrame,
       }),
-    [clipTargets, markerFrames, playheadFrame, durationFrames],
+    [clipTargets, markerFrames, playheadFrame, durationFrames, inPointFrame, outPointFrame],
+  );
+  const metaSnapTargets = useMemo(
+    () =>
+      buildSnapTargetsWithMeta({
+        tracks,
+        clips,
+        markers: markersForTargets,
+        playheadFrame,
+        inPointFrame,
+        outPointFrame,
+        sequenceEndFrame: durationFrames,
+      }),
+    [tracks, clips, markersForTargets, playheadFrame, inPointFrame, outPointFrame, durationFrames],
   );
 
   /**
@@ -331,51 +404,88 @@ export function TimelinePanel() {
           return;
         }
 
-        commitClips(
-          clips.map((item) =>
-            item.id === clip.id
-              ? { ...item, startFrames: Math.max(0, (item.startFrames ?? 0) + state.deltaFrames) }
-              : item,
-          ),
+        const proposedStart = Math.max(0, (clip.startFrames ?? 0) + state.deltaFrames);
+        if (toolMode === 'ripple') {
+          commitClips(
+            applyAutoRippleInsert(clips, track, clip.id, proposedStart, clip.durationFrames),
+          );
+          return;
+        }
+
+        const { snappedStart } = resolveCollisionBumping(
+          clips,
+          track,
+          clip.id,
+          proposedStart,
+          clip.durationFrames,
+          15,
         );
+        const actualDelta = snappedStart - (clip.startFrames ?? 0);
+        let updated = clips.map((item) =>
+          item.id === clip.id ? { ...item, startFrames: snappedStart } : item,
+        );
+        if (clip.linkedClipId && actualDelta !== 0) {
+          updated = propagateLinkedClipMove(
+            { ...clip, startFrames: snappedStart },
+            actualDelta,
+            updated,
+            tracks,
+          );
+        }
+        commitClips(updated);
         return;
       }
 
-      // Trim. The source range and the timeline length move together, so a
-      // trimmed clip shows a different part of its source rather than the same
-      // part stretched. `trimClipEdge` is shared with the `I`/`O` keys so the
-      // handle and the keyboard cannot drift apart.
+      // Trim. When Ripple Edit tool is active, ripple downstream clips;
+      // when Rolling Edit tool is active, adjust abutting clips while preserving duration;
+      // otherwise, perform standard edge trim.
       const edge = state.kind === 'trim-start' ? 'start' : 'end';
+      if (toolMode === 'ripple') {
+        const next = executeRippleTrim(clips, tracks, clip.id, edge, state.deltaFrames);
+        if (next !== clips) commitClips(next);
+        return;
+      }
+      if (toolMode === 'roll') {
+        const placed = layoutTrack(clips, track).find((p) => p.clip.id === clip.id);
+        const junctionFrame = edge === 'end' ? (placed?.endFrames ?? 0) : (placed?.startFrames ?? 0);
+        const next = executeRollingEdit(clips, tracks, junctionFrame, state.deltaFrames, track.id);
+        if (next !== clips) commitClips(next);
+        return;
+      }
       const next = trimClipEdge(clips, clip.id, edge, state.deltaFrames);
       if (next !== clips) commitClips(next);
     },
-    [clips, commitClips, document, laneTargetAt, moveClipToNewTrack, tracks],
+    [clips, commitClips, document, laneTargetAt, moveClipToNewTrack, toolMode, tracks],
   );
 
   /**
-   * S175 — the snap indicator, driven imperatively from `onDelta` (the app's
-   * `TimelinePreview` snap-line language: 1px accent at 70%, visible only
-   * while a target actually holds the gesture). No React state per move.
+   * S175 & S28 — the snap indicator & Smart Magnetic HUD badge, driven imperatively
+   * from `onDelta`. Zero React state per move.
    */
   const snapLineRef = useRef<HTMLDivElement | null>(null);
+  const snapBadgeRef = useRef<HTMLDivElement | null>(null);
   const handleDragDelta = useCallback(
-    (deltaFrames: number, snappedTarget: number | null) => {
+    (deltaFrames: number, snappedTarget: number | null, snapLabel?: string) => {
       // S176 — the live drag offset: one custom-property write per pointer
-      // event moves every flagged clip. Direct rather than rAF-coalesced —
-      // two style writes per event are nothing next to the full-tree render
-      // each event used to cost, and coalescing would lag the hand.
+      // event moves every flagged clip. Direct rather than rAF-coalesced.
       sizerRef.current?.style.setProperty(
         '--drag-dx',
         `${deltaFrames * (pixelsPerSecond / fps)}px`,
       );
       const line = snapLineRef.current;
+      const badge = snapBadgeRef.current;
       if (!line) return;
       if (snappedTarget === null) {
         line.style.display = 'none';
+        if (badge) badge.style.display = 'none';
         return;
       }
       line.style.display = 'block';
       line.style.left = `calc(var(--lane-label-w) + ${snappedTarget * (pixelsPerSecond / fps)}px)`;
+      if (badge) {
+        badge.textContent = snapLabel || `${snappedTarget}f`;
+        badge.style.display = 'block';
+      }
     },
     [fps, pixelsPerSecond],
   );
@@ -385,6 +495,7 @@ export function TimelinePanel() {
     fps,
     targets: moveTargets,
     scrubTargets: staticTargets,
+    metaTargets: metaSnapTargets,
     snapEnabled,
     onCommit: applyDrag,
     onScrub: setPlayhead,
@@ -396,6 +507,7 @@ export function TimelinePanel() {
   useEffect(() => {
     if (drag) return;
     if (snapLineRef.current) snapLineRef.current.style.display = 'none';
+    if (snapBadgeRef.current) snapBadgeRef.current.style.display = 'none';
     sizerRef.current?.style.setProperty('--drag-dx', '0px');
   }, [drag]);
 
@@ -743,8 +855,6 @@ export function TimelinePanel() {
     return Math.max(1, rows[reorderHover.index].top - LANE_GAP_PX / 2);
   }, [groupRows, reorderHover, tracks]);
 
-  const toolMode = useSequenceStore((state) => state.toolMode);
-
   /**
    * S160 (owner item 8) — the directional sweep: select the clicked clip and
    * everything to one side of it, Premiere's Track Select Forward/Backward.
@@ -828,10 +938,26 @@ export function TimelinePanel() {
 
   /** S160 — right-click state: where, and on which clip. */
   const [menu, setMenu] = useState<{ x: number; y: number; clip: SequenceClip } | null>(null);
+  /** S17 — right-click state for empty trough space / gaps */
+  const [troughMenu, setTroughMenu] = useState<{
+    x: number;
+    y: number;
+    track: SequenceTrack;
+    frame: number;
+    gap: TimelineTrackGap | null;
+  } | null>(null);
   // S353 — the pool's path→id map is the only thing that can name an imported
   // clip's `sequence_media` row, which is its watermark identity.
   const importedMedia = useImportedMediaStore((state) => state.media);
   const openWatermarkBatchModal = useModalStore((store) => store.openWatermarkBatchModal);
+  const isSpeedModalOpen = useModalStore((state) => state.activeModal === 'speed');
+  const isAudioGainModalOpen = useModalStore((state) => state.activeModal === 'audio-gain');
+  const isSubtitleModalOpen = useModalStore((state) => state.activeModal === MODAL_IDS.SUBTITLES);
+  const closeModal = useModalStore((state) => state.closeModal);
+  const selectedClip = useSequenceStore(selectSelectedClip);
+  const [speedModalClip, setSpeedModalClip] = useState<SequenceClip | null>(null);
+  const [audioGainModalClip, setAudioGainModalClip] = useState<SequenceClip | null>(null);
+  const [subtitleModalTrackId, setSubtitleModalTrackId] = useState<string | null>(null);
 
   const menuItems = useMemo((): ContextMenuItem[] => {
     if (!menu || !document) return [];
@@ -866,39 +992,506 @@ export function TimelinePanel() {
         },
       },
       {
-        label: 'Delete left of playhead',
+        label: 'Duplicate',
+        shortcut: 'Ctrl+D',
         onSelect: () => {
           const s = state();
           if (!s.document) return;
-          const next = deleteToPlayhead(
+          const { clips: next, duplicatedClips } = duplicateClips(
+            s.document.clips,
+            s.document.tracks,
+            targetIds,
+            () => crypto.randomUUID(),
+          );
+          if (next !== s.document.clips) {
+            s.commitClips(next);
+            s.select(duplicatedClips.map((c) => c.id));
+          }
+        },
+      },
+      // S64 — Compound Clips & Nested Sequences
+      ...(targetIds.length >= 1
+        ? [
+            {
+              label: 'Create Compound Clip...',
+              shortcut: 'Alt+G',
+              icon: 'auto_awesome_motion',
+              onSelect: () => {
+                void state().createCompoundClipFromSelection();
+              },
+            },
+          ]
+        : []),
+      ...(isCompoundClip(menu.clip)
+        ? [
+            {
+              label: 'Open in Timeline (Step Into)',
+              icon: 'open_in_new',
+              onSelect: () => {
+                void state().stepIntoCompoundClip(menu.clip);
+              },
+            },
+            {
+              label: 'Decompose in Place',
+              shortcut: 'Alt+Shift+G',
+              icon: 'unfold_more',
+              onSelect: () => {
+                state().decomposeCompoundClip(menu.clip.id);
+              },
+            },
+          ]
+        : []),
+      {
+        label: 'Copy',
+        shortcut: 'Ctrl+C',
+        icon: 'copy_all',
+        onSelect: () => {
+          state().copySelection();
+        },
+      },
+      {
+        label: 'Cut',
+        shortcut: 'Ctrl+X',
+        icon: 'content_cut',
+        onSelect: () => {
+          state().cutSelection(false);
+        },
+      },
+      {
+        label: 'Ripple Cut',
+        shortcut: 'Ctrl+Shift+X',
+        onSelect: () => {
+          state().cutSelection(true);
+        },
+      },
+      ...(state().timelineClipboard
+        ? [
+            {
+              label: 'Paste at playhead',
+              shortcut: 'Ctrl+V',
+              icon: 'content_paste',
+              onSelect: () => {
+                state().pasteClipboard({ ripple: false });
+              },
+            },
+            {
+              label: 'Ripple Insert Paste',
+              shortcut: 'Ctrl+Shift+V',
+              icon: 'content_paste_go',
+              onSelect: () => {
+                state().pasteClipboard({ ripple: true });
+              },
+            },
+          ]
+        : []),
+      {
+        label:
+          menu.clip.transitionIn && menu.clip.transitionIn !== 'cut'
+            ? 'Remove transition'
+            : 'Apply default transition (Cross Dissolve)',
+        shortcut: 'Shift+D',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          let nextClips = s.document.clips;
+          for (const id of targetIds) {
+            nextClips = toggleDefaultTransition(nextClips, id);
+          }
+          if (nextClips !== s.document.clips) {
+            s.commitClips(nextClips);
+          }
+        },
+      },
+      ...(menu.clip.transitionIn && menu.clip.transitionIn !== 'cut'
+        ? [
+            {
+              label: 'Clear transition',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                let nextClips = s.document.clips;
+                for (const id of targetIds) {
+                  nextClips = removeClipTransition(nextClips, id);
+                }
+                if (nextClips !== s.document.clips) {
+                  s.commitClips(nextClips);
+                }
+              },
+            },
+          ]
+        : []),
+      // S25 — Studio Clip Color Labels
+      {
+        label: 'Color: Rose (A-Roll)',
+        dotColor: 'bg-rose-500',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          s.commitClips(setClipColorLabel(s.document.clips, targetIds, 'rose'));
+        },
+      },
+      {
+        label: 'Color: Amber (Review)',
+        dotColor: 'bg-amber-500',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          s.commitClips(setClipColorLabel(s.document.clips, targetIds, 'amber'));
+        },
+      },
+      {
+        label: 'Color: Emerald (Music)',
+        dotColor: 'bg-emerald-500',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          s.commitClips(setClipColorLabel(s.document.clips, targetIds, 'emerald'));
+        },
+      },
+      {
+        label: 'Color: Cyan (B-Roll)',
+        dotColor: 'bg-cyan-500',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          s.commitClips(setClipColorLabel(s.document.clips, targetIds, 'cyan'));
+        },
+      },
+      {
+        label: 'Color: Violet (Titles)',
+        dotColor: 'bg-violet-500',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          s.commitClips(setClipColorLabel(s.document.clips, targetIds, 'violet'));
+        },
+      },
+      ...(menu.clip.colorLabel && menu.clip.colorLabel !== 'default'
+        ? [
+            {
+              label: 'Reset Label Color',
+              icon: 'format_color_reset',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                s.commitClips(setClipColorLabel(s.document.clips, targetIds, 'default'));
+              },
+            },
+            {
+              label: `Select all ${COLOR_LABEL_DEFINITIONS[menu.clip.colorLabel].name} clips`,
+              icon: 'select_all',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                const matches = selectClipsByColorLabel(s.document.clips, menu.clip.colorLabel!);
+                s.select(matches);
+              },
+            },
+          ]
+        : []),
+      // S67 — Toggle Automation Curve Lane
+      {
+        label: 'Toggle Automation Curve',
+        shortcut: 'Alt+K',
+        icon: 'timeline',
+        onSelect: () => {
+          for (const id of targetIds) {
+            window.dispatchEvent(
+              new CustomEvent('toggle-clip-automation', {
+                detail: { clipId: id },
+              }),
+            );
+          }
+        },
+      },
+      // S72 — Toggle Speed Ramp Curve
+      {
+        label: 'Toggle Speed Ramp Curve',
+        shortcut: 'Alt+R',
+        icon: 'speed',
+        onSelect: () => {
+          for (const id of targetIds) {
+            window.dispatchEvent(
+              new CustomEvent('toggle-clip-speed-ramp', {
+                detail: { clipId: id },
+              }),
+            );
+          }
+        },
+      },
+      ...(menu.clip.sourceKind === 'video' && menu.clip.filePath
+        ? [
+            {
+              label: 'Separate audio',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                const res = separateClipAudio(
+                  s.document.clips,
+                  s.document.tracks,
+                  menu.clip.id,
+                  () => crypto.randomUUID(),
+                );
+                if (res) {
+                  s.commitClips(res.clips);
+                  s.select([res.createdClip.id]);
+                }
+              },
+            },
+            {
+              label: menu.clip.sourceAudioEnabled === false ? 'Unmute video audio' : 'Mute video audio',
+              onSelect: () => {
+                const s = state();
+                s.patchClip(menu.clip.id, {
+                  sourceAudioEnabled: menu.clip.sourceAudioEnabled === false,
+                });
+              },
+            },
+          ]
+        : []),
+      // S76 — Dual-System Audio Auto-Sync & A/V Clip Linking
+      ...(menu.clip.linkedClipId
+        ? [
+            {
+              label: 'Unlink Clips',
+              shortcut: 'Ctrl+Shift+L',
+              icon: 'link_off',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                const nextClips = unlinkClips(menu.clip.id, s.document.clips);
+                s.commitClips(nextClips);
+                useToastStore.getState().pushToast({ message: 'Clips unlinked', variant: 'info' });
+              },
+            },
+          ]
+        : targetIds.length === 2
+          ? [
+              {
+                label: 'Link Clips',
+                shortcut: 'Ctrl+L',
+                icon: 'link',
+                onSelect: () => {
+                  const s = state();
+                  if (!s.document) return;
+                  const c1 = s.document.clips.find((c) => c.id === targetIds[0]);
+                  const c2 = s.document.clips.find((c) => c.id === targetIds[1]);
+                  if (!c1 || !c2) return;
+                  const [linkedA, linkedB] = linkClips(c1, c2);
+                  const nextClips = s.document.clips.map((c) =>
+                    c.id === linkedA.id ? linkedA : c.id === linkedB.id ? linkedB : c,
+                  );
+                  s.commitClips(nextClips);
+                  useToastStore.getState().pushToast({ message: 'Clips linked in sync', variant: 'success' });
+                },
+              },
+            ]
+          : []),
+      ...(() => {
+        if (!document) return [];
+        const selectedClips = document.clips.filter((c) => targetIds.includes(c.id));
+        const videoClip = selectedClips.find((c) => c.sourceKind === 'video');
+        const audioClip = selectedClips.find((c) => c.sourceKind === 'audio');
+        if (selectedClips.length === 2 && videoClip && audioClip) {
+          return [
+            {
+              label: 'Auto-Sync Audio by Waveform...',
+              icon: 'sync',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                const vStart = videoClip.startFrames ?? 0;
+                const aStart = audioClip.startFrames ?? 0;
+                const naturalLag = Math.round(aStart - vStart);
+                const { updatedVideoClip, updatedAudioClip } = applyDualSystemAudioSync(
+                  videoClip,
+                  audioClip,
+                  naturalLag,
+                  { muteScratchAudio: true, linkClips: true },
+                );
+                const nextClips = s.document.clips.map((c) =>
+                  c.id === updatedVideoClip.id
+                    ? updatedVideoClip
+                    : c.id === updatedAudioClip.id
+                      ? updatedAudioClip
+                      : c,
+                );
+                s.commitClips(nextClips);
+                useToastStore.getState().pushToast({
+                  message: `Auto-synchronized and linked "${audioClip.label || 'Audio'}" with "${videoClip.label || 'Video'}" (scratch audio muted)`,
+                  variant: 'success',
+                });
+              },
+            },
+          ];
+        }
+        return [];
+      })(),
+      ...(() => {
+        if (menu.clip.sourceKind !== 'video' || !menu.clip.filePath || !document) return [];
+        const track = document.tracks.find((t) => t.id === menu.clip.trackId);
+        if (!track) return [];
+        const placed = layoutTrack(document.clips, track).find((p) => p.clip.id === menu.clip.id);
+        if (!placed) return [];
+        const playhead = currentPlayheadFrame();
+        if (playhead <= placed.startFrames || playhead >= placed.endFrames) return [];
+
+        return [
+          {
+            label: 'Insert freeze frame (3s)',
+            shortcut: 'Alt+F',
+            onSelect: async () => {
+              const s = state();
+              if (!s.document) return;
+              const currentTrack = s.document.tracks.find((t) => t.id === menu.clip.trackId);
+              if (!currentTrack) return;
+              const currentPlaced = layoutTrack(s.document.clips, currentTrack).find((p) => p.clip.id === menu.clip.id);
+              if (!currentPlaced) return;
+
+              const frame = currentPlayheadFrame();
+              const offset = frame - currentPlaced.startFrames;
+              const sourceIn = currentPlaced.clip.sourceInFrames ?? 0;
+              const atSeconds = framesToSeconds(sourceIn + offset, fps);
+
+              const capture = await window.api.sequence.captureFrame({
+                sourcePath: menu.clip.filePath!,
+                atSeconds,
+                sequenceId: s.document.sequence.id,
+              });
+
+              if (!capture?.imagePath) return;
+
+              const freezeDurationFrames = Math.round(3 * fps);
+              const res = insertFreezeFrame(
+                s.document.clips,
+                currentTrack,
+                menu.clip.id,
+                frame,
+                capture.imagePath,
+                freezeDurationFrames,
+                {
+                  splitId: crypto.randomUUID(),
+                  freezeId: crypto.randomUUID(),
+                },
+              );
+              if (res) {
+                s.commitClips(res.clips);
+                s.select([res.freezeClip.id]);
+              }
+            },
+          },
+        ];
+      })(),
+      ...(menu.clip.sourceKind !== 'still' && menu.clip.sourceKind !== 'text'
+        ? [
+            {
+              label: 'Speed / Duration...',
+              shortcut: 'Ctrl+R',
+              onSelect: () => {
+                setSpeedModalClip(menu.clip);
+                useModalStore.getState().openModal('speed');
+              },
+            },
+          ]
+        : []),
+      ...(menu.clip.sourceKind === 'text'
+        ? [
+            {
+              label: 'Export Captions (.srt / .vtt)...',
+              onSelect: () => {
+                setSubtitleModalTrackId(menu.clip.trackId);
+                useModalStore.getState().openModal(MODAL_IDS.SUBTITLES);
+              },
+            },
+          ]
+        : []),
+      ...(menu.clip.sourceKind === 'audio' || menu.clip.sourceKind === 'video'
+        ? [
+            {
+              label: 'Audio Gain & Fades...',
+              shortcut: 'G',
+              onSelect: () => {
+                setAudioGainModalClip(menu.clip);
+                useModalStore.getState().openModal('audio-gain');
+              },
+            },
+            {
+              label: 'Add 1s Fade In & Out',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                const half = Math.floor(menu.clip.durationFrames / 2);
+                s.patchClip(menu.clip.id, {
+                  fadeInFrames: Math.min(half, Math.round(fps)),
+                  fadeOutFrames: Math.min(half, Math.round(fps)),
+                });
+              },
+            },
+            {
+              label: 'Reset Audio Gain (0 dB)',
+              onSelect: () => {
+                const s = state();
+                if (!s.document) return;
+                s.patchClip(menu.clip.id, { gainDb: 0 });
+              },
+            },
+          ]
+        : []),
+      {
+        label: 'Ripple trim start to playhead',
+        shortcut: 'Q',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          const next = rippleTrimToPlayhead(
             s.document.clips,
             s.document.tracks,
             currentPlayheadFrame(),
+            'head',
             targetIds,
-            'left',
           );
           if (next !== s.document.clips) s.commitClips(next);
         },
       },
       {
-        label: 'Delete right of playhead',
+        label: 'Ripple trim end to playhead',
+        shortcut: 'W',
         onSelect: () => {
           const s = state();
           if (!s.document) return;
-          const next = deleteToPlayhead(
+          const next = rippleTrimToPlayhead(
             s.document.clips,
             s.document.tracks,
             currentPlayheadFrame(),
+            'tail',
             targetIds,
-            'right',
           );
           if (next !== s.document.clips) s.commitClips(next);
         },
       },
       {
         label: 'Add marker here',
+        shortcut: 'M',
         onSelect: () => {
           void state().addMarker(currentPlayheadFrame());
+        },
+      },
+      {
+        label: 'Add marker (Green Sync)',
+        onSelect: () => {
+          void state().addMarker(currentPlayheadFrame(), { color: 'success', name: 'Sync' });
+        },
+      },
+      {
+        label: 'Add marker (Amber Review)',
+        onSelect: () => {
+          void state().addMarker(currentPlayheadFrame(), { color: 'warning', name: 'Review' });
+        },
+      },
+      {
+        label: 'Add marker (Sky Info)',
+        onSelect: () => {
+          void state().addMarker(currentPlayheadFrame(), { color: 'info', name: 'Info' });
         },
       },
       /**
@@ -946,11 +1539,12 @@ export function TimelinePanel() {
         },
       },
     ];
-  }, [document, importedMedia, menu, openWatermarkBatchModal]);
+  }, [document, fps, importedMedia, menu, openWatermarkBatchModal]);
 
   const handleClipContextMenu = useCallback(
     (event: React.MouseEvent, clip: SequenceClip) => {
       event.preventDefault();
+      setTroughMenu(null);
       // Right-click on an unselected clip selects it first — the universal
       // grammar; acting on a clip the menu is not about would be a trap.
       const current = useSequenceStore.getState().selectedClipIds;
@@ -959,6 +1553,241 @@ export function TimelinePanel() {
     },
     [select],
   );
+
+  /** S17 — handler for right-clicking on empty lane space / gaps */
+  const handleTroughContextMenu = useCallback(
+    (event: React.MouseEvent, track: SequenceTrack, frame: number) => {
+      event.preventDefault();
+      const state = useSequenceStore.getState();
+      if (!state.document) return;
+      setMenu(null);
+      const gap = findGapAtFrame(state.document.clips, track, frame);
+      setTroughMenu({
+        x: event.clientX,
+        y: event.clientY,
+        track,
+        frame,
+        gap,
+      });
+    },
+    [],
+  );
+
+  /** S20 — ruler context menu state */
+  const [rulerMenu, setRulerMenu] = useState<{ x: number; y: number; frame: number } | null>(null);
+
+  const handleRulerContextMenu = useCallback((event: React.MouseEvent, frame: number) => {
+    event.preventDefault();
+    setMenu(null);
+    setTroughMenu(null);
+    setRulerMenu({ x: event.clientX, y: event.clientY, frame });
+  }, []);
+
+  const rulerMenuItems = useMemo((): ContextMenuItem[] => {
+    if (!rulerMenu || !document) return [];
+    const state = () => useSequenceStore.getState();
+    const roundedFrame = Math.max(0, Math.round(rulerMenu.frame));
+    const items: ContextMenuItem[] = [
+      {
+        label: `Mark In at ${formatTimecode(roundedFrame, fps)}`,
+        shortcut: 'I',
+        onSelect: () => state().setInPoint(roundedFrame),
+      },
+      {
+        label: `Mark Out at ${formatTimecode(roundedFrame, fps)}`,
+        shortcut: 'O',
+        onSelect: () => state().setOutPoint(roundedFrame),
+      },
+    ];
+
+    if (state().inPointFrame !== null || state().outPointFrame !== null) {
+      items.push({
+        label: 'Clear In/Out points',
+        shortcut: 'Alt+X',
+        onSelect: () => state().clearInOutPoints(),
+      });
+    }
+
+    items.push({
+      label: `Add marker at ${formatTimecode(roundedFrame, fps)}`,
+      shortcut: 'M',
+      onSelect: () => void state().addMarker(roundedFrame),
+    });
+
+    return items;
+  }, [rulerMenu, document, fps]);
+
+  /** S17 — context menu items for empty lane space and gap ripple deletion */
+  const troughMenuItems = useMemo((): ContextMenuItem[] => {
+    if (!troughMenu || !document) return [];
+    const state = () => useSequenceStore.getState();
+    const { track, frame, gap } = troughMenu;
+    const roundedFrame = Math.max(0, Math.round(frame));
+    const items: ContextMenuItem[] = [];
+
+    if (gap) {
+      items.push({
+        label: `Close gap (${formatTimecode(gap.durationFrames, fps)})`,
+        shortcut: 'Shift+Del',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          const next = closeTrackGap(s.document.clips, track, gap);
+          if (next !== s.document.clips) s.commitClips(next);
+        },
+      });
+    }
+
+    const trackGaps = findTrackGaps(document.clips, track, true);
+    if (trackGaps.length > 0) {
+      items.push({
+        label: `Close all gaps on track ${track.name}`,
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          const next = closeAllGapsOnTrack(s.document.clips, track, true);
+          if (next !== s.document.clips) s.commitClips(next);
+        },
+      });
+    }
+
+    const hasAnyGaps = document.tracks.some(
+      (t) => !t.locked && !t.magnetic && findTrackGaps(document.clips, t, true).length > 0,
+    );
+    if (hasAnyGaps) {
+      items.push({
+        label: 'Close all gaps across timeline',
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          const next = closeAllGapsAcrossTracks(s.document.clips, s.document.tracks, true);
+          if (next !== s.document.clips) s.commitClips(next);
+        },
+      });
+    }
+
+    items.push({
+      label: `Add marker at ${formatTimecode(roundedFrame, fps)}`,
+      shortcut: 'M',
+      onSelect: () => {
+        void state().addMarker(roundedFrame);
+      },
+    });
+
+    if (!track.locked) {
+      items.push({
+        label: `Insert title text at ${formatTimecode(roundedFrame, fps)}`,
+        onSelect: () => {
+          const s = state();
+          if (!s.document) return;
+          const { clips: next, textClip } = insertTextClipAt(
+            s.document.clips,
+            track,
+            roundedFrame,
+            Math.round(fps * 3),
+            () => crypto.randomUUID(),
+          );
+          s.commitClips(next);
+          s.select([textClip.id]);
+        },
+      });
+
+      if (track.kind === 'video') {
+        items.push({
+          label: `Insert Adjustment Layer at ${formatTimecode(roundedFrame, fps)}`,
+          shortcut: 'Alt+A',
+          onSelect: () => {
+            const s = state();
+            if (!s.document) return;
+            const durationFrames = Math.max(1, Math.round(fps * 5));
+            const newClip = createAdjustmentLayerClip({
+              sequenceId: s.document.sequence.id,
+              trackId: track.id,
+              startFrames: roundedFrame,
+              durationFrames,
+              orderIndex: s.document.clips.filter((c) => c.trackId === track.id).length,
+            });
+            s.commitClips([...s.document.clips, newClip]);
+            s.select([newClip.id]);
+          },
+        });
+      }
+
+      items.push({
+        label: `Import Subtitles (.srt / .vtt) to ${track.name}...`,
+        onSelect: () => {
+          setSubtitleModalTrackId(track.id);
+          useModalStore.getState().openModal(MODAL_IDS.SUBTITLES);
+        },
+      });
+    }
+
+    if (state().timelineClipboard && !track.locked) {
+      items.push(
+        {
+          label: `Paste at ${formatTimecode(roundedFrame, fps)} (Ctrl+V)`,
+          icon: 'content_paste',
+          onSelect: () => {
+            state().setPlayhead(roundedFrame);
+            state().pasteClipboard({ ripple: false, targetTrackId: track.id });
+          },
+        },
+        {
+          label: `Ripple Insert Paste at ${formatTimecode(roundedFrame, fps)} (Ctrl+Shift+V)`,
+          icon: 'content_paste_go',
+          onSelect: () => {
+            state().setPlayhead(roundedFrame);
+            state().pasteClipboard({ ripple: true, targetTrackId: track.id });
+          },
+        },
+      );
+    }
+
+    items.push({
+      label: `Split all unlocked tracks at ${formatTimecode(roundedFrame, fps)}`,
+      onSelect: () => {
+        const s = state();
+        if (!s.document) return;
+        const next = splitAtFrame(
+          s.document.clips,
+          s.document.tracks,
+          roundedFrame,
+          [],
+          () => crypto.randomUUID(),
+        );
+        if (next) s.commitClips(next);
+      },
+    });
+
+    // S20 — In/Out points on empty lane space
+    items.push({
+      label: `Mark In at ${formatTimecode(roundedFrame, fps)}`,
+      shortcut: 'I',
+      onSelect: () => {
+        state().setInPoint(roundedFrame);
+      },
+    });
+
+    items.push({
+      label: `Mark Out at ${formatTimecode(roundedFrame, fps)}`,
+      shortcut: 'O',
+      onSelect: () => {
+        state().setOutPoint(roundedFrame);
+      },
+    });
+
+    if (state().inPointFrame !== null || state().outPointFrame !== null) {
+      items.push({
+        label: 'Clear In/Out points',
+        shortcut: 'Alt+X',
+        onSelect: () => {
+          state().clearInOutPoints();
+        },
+      });
+    }
+
+    return items;
+  }, [troughMenu, document, fps]);
 
   /**
    * S200 — places resolved drag items on a track at a frame: one
@@ -980,12 +1809,13 @@ export function TimelinePanel() {
       fresh.sequence.fps,
       fresh.sequence.id,
       () => crypto.randomUUID(),
+      { ripple: toolMode === 'ripple', bumperToleranceFrames: 15 },
     );
     if (result.placedIds.length === 0) return;
     state.commitClips(result.clips);
     state.select(result.placedIds);
     correctDroppedDurations(result.placed, fresh.sequence.id);
-  }, []);
+  }, [toolMode]);
 
   const handleDrop = useCallback(
     (track: SequenceTrack, payload: string, frame: number) => {
@@ -1089,6 +1919,55 @@ export function TimelinePanel() {
     [placeItems],
   );
 
+  /** Resolves raw external files dropped from the OS into placeable TimelineDragItem entries. */
+  const importAndBuildItems = useCallback(
+    async (filePaths: string[]): Promise<TimelineDragItem[]> => {
+      const projectId = useProjectStore.getState().activeProjectId;
+      if (!projectId || filePaths.length === 0) return [];
+      try {
+        await useImportedMediaStore.getState().importDropped(projectId, filePaths);
+      } catch (err) {
+        console.error('Failed to import dropped external files', err);
+      }
+      const pool = useImportedMediaStore.getState().media;
+      const items: TimelineDragItem[] = [];
+      for (const rawPath of filePaths) {
+        const norm = rawPath.replace(/\\/g, '/').toLowerCase();
+        const found = pool.find((m) => m.path.replace(/\\/g, '/').toLowerCase() === norm);
+        const kind = found?.kind ?? mediaKindForPath(rawPath);
+        if (!kind) continue;
+        const label = found?.label ?? rawPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? 'Clip';
+        const durationSeconds =
+          found?.durationSec && found.durationSec > 0 ? found.durationSec : DEFAULT_DROP_SECONDS;
+        items.push({
+          kind,
+          label,
+          filePath: found?.path ?? rawPath,
+          presetId: null,
+          durationSeconds,
+          measured: Boolean(found?.durationSec && found.durationSec > 0),
+          storyShotId: null,
+          sourceTakeId: null,
+        });
+      }
+      return items;
+    },
+    [],
+  );
+
+  const handleDropExternalFiles = useCallback(
+    async (targetTrack: SequenceTrack, filePaths: string[], frame: number) => {
+      const items = await importAndBuildItems(filePaths);
+      if (items.length === 0) return;
+      if (droppableOnTrack(items, targetTrack)) {
+        placeItems(targetTrack, items, frame);
+      } else {
+        await dropOnNewTrack(items, frame);
+      }
+    },
+    [dropOnNewTrack, importAndBuildItems, placeItems],
+  );
+
   /**
    * A pool drag that leaves the lanes entirely (over the preview, the pool
    * itself) must drop its landing and its snap line — `dragleave` is
@@ -1115,8 +1994,16 @@ export function TimelinePanel() {
   const markers = useSequenceStore((state) => state.markers);
   const updateMarker = useSequenceStore((state) => state.updateMarker);
   const removeMarker = useSequenceStore((state) => state.removeMarker);
-  /** S160 — the marker being renamed in place, if any. */
-  const [renamingMarkerId, setRenamingMarkerId] = useState<string | null>(null);
+  const editingMarkerId = useSequenceStore((state) => state.editingMarkerId);
+  const setEditingMarkerId = useSequenceStore((state) => state.setEditingMarkerId);
+  const setInPoint = useSequenceStore((state) => state.setInPoint);
+  const setOutPoint = useSequenceStore((state) => state.setOutPoint);
+  const clearInOutPoints = useSequenceStore((state) => state.clearInOutPoints);
+  /** Marker being edited via MarkerModal, synced with global store state. */
+  const editingMarker = useMemo(
+    () => markers.find((m) => m.id === editingMarkerId) ?? null,
+    [markers, editingMarkerId],
+  );
 
   if (!document) return null;
 
@@ -1257,6 +2144,11 @@ export function TimelinePanel() {
               }}
               onPointerMove={move}
               onPointerUp={end}
+              onContextMenu={(event) => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const frame = Math.max(0, (event.clientX - bounds.left) / pixelsPerFrame);
+                handleRulerContextMenu(event, frame);
+              }}
             >
               <TimelineRuler
                 durationFrames={durationFrames}
@@ -1265,41 +2157,77 @@ export function TimelinePanel() {
                 widthPx={widthPx}
               />
 
+              {/* S20 — Work Area highlight band on ruler */}
+              {(inPointFrame !== null || outPointFrame !== null) && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute top-0 bottom-0 z-10 bg-accent-ai/20 border-t-2 border-b border-accent-ai shadow-sm"
+                  style={{
+                    left: (inPointFrame ?? 0) * pixelsPerFrame,
+                    width: Math.max(
+                      0,
+                      ((outPointFrame ?? durationFrames) - (inPointFrame ?? 0)) * pixelsPerFrame,
+                    ),
+                  }}
+                />
+              )}
+
+              {/* S20 — In-Point Bracket on ruler */}
+              {inPointFrame !== null && (
+                <div
+                  className="group absolute top-0 z-25 pointer-events-auto"
+                  style={{ left: inPointFrame * pixelsPerFrame }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    aria-label={`In Point: ${formatTimecode(inPointFrame, fps)} (Alt+I or double-click to clear)`}
+                    title={`In Point: ${formatTimecode(inPointFrame, fps)} (Alt+I to clear)`}
+                    className="flex h-7 w-3 cursor-ew-resize items-center justify-center rounded-r bg-accent-ai text-[11px] font-bold text-white shadow-md transition-transform hover:scale-110 active:brightness-125 select-none"
+                    onDoubleClick={() => setInPoint(null)}
+                  >
+                    [
+                  </button>
+                </div>
+              )}
+
+              {/* S20 — Out-Point Bracket on ruler */}
+              {outPointFrame !== null && (
+                <div
+                  className="group absolute top-0 z-25 pointer-events-auto -translate-x-full"
+                  style={{ left: outPointFrame * pixelsPerFrame }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    aria-label={`Out Point: ${formatTimecode(outPointFrame, fps)} (Alt+O or double-click to clear)`}
+                    title={`Out Point: ${formatTimecode(outPointFrame, fps)} (Alt+O to clear)`}
+                    className="flex h-7 w-3 cursor-ew-resize items-center justify-center rounded-l bg-accent-ai text-[11px] font-bold text-white shadow-md transition-transform hover:scale-110 active:brightness-125 select-none"
+                    onDoubleClick={() => setOutPoint(null)}
+                  >
+                    ]
+                  </button>
+                </div>
+              )}
+
               {/* S160 — marker flags; S174 — inside the strip, so they stay
                   pinned with the scale they annotate. Trough-space left (the
                   wrapper's origin already sits past the gutter). Click seeks;
-                  double-click renames; right-click deletes. */}
+                  double-click opens full edit modal; shift-click toggles lock; right-click deletes. */}
               {markers.map((marker) => (
                 <div
                   key={marker.id}
-                  className="absolute top-0 z-20"
+                  className="group absolute top-0 z-20"
                   style={{ left: marker.frame * pixelsPerFrame }}
                 >
-                  {renamingMarkerId === marker.id ? (
-                    <div className="absolute left-0 top-6 z-30 w-40">
-                      <RenameInput
-                        initialValue={marker.name || 'Marker'}
-                        ariaLabel={`Marker name at frame ${marker.frame}`}
-                        maxLength={120}
-                        className="w-full rounded-[var(--radius-input)] border border-hairline bg-bg-app px-1 text-xs outline-none focus:border-text-disabled"
-                        onCommit={(name) => {
-                          setRenamingMarkerId(null);
-                          void updateMarker(marker.id, { name });
-                        }}
-                        onCancel={() => setRenamingMarkerId(null)}
-                      />
-                    </div>
-                  ) : null}
                   {/* S233 — a locked marker is a sync point (R5): it draws
                       the lock glyph, shift-click toggles the lock, and
-                      right-click refuses to delete it while locked — the
-                      moments the sound design must hit should not vanish on
-                      a stray click. */}
+                      right-click refuses to delete it while locked. Double-click
+                      opens MarkerModal to view/edit notes, rename, or change color. */}
                   <button
                     type="button"
-                    aria-label={`Marker: ${marker.name || 'unnamed'}${marker.locked ? ' (locked sync point)' : ''} — click seeks, double-click renames, shift-click ${marker.locked ? 'unlocks' : 'locks'}, right-click deletes`}
-                    title={`${marker.name || 'Marker'}${marker.locked ? ' · locked sync point — shift-click to unlock' : ''}`}
-                    className={`material-symbols-outlined material-symbols-outlined--filled -translate-x-1/2 cursor-pointer text-[14px] leading-none ${MARKER_CLASSES[marker.color] ?? 'text-accent-ai'}`}
+                    aria-label={`Marker: ${marker.name || 'unnamed'}${marker.locked ? ' (locked sync point)' : ''} — click seeks, double-click edits details, shift-click ${marker.locked ? 'unlocks' : 'locks'}, right-click deletes`}
+                    className={`relative material-symbols-outlined material-symbols-outlined--filled -translate-x-1/2 cursor-pointer text-[14px] leading-none transition-transform hover:scale-125 ${MARKER_CLASSES[marker.color] ?? 'text-accent-ai'}`}
                     style={{ marginTop: 13 }}
                     onClick={(event) => {
                       if (event.shiftKey) {
@@ -1308,7 +2236,7 @@ export function TimelinePanel() {
                       }
                       setPlayhead(marker.frame);
                     }}
-                    onDoubleClick={() => setRenamingMarkerId(marker.id)}
+                    onDoubleClick={() => setEditingMarkerId(marker.id)}
                     onContextMenu={(event) => {
                       event.preventDefault();
                       if (marker.locked) return;
@@ -1316,7 +2244,34 @@ export function TimelinePanel() {
                     }}
                   >
                     {marker.locked ? 'lock' : 'bookmark'}
+                    {marker.notes ? (
+                      <span
+                        className="absolute -top-1 -right-1 block h-2 w-2 rounded-full bg-text-primary ring-2 ring-bg-canvas"
+                        title="Has notes"
+                      />
+                    ) : null}
                   </button>
+
+                  {/* S3 — floating tooltip displaying marker name, timecode & notes preview */}
+                  <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:flex flex-col gap-0.5 rounded-[var(--radius-card)] bg-bg-panel px-2.5 py-1.5 shadow-xl border border-hairline z-50 min-w-[150px] max-w-[260px] whitespace-normal">
+                    <div className="flex items-center justify-between gap-2 border-b border-hairline/60 pb-1">
+                      <span className="text-xs font-semibold text-text-primary truncate">
+                        {marker.name || 'Marker'}
+                      </span>
+                      <span className="text-[10px] font-mono text-text-secondary whitespace-nowrap">
+                        {formatTimecode(marker.frame, fps)}
+                      </span>
+                    </div>
+                    {marker.notes ? (
+                      <p className="text-[11px] text-text-secondary line-clamp-3 leading-relaxed pt-0.5">
+                        {marker.notes}
+                      </p>
+                    ) : (
+                      <span className="text-[10px] italic text-text-disabled pt-0.5">
+                        Double-click to add notes
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
 
@@ -1349,7 +2304,7 @@ export function TimelinePanel() {
 
           <div
             ref={lanesRef}
-            className={`relative flex flex-1 flex-col gap-2 ${toolMode === 'split' ? 'cursor-crosshair' : ''}`}
+            className={`relative flex flex-1 flex-col gap-2 ${toolMode === 'split' ? 'cursor-crosshair' : toolMode === 'ripple' ? 'cursor-col-resize' : toolMode === 'roll' ? 'cursor-ew-resize' : ''}`}
             onPointerMove={(event) => {
               move(event);
               // The landing preview follows the pointer, not the commit — a
@@ -1369,6 +2324,17 @@ export function TimelinePanel() {
             // the space between and below the rows: only the zone below the
             // last lane is a target (a new track); a gap or a header is not.
             onDragOver={(event) => {
+              if (event.dataTransfer.types.includes('Files')) {
+                if (laneTargetAt(event.clientY)?.type !== 'new') {
+                  updateDropLanding(null);
+                  return;
+                }
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                updateDropLanding({ type: 'new' });
+                if (snapLineRef.current) snapLineRef.current.style.display = 'none';
+                return;
+              }
               if (!dragItems || ![...event.dataTransfer.types].includes(TIMELINE_DRAG_MIME)) return;
               if (laneTargetAt(event.clientY)?.type !== 'new') {
                 updateDropLanding(null);
@@ -1380,6 +2346,29 @@ export function TimelinePanel() {
               if (snapLineRef.current) snapLineRef.current.style.display = 'none';
             }}
             onDrop={(event) => {
+              if (event.dataTransfer.types.includes('Files')) {
+                if (laneTargetAt(event.clientY)?.type !== 'new') return;
+                event.preventDefault();
+                const filePaths = Array.from(event.dataTransfer.files)
+                  .map((file) => {
+                    try {
+                      return window.api?.webUtils?.getPathForFile?.(file) || (file as any).path;
+                    } catch {
+                      return (file as any).path;
+                    }
+                  })
+                  .filter((p): p is string => Boolean(p));
+                if (filePaths.length > 0) {
+                  const frame = frameAtClientX(event.clientX);
+                  void (async () => {
+                    const items = await importAndBuildItems(filePaths);
+                    if (items.length > 0) {
+                      await dropOnNewTrack(items, frame);
+                    }
+                  })();
+                }
+                return;
+              }
               const payload = event.dataTransfer.getData(TIMELINE_DRAG_MIME);
               if (!payload || laneTargetAt(event.clientY)?.type !== 'new') return;
               event.preventDefault();
@@ -1389,93 +2378,108 @@ export function TimelinePanel() {
             }}
           >
             {displayTracks.map((track) => (
-              <TimelineTrackRow
-                key={track.id}
-                track={track}
-                clips={clips}
-                fps={fps}
-                pixelsPerSecond={pixelsPerSecond}
-                widthPx={widthPx}
-                selectedClipIds={selectedClipIds}
-                dimmed={soloTrackIds.length > 0 && track.kind === 'audio' && !soloTrackIds.includes(track.id)}
-                lifted={reorderHover?.trackId === track.id}
-                liveDragClipIds={liveDragClipIds}
-                liveDragKind={drag?.kind ?? null}
-                onMoveUp={canMoveTrack(track, 'up') ? () => moveTrack(track, 'up') : null}
-                onMoveDown={canMoveTrack(track, 'down') ? () => moveTrack(track, 'down') : null}
-                dropTarget={
-                  (moveLanding?.type === 'row' &&
-                    moveLanding.track.id === track.id &&
-                    track.id !== dragSourceTrackId &&
-                    dragClip !== null &&
-                    dragSource !== null &&
-                    track.kind === dragSource.track.kind &&
-                    clipAllowedOnTrack(dragClip, track) &&
-                    !track.locked) ||
-                  (dropLanding?.type === 'row' && dropLanding.trackId === track.id)
-                }
-                dropItems={
-                  dropLanding?.type === 'row' && dropLanding.trackId === track.id ? dragItems : null
-                }
-                onSelect={handleSelect}
-                onToggleSelect={handleToggleSelect}
-                onClipContextMenu={handleClipContextMenu}
-                onMoveStart={(event, clip) => {
-                  // S160 — the blade tool: a clip click cuts at the pointer's
-                  // frame instead of picking the clip up. Alt = every track.
-                  if (toolMode === 'split') {
-                    bladeAt(event.clientX, track, event.altKey);
-                    return;
+              <Fragment key={track.id}>
+                <TimelineTrackRow
+                  track={track}
+                  clips={clips}
+                  fps={fps}
+                  pixelsPerSecond={pixelsPerSecond}
+                  widthPx={widthPx}
+                  selectedClipIds={selectedClipIds}
+                  dimmed={soloTrackIds.length > 0 && track.kind === 'audio' && !soloTrackIds.includes(track.id)}
+                  lifted={reorderHover?.trackId === track.id}
+                  liveDragClipIds={liveDragClipIds}
+                  liveDragKind={drag?.kind ?? null}
+                  onMoveUp={canMoveTrack(track, 'up') ? () => moveTrack(track, 'up') : null}
+                  onMoveDown={canMoveTrack(track, 'down') ? () => moveTrack(track, 'down') : null}
+                  dropTarget={
+                    (moveLanding?.type === 'row' &&
+                      moveLanding.track.id === track.id &&
+                      track.id !== dragSourceTrackId &&
+                      dragClip !== null &&
+                      dragSource !== null &&
+                      track.kind === dragSource.track.kind &&
+                      clipAllowedOnTrack(dragClip, track) &&
+                      !track.locked) ||
+                    (dropLanding?.type === 'row' && dropLanding.trackId === track.id)
                   }
-                  // The sweep tools select on click; nothing is dragged.
-                  if (toolMode !== 'select') return;
-                  dragTarget.current = { clip };
-                  // A fresh gesture must not inherit the previous one's glow.
-                  updateMoveLanding(null);
-                  const placed = layoutTrack(clips, track).find((item) => item.clip.id === clip.id);
-                  begin(event, 'move', clip, placed?.startFrames ?? 0);
-                }}
-                onTrimStart={(event, clip, edge) => {
-                  dragTarget.current = { clip, edge };
-                  // **The gesture begins at the edge being dragged**, in
-                  // absolute frames — not at 0, which is what S145 shipped.
-                  // With origin 0 the hook's `Math.max(0, origin + delta)`
-                  // floor clamped every leftward drag to nothing, so the head
-                  // could not extend and the tail could not shorten; and the
-                  // snap targets (absolute clip edges) were being compared
-                  // against a delta, which is a different coordinate space.
-                  const placed = layoutTrack(clips, track).find(
-                    (item) => item.clip.id === clip.id,
-                  );
-                  begin(
-                    event,
-                    edge === 'start' ? 'trim-start' : 'trim-end',
-                    clip,
-                    edge === 'start' ? (placed?.startFrames ?? 0) : (placed?.endFrames ?? 0),
-                    // S176 — the same clamps `trimClipEdge` applies on
-                    // commit, given to the hook so the live preview cannot
-                    // promise a trim the commit will refuse: the tail keeps
-                    // ≥1 frame; the head keeps ≥1 frame and cannot reach
-                    // before the source's own start (stills have no source
-                    // range and extend without bound).
-                    edge === 'end'
-                      ? { minDelta: 1 - clip.durationFrames, maxDelta: Number.MAX_SAFE_INTEGER }
-                      : {
-                          minDelta:
-                            clip.sourceInFrames != null
-                              ? -clip.sourceInFrames
-                              : -Number.MAX_SAFE_INTEGER,
-                          maxDelta: clip.durationFrames - 1,
-                        },
-                  );
-                }}
-                onDropHover={handleDropHover}
-                onDropFile={handleDrop}
-                onReorderStart={handleReorderStart}
-                onReorderMove={handleReorderMove}
-                onReorderEnd={handleReorderEnd}
-                onMarqueeStart={handleMarqueeStart}
-              />
+                  dropItems={
+                    dropLanding?.type === 'row' && dropLanding.trackId === track.id ? dragItems : null
+                  }
+                  onSelect={handleSelect}
+                  onToggleSelect={handleToggleSelect}
+                  onClipContextMenu={handleClipContextMenu}
+                  onTroughContextMenu={handleTroughContextMenu}
+                  activeGap={troughMenu?.gap ?? null}
+                  onMoveStart={(event, clip) => {
+                    // S160 — the blade tool: a clip click cuts at the pointer's
+                    // frame instead of picking the clip up. Alt = every track.
+                    if (toolMode === 'split') {
+                      bladeAt(event.clientX, track, event.altKey);
+                      return;
+                    }
+                    // The sweep tools select on click; nothing is dragged.
+                    if (toolMode !== 'select') return;
+                    dragTarget.current = { clip };
+                    // A fresh gesture must not inherit the previous one's glow.
+                    updateMoveLanding(null);
+                    const placed = layoutTrack(clips, track).find((item) => item.clip.id === clip.id);
+                    begin(event, 'move', clip, placed?.startFrames ?? 0);
+                  }}
+                  onTrimStart={(event, clip, edge) => {
+                    dragTarget.current = { clip, edge };
+                    // **The gesture begins at the edge being dragged**, in
+                    // absolute frames — not at 0, which is what S145 shipped.
+                    // With origin 0 the hook's `Math.max(0, origin + delta)`
+                    // floor clamped every leftward drag to nothing, so the head
+                    // could not extend and the tail could not shorten; and the
+                    // snap targets (absolute clip edges) were being compared
+                    // against a delta, which is a different coordinate space.
+                    const placed = layoutTrack(clips, track).find(
+                      (item) => item.clip.id === clip.id,
+                    );
+                    begin(
+                      event,
+                      edge === 'start' ? 'trim-start' : 'trim-end',
+                      clip,
+                      edge === 'start' ? (placed?.startFrames ?? 0) : (placed?.endFrames ?? 0),
+                      // S176 — the same clamps `trimClipEdge` applies on
+                      // commit, given to the hook so the live preview cannot
+                      // promise a trim the commit will refuse: the tail keeps
+                      // ≥1 frame; the head keeps ≥1 frame and cannot reach
+                      // before the source's own start (stills have no source
+                      // range and extend without bound).
+                      edge === 'end'
+                        ? { minDelta: 1 - clip.durationFrames, maxDelta: Number.MAX_SAFE_INTEGER }
+                        : {
+                            minDelta:
+                              clip.sourceInFrames != null
+                                ? -clip.sourceInFrames
+                                : -Number.MAX_SAFE_INTEGER,
+                            maxDelta: clip.durationFrames - 1,
+                          },
+                    );
+                  }}
+                  onDropHover={handleDropHover}
+                  onDropFile={handleDrop}
+                  onDropExternalFiles={handleDropExternalFiles}
+                  onReorderStart={handleReorderStart}
+                  onReorderMove={handleReorderMove}
+                  onReorderEnd={handleReorderEnd}
+                  onMarqueeStart={handleMarqueeStart}
+                />
+                {/* S5 — Dedicated Sketch In/Out Keyframe Lane, visible only when sketches are enabled on the spine */}
+                {track.id === spineTrackId && hasSpineSketches && spineTrack && (
+                  <SketchKeyframeLane
+                    spineTrack={spineTrack}
+                    spineClips={spineClips}
+                    fps={fps}
+                    pixelsPerSecond={pixelsPerSecond}
+                    widthPx={widthPx}
+                    selectedClipIds={selectedClipIds}
+                  />
+                )}
+              </Fragment>
             ))}
             {/* S157 — the space below the last lane is the "drag out of the
                 lane" zone; a mid-move hover shows what a release would mint.
@@ -1525,17 +2529,20 @@ export function TimelinePanel() {
               scrub gesture as the ruler. While playing, `transportClock`'s
               subscription moves the wrapper directly; the rendered position is
               the committed (paused) one. */}
-          {/* S175 — the snap indicator: where the gesture is currently held.
-              Imperative (display/left written from `onDelta`), never React
-              state — a line that re-rendered the panel per pointermove would
-              undo the S173 work it rides on. */}
+          {/* S175 & S28 — Smart Magnetic Snapping Guideline with dynamic HUD badge */}
           <div
             ref={snapLineRef}
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 z-10 w-0"
+            className="pointer-events-none absolute inset-y-0 z-30 w-0"
             style={{ display: 'none' }}
           >
-            <span className="absolute inset-y-0 left-0 block w-px bg-accent-ai/70" />
+            <span className="absolute inset-y-0 -left-[1px] block w-[2px] bg-accent-ai shadow-[0_0_10px_rgba(99,102,241,0.9)] ring-1 ring-white/20" />
+            <span className="absolute -top-1 -left-[3px] block h-2 w-2 rotate-45 bg-accent-ai shadow-[0_0_6px_rgba(99,102,241,1)]" />
+            <div
+              ref={snapBadgeRef}
+              className="absolute top-2 left-2.5 px-2 py-0.5 rounded-[4px] bg-bg-panel/95 border border-accent-ai/70 shadow-[0_4px_12px_rgba(0,0,0,0.6)] text-[10px] font-mono font-semibold text-accent-ai whitespace-nowrap pointer-events-none backdrop-blur-md z-40"
+              style={{ display: 'none' }}
+            />
           </div>
 
           {/* S174 — the playhead's body: spans the sizer under the strip
@@ -1552,6 +2559,26 @@ export function TimelinePanel() {
           >
             <span className="absolute inset-y-0 left-0 block w-px bg-accent-ai" />
           </div>
+
+          {/* S20 — Work Area In/Out vertical boundary lines across lanes */}
+          {inPointFrame !== null && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 z-10 w-0"
+              style={{ left: `calc(var(--lane-label-w) + ${inPointFrame * pixelsPerFrame}px)` }}
+            >
+              <span className="absolute inset-y-0 left-0 block w-px border-l-2 border-dashed border-accent-ai/70" />
+            </div>
+          )}
+          {outPointFrame !== null && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 z-10 w-0"
+              style={{ left: `calc(var(--lane-label-w) + ${outPointFrame * pixelsPerFrame}px)` }}
+            >
+              <span className="absolute inset-y-0 left-0 block w-px border-l-2 border-dashed border-accent-ai/70" />
+            </div>
+          )}
         </div>
       </div>
 
@@ -1562,6 +2589,78 @@ export function TimelinePanel() {
         onClose={() => setMenu(null)}
         aria-label="Clip actions"
       />
+
+      {/* S17 — the empty space / gap context menu */}
+      <ContextMenu
+        position={troughMenu ? { x: troughMenu.x, y: troughMenu.y } : null}
+        items={troughMenuItems}
+        onClose={() => setTroughMenu(null)}
+        aria-label="Track and gap actions"
+      />
+
+      {/* S20 — the ruler context menu */}
+      <ContextMenu
+        position={rulerMenu ? { x: rulerMenu.x, y: rulerMenu.y } : null}
+        items={rulerMenuItems}
+        onClose={() => setRulerMenu(null)}
+        aria-label="Ruler actions"
+      />
+
+      {/* S3 / S14 — Marker details & notes editor modal */}
+      <MarkerModal
+        open={Boolean(editingMarker)}
+        marker={editingMarker}
+        fps={fps}
+        onClose={() => setEditingMarkerId(null)}
+        onSave={(patch) => {
+          if (!editingMarker) return;
+          void updateMarker(editingMarker.id, patch);
+        }}
+        onDelete={(markerId) => {
+          void removeMarker(markerId);
+        }}
+      />
+
+      {/* S21 — Speed & Duration retiming modal */}
+      {isSpeedModalOpen && (speedModalClip || selectedClip) && (
+        <SpeedModal
+          open={isSpeedModalOpen}
+          clip={speedModalClip ?? selectedClip}
+          document={document}
+          fps={fps}
+          onClose={() => {
+            setSpeedModalClip(null);
+            closeModal();
+          }}
+        />
+      )}
+
+      {/* S22 — Audio Gain & Fades HUD modal */}
+      {isAudioGainModalOpen && (audioGainModalClip || selectedClip) && (
+        <AudioGainModal
+          open={isAudioGainModalOpen}
+          clip={audioGainModalClip ?? selectedClip}
+          fps={fps}
+          onClose={() => {
+            setAudioGainModalClip(null);
+            closeModal();
+          }}
+        />
+      )}
+
+      {/* S26 — Subtitle & Caption Import/Export Modal */}
+      {isSubtitleModalOpen && (
+        <SubtitleModal
+          open={isSubtitleModalOpen}
+          document={document}
+          fps={fps}
+          initialTrackId={subtitleModalTrackId}
+          onClose={() => {
+            setSubtitleModalTrackId(null);
+            closeModal();
+          }}
+        />
+      )}
     </section>
   );
 }

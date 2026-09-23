@@ -5,11 +5,18 @@ import {
   type ClipTransition,
   type MarkerColor,
   type SequenceClip,
+  type SequenceTrack,
 } from '../../types/sequence';
 import {
   FLASH_FRAMES_MAX,
+  type ClipColorFilters,
+  type ClipTransform,
   type ClipTransitionParams,
+  type ClipVideoFade,
+  type TextContent,
 } from './effects';
+import { type ClipKeyframe } from './keyframes';
+import { type WhiteboardSettings } from './whiteboard';
 import { secondsToFrames } from './frames';
 import {
   MAX_MOTION_RATE_PCT_PER_SEC,
@@ -62,10 +69,16 @@ export interface TimelineSetupRow {
   file?: string;
   /** A separate heading column, when present. */
   heading?: string;
+  /** 1-based position or stated ordinal. */
+  order?: number;
   /** 1-based position in the file, for the "row 12" in an error. */
   line: number;
 
   seconds?: number;
+  startSeconds?: number;
+  startFrames?: number;
+  trackId?: string;
+  trackName?: string;
   transitionIn?: ClipTransition;
   transitionFrames?: number;
   transitionOut?: ClipTransition;
@@ -73,6 +86,20 @@ export interface TimelineSetupRow {
   transitionParams?: ClipTransitionParams;
   motion?: ClipMotion;
   audioOffsetFrames?: number;
+
+  // Sketches & Effects
+  whiteboard?: WhiteboardSettings;
+  filters?: ClipColorFilters;
+  transform?: ClipTransform;
+  speed?: number;
+  text?: TextContent;
+  videoFade?: ClipVideoFade;
+  gainDb?: number;
+  fadeInFrames?: number;
+  fadeOutFrames?: number;
+  sourceAudioEnabled?: boolean;
+  duckExempt?: boolean;
+  keyframes?: ClipKeyframe[];
 }
 
 /** S233 — one marker as the file stated it. `frame` wins over `seconds` when both appear. */
@@ -82,18 +109,31 @@ export interface TimelineSetupMarker {
   name: string;
   color?: MarkerColor;
   locked: boolean;
+  notes?: string;
   line: number;
 }
 
 export interface TimelineSetupParse {
   rows: TimelineSetupRow[];
-  /** S233 — markers stated by the file (JSON only). Merged additively at apply time. */
+  /** Markers stated by the file. Merged additively at apply time. */
   markers: TimelineSetupMarker[];
+  /** Tracks stated by the file (v2 Full JSON). */
+  tracks?: SequenceTrack[];
+  /** Sequence metadata stated by the file (v2 Full JSON). */
+  sequence?: {
+    id?: string;
+    name?: string;
+    fps?: number;
+    width?: number;
+    height?: number;
+    spineTrackId?: string | null;
+  };
   /** Rows the file stated and this could not use, already phrased for display. */
   errors: string[];
   /** Values honoured after adjustment (clamps, quantisation) — aggregated. */
   notes: string[];
   format: 'json' | 'csv';
+  isFullTimeline?: boolean;
 }
 
 const ID_KEYS = ['id', 'shotid', 'shot', 'shot_id', 'clip', 'clipid', 'key'];
@@ -118,6 +158,7 @@ const AUDIO_OFFSET_KEYS = ['audiooffsetframes', 'audiooffset', 'jl', 'splitedit'
 function parseTransitionName(raw: unknown): ClipTransition | undefined {
   if (typeof raw !== 'string' || raw.trim() === '') return undefined;
   const wanted = normalizeKey(raw).replace(/_/g, '');
+  if (wanted === 'dissolve') return 'crossfade';
   return CLIP_TRANSITIONS.find((name) => name.replace(/_/g, '') === wanted);
 }
 
@@ -273,6 +314,66 @@ function readSetupFields(
     row.audioOffsetFrames = clamped;
   }
 
+  const startSec = parseNumberCell(get(['startseconds', 'startsec', 'start', 'time', 'timestamp']));
+  if (startSec !== undefined) row.startSeconds = startSec;
+  const startFrames = parseNumberCell(get(['startframes', 'startframe']));
+  if (startFrames !== undefined) row.startFrames = Math.max(0, Math.round(startFrames));
+
+  const trackId = asText(get(['trackid', 'track']));
+  if (trackId) row.trackId = trackId;
+  const trackName = asText(get(['trackname', 'lane']));
+  if (trackName) row.trackName = trackName;
+
+  // Whiteboard / sketches
+  const whiteboardRaw = get(['whiteboard', 'sketch', 'handdrawn', 'whiteboardsettings']);
+  if (whiteboardRaw && typeof whiteboardRaw === 'object') {
+    row.whiteboard = whiteboardRaw as WhiteboardSettings;
+  }
+
+  // Filters
+  const filtersRaw = get(['filters', 'color', 'colorfilters', 'grade']);
+  if (filtersRaw && typeof filtersRaw === 'object') {
+    row.filters = filtersRaw as ClipColorFilters;
+  }
+
+  // Transform
+  const transformRaw = get(['transform', 'pip', 'placement']);
+  if (transformRaw && typeof transformRaw === 'object') {
+    row.transform = transformRaw as ClipTransform;
+  }
+
+  // Speed
+  const speed = parseNumberCell(get(['speed', 'rate', 'multiplier']));
+  if (speed !== undefined && speed > 0) row.speed = speed;
+
+  // Text
+  const textRaw = get(['text', 'title', 'caption']);
+  if (textRaw && typeof textRaw === 'object') {
+    row.text = textRaw as TextContent;
+  }
+
+  // Video Fade
+  const videoFadeRaw = get(['videofade', 'fade', 'videofades']);
+  if (videoFadeRaw && typeof videoFadeRaw === 'object') {
+    row.videoFade = videoFadeRaw as ClipVideoFade;
+  }
+
+  // Audio Controls
+  const gainDb = parseNumberCell(get(['gaindb', 'gain', 'volume', 'level']));
+  if (gainDb !== undefined) row.gainDb = gainDb;
+  const fadeInFrames = parseNumberCell(get(['fadeinframes', 'fadein']));
+  if (fadeInFrames !== undefined) row.fadeInFrames = Math.max(0, Math.round(fadeInFrames));
+  const fadeOutFrames = parseNumberCell(get(['fadeoutframes', 'fadeout']));
+  if (fadeOutFrames !== undefined) row.fadeOutFrames = Math.max(0, Math.round(fadeOutFrames));
+  const audioEnabled = get(['sourceaudioenabled', 'audioenabled', 'audio']);
+  if (typeof audioEnabled === 'boolean') row.sourceAudioEnabled = audioEnabled;
+  const duckExempt = get(['duckexempt', 'exemptfromduck']);
+  if (typeof duckExempt === 'boolean') row.duckExempt = duckExempt;
+
+  // Keyframes
+  const keyframesRaw = get(['keyframes', 'curves']);
+  if (Array.isArray(keyframesRaw)) row.keyframes = keyframesRaw as ClipKeyframe[];
+
   return row;
 }
 
@@ -354,10 +455,12 @@ function jsonRows(
     }
     const fields = readSetupFields(get, `“${key}”`, errors, adjust);
     if (fields === null) return;
+    const orderVal = parseNumberCell(byKey.get('order') ?? byKey.get('ord') ?? byKey.get('index') ?? byKey.get('sortindex'));
     rows.push({
       key,
       file: fileKey ? String(byKey.get(fileKey)) : undefined,
       heading: headingKey ? String(byKey.get(headingKey)) : undefined,
+      order: orderVal !== undefined ? orderVal : line,
       line,
       ...fields,
     });
@@ -499,13 +602,31 @@ export function parseTimelineSetupFile(text: string, fileName: string): Timeline
 
   let rows: TimelineSetupRow[];
   const markers: TimelineSetupMarker[] = [];
+  let tracks: SequenceTrack[] | undefined;
+  let sequence: TimelineSetupParse['sequence'];
   let format: 'json' | 'csv';
+  let isFullTimeline = false;
   if (looksJson || (claimsJson && trimmed.length > 0)) {
     format = 'json';
     try {
-      rows = jsonRows(JSON.parse(trimmed), errors, adjust, markers);
+      const parsedJson = JSON.parse(trimmed);
+      rows = jsonRows(parsedJson, errors, adjust, markers);
+      if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+        if (Array.isArray(parsedJson.tracks)) {
+          tracks = parsedJson.tracks as SequenceTrack[];
+        }
+        if (parsedJson.sequence && typeof parsedJson.sequence === 'object') {
+          sequence = parsedJson.sequence as TimelineSetupParse['sequence'];
+        }
+        if (
+          parsedJson.format === 'videostudio-timeline-full-v2' ||
+          (Array.isArray(parsedJson.tracks) && parsedJson.tracks.length > 0)
+        ) {
+          isFullTimeline = true;
+        }
+      }
     } catch {
-      return { rows: [], markers: [], errors: ['That file is not valid JSON.'], notes: [], format };
+      return { rows: [], markers: [], errors: ['That file is not valid JSON.'], notes: [], format, isFullTimeline: false };
     }
   } else {
     format = 'csv';
@@ -522,7 +643,17 @@ export function parseTimelineSetupFile(text: string, fileName: string): Timeline
   if (adjust.offsetsClamped > 0) {
     notes.push(`${adjust.offsetsClamped} audio offset${adjust.offsetsClamped === 1 ? '' : 's'} clamped`);
   }
-  return { rows, markers, errors, notes, format };
+  return { rows, markers, tracks, sequence, errors, notes, format, isFullTimeline };
+}
+
+/**
+ * Convenient alias and wrapper for parsing JSON timeline setup or full timeline JSON.
+ */
+export function parseTimelineSetupJson(
+  text: string,
+  _fpsOrFileName?: number | string,
+): TimelineSetupParse {
+  return parseTimelineSetupFile(text, 'timeline.json');
 }
 
 // ---------------------------------------------------------------- matching
@@ -694,8 +825,23 @@ export function materializeTimelineSetupPatch(
     patch.transitionOutFrames = row.transitionOut === 'cut' ? 0 : (row.transitionOutFrames ?? 12);
   }
   if (row.audioOffsetFrames !== undefined) patch.audioOffsetFrames = row.audioOffsetFrames;
+  if (row.startFrames !== undefined) {
+    patch.startFrames = row.startFrames;
+  } else if (row.startSeconds !== undefined) {
+    patch.startFrames = Math.max(0, secondsToFrames(row.startSeconds, fps));
+  }
 
-  if (row.motion !== undefined || row.transitionParams !== undefined) {
+  const hasEffects =
+    row.motion !== undefined ||
+    row.transitionParams !== undefined ||
+    row.whiteboard !== undefined ||
+    row.filters !== undefined ||
+    row.transform !== undefined ||
+    row.speed !== undefined ||
+    row.text !== undefined ||
+    row.videoFade !== undefined;
+
+  if (hasEffects) {
     const effects = { ...clip.effects };
     if (row.motion !== undefined) {
       if (row.motion.preset === 'hold') delete effects.motion;
@@ -706,8 +852,36 @@ export function materializeTimelineSetupPatch(
     if (row.transitionParams !== undefined) {
       effects.transition = { ...effects.transition, ...row.transitionParams };
     }
+    if (row.whiteboard !== undefined) {
+      effects.whiteboard = row.whiteboard;
+    }
+    if (row.filters !== undefined) {
+      effects.filters = { ...effects.filters, ...row.filters };
+    }
+    if (row.transform !== undefined) {
+      effects.transform = { ...effects.transform, ...row.transform };
+    }
+    if (row.speed !== undefined) {
+      effects.speed = row.speed;
+    }
+    if (row.text !== undefined) {
+      effects.text = row.text;
+    }
+    if (row.videoFade !== undefined) {
+      effects.videoFade = { ...effects.videoFade, ...row.videoFade };
+    }
     patch.effects = effects;
   }
+
+  // Audio Controls
+  if (row.gainDb !== undefined) patch.gainDb = row.gainDb;
+  if (row.fadeInFrames !== undefined) patch.fadeInFrames = row.fadeInFrames;
+  if (row.fadeOutFrames !== undefined) patch.fadeOutFrames = row.fadeOutFrames;
+  if (row.sourceAudioEnabled !== undefined) patch.sourceAudioEnabled = row.sourceAudioEnabled;
+  if (row.duckExempt !== undefined) patch.duckExempt = row.duckExempt;
+
+  // Keyframes
+  if (row.keyframes !== undefined) patch.keyframes = row.keyframes;
 
   return { patch, overrides };
 }

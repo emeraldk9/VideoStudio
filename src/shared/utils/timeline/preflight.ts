@@ -132,6 +132,19 @@ export function runPreflight(input: PreflightInput): PreflightFinding[] {
   // shot); named either way, never silently produced.
   const spineId = sequence.spineTrackId ?? videoTracks[0]?.id;
   const spineTrack = videoTracks.find((track) => track.id === spineId);
+  if (spineTrack && (spineTrack.muted || spineTrack.videoEnabled === false)) {
+    findings.push({
+      code: 'spine_track_hidden_or_muted',
+      severity: 'blocking',
+      message: `The spine video track "${spineTrack.name}" is ${
+        spineTrack.muted && spineTrack.videoEnabled === false
+          ? 'hidden and muted'
+          : spineTrack.muted
+            ? 'muted'
+            : 'hidden'
+      }. Unhide or unmute it before exporting.`,
+    });
+  }
   const spineEnd = spineTrack
     ? layoutTrack(clips, spineTrack).reduce((max, placed) => Math.max(max, placed.endFrames), 0)
     : 0;

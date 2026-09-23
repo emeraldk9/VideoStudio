@@ -161,12 +161,15 @@ export function buildAudioTimelineGraph(
       ? `volume=volume='${segment.volumeExpression}':eval=frame`
       : `volume=${volume.toFixed(3)}`;
 
+    const audioFilterTerm = segment.audioFilter ? `,${segment.audioFilter}` : '';
+
     chains.push(
       // No video input here, so segment N is input N — not N+1 as in the mux.
       `[${index}:a]aresample=${sampleRate}` +
         trimChain +
         (tempoChain ? `,${tempoChain}` : '') +
         `,${volumeTerm}` +
+        audioFilterTerm +
         buildFadeChain(segment) +
         `,adelay=${offsetToMs(segment.offsetSeconds)}:all=1[${label}]`,
     );

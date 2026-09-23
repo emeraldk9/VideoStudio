@@ -7,6 +7,7 @@ import type { PixelRect, WatermarkEngine } from '../../shared/types/watermark';
 import { Logger } from '../logging/logger';
 
 import { buildDecodeFrameArgs, buildEncodeFrameArgs } from './watermark-args';
+import { handleStillCleaning } from './watermark-worker';
 import type { WatermarkStillRequest, WatermarkStillResponse } from './watermark-worker-protocol';
 
 const execFileAsync = util.promisify(execFile);
@@ -234,7 +235,20 @@ export class StillWatermarkRemover {
     signal?: AbortSignal,
   ): Promise<WatermarkStillResponse & { timedOut?: boolean }> {
     return new Promise((resolve) => {
-      const worker = new Worker(this.workerScriptPath);
+      let worker: Worker | null = null;
+      try {
+        worker = new Worker(this.workerScriptPath);
+      } catch (err) {
+        logger.warn('worker thread unavailable, executing still cleaning in-process', { err: String(err) });
+        try {
+          const res = handleStillCleaning(request);
+          resolve(res);
+        } catch (innerErr) {
+          resolve({ ...emptyResponse(request.itemId), error: String(innerErr) });
+        }
+        return;
+      }
+
       let settled = false;
 
       const finish = (result: WatermarkStillResponse & { timedOut?: boolean }) => {
@@ -242,7 +256,7 @@ export class StillWatermarkRemover {
         settled = true;
         clearTimeout(timer);
         signal?.removeEventListener('abort', onAbort);
-        void worker.terminate();
+        if (worker) void worker.terminate();
         resolve(result);
       };
 
@@ -265,9 +279,15 @@ export class StillWatermarkRemover {
       }
 
       worker.once('message', (response: WatermarkStillResponse) => finish(response));
-      worker.once('error', (error: Error) =>
-        finish({ ...emptyResponse(request.itemId), error: String(error) }),
-      );
+      worker.once('error', (error: Error) => {
+        logger.warn('worker thread failed, attempting in-process fallback', { error: String(error) });
+        try {
+          const res = handleStillCleaning(request);
+          finish(res);
+        } catch {
+          finish({ ...emptyResponse(request.itemId), error: String(error) });
+        }
+      });
 
       worker.postMessage(
         request,

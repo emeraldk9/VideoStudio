@@ -3,11 +3,14 @@ import type { TtsHistoryLine } from '../../types/tts';
 
 import type { TimelineDragItem } from './drag-payload';
 import { effectPresetById } from './effect-presets';
+import { filterPresetById } from './filter-presets';
+import { videoEffectPresetById } from './video-effects';
 import { TEXT_PRESETS, type TextContent } from './effects';
 import { secondsToFrames } from './frames';
 import { shiftKeyframes, splitKeyframes } from './keyframes';
 import { clipAtFrame, layoutTrack } from './layout';
 import { clipAllowedOnTrack } from './move-clip';
+import { applyRippleDelete, resolveCollisionBumping } from './magnetic-ripple-ops';
 
 /**
  * Beta S145 phase D — structural edits, pure.
@@ -253,32 +256,7 @@ export function rippleDelete(
   tracks: readonly SequenceTrack[],
   clipIds: readonly string[],
 ): SequenceClip[] {
-  const removing = new Set(clipIds);
-  const kept = clips.filter((clip) => !removing.has(clip.id));
-
-  const shiftByClipId = new Map<string, number>();
-  for (const track of tracks) {
-    if (track.magnetic) continue;
-    // Spans measured in the pre-delete layout — the shift each survivor
-    // needs is defined by where the removed clips *were*.
-    const placed = layoutTrack(clips, track);
-    const removed = placed.filter((item) => removing.has(item.clip.id));
-    if (removed.length === 0) continue;
-    for (const survivor of placed) {
-      if (removing.has(survivor.clip.id)) continue;
-      const shift = removed
-        .filter((item) => item.startFrames <= survivor.startFrames)
-        .reduce((total, item) => total + item.clip.durationFrames, 0);
-      if (shift > 0) shiftByClipId.set(survivor.clip.id, shift);
-    }
-  }
-
-  if (shiftByClipId.size === 0) return kept;
-  return kept.map((clip) => {
-    const shift = shiftByClipId.get(clip.id);
-    if (shift === undefined) return clip;
-    return { ...clip, startFrames: Math.max(0, (clip.startFrames ?? 0) - shift) };
-  });
+  return applyRippleDelete(clips, tracks, clipIds);
 }
 
 /**
@@ -335,6 +313,250 @@ export function moveSelectionBy(
     next = [...next.filter((clip) => clip.trackId !== track.id), ...ordered];
   }
   return next;
+}
+
+/**
+ * Beta S12 — extracts / detaches embedded audio from a video clip.
+ *
+ * Industry-standard "Separate Audio" / "Extract Audio" workflow:
+ * - Finds the targeted video clip (must be `sourceKind === 'video'` and have `filePath`).
+ * - Locates an unlocked audio track (targetAudioTrackId if provided, or the first unlocked audio track).
+ * - If target audio track is found:
+ *   - The original video clip has `sourceAudioEnabled: false` set.
+ *   - An audio clip is created on the audio track at the exact same startFrames and with identical
+ *     durationFrames, sourceInFrames, gainDb, fadeInFrames, fadeOutFrames.
+ *   - Its orderIndex is computed based on track clips.
+ *   - Returns `{ clips: updatedClips, createdClip: audioClip }`.
+ * - If no video clip or no audio track can host it, returns null.
+ */
+export function separateClipAudio(
+  clips: SequenceClip[],
+  tracks: readonly SequenceTrack[],
+  clipId: string,
+  mintId: () => string,
+  targetAudioTrackId?: string,
+): { clips: SequenceClip[]; createdClip: SequenceClip } | null {
+  const clip = clips.find((c) => c.id === clipId);
+  if (!clip || clip.sourceKind !== 'video' || !clip.filePath) return null;
+
+  const videoTrack = tracks.find((t) => t.id === clip.trackId);
+  if (!videoTrack) return null;
+
+  const placed = layoutTrack(clips, videoTrack).find((p) => p.clip.id === clip.id);
+  if (!placed) return null;
+
+  // Find target audio track
+  let audioTrack: SequenceTrack | undefined;
+  if (targetAudioTrackId) {
+    audioTrack = tracks.find((t) => t.id === targetAudioTrackId && t.kind === 'audio' && !t.locked);
+  }
+  if (!audioTrack) {
+    audioTrack = tracks.find((t) => t.kind === 'audio' && !t.locked);
+  }
+  if (!audioTrack) return null;
+
+  const existingTrackClips = clips
+    .filter((c) => c.trackId === audioTrack.id)
+    .sort((a, b) => a.orderIndex - b.orderIndex);
+
+  const newOrderIndex =
+    existingTrackClips.length > 0 ? Math.max(...existingTrackClips.map((c) => c.orderIndex)) + 1 : 0;
+
+  const createdClip: SequenceClip = {
+    id: mintId(),
+    sequenceId: clip.sequenceId,
+    trackId: audioTrack.id,
+    orderIndex: newOrderIndex,
+    sourceKind: 'audio',
+    outputId: null,
+    storyShotId: clip.storyShotId,
+    sourceTakeId: clip.sourceTakeId,
+    filePath: clip.filePath,
+    startFrames: audioTrack.magnetic ? null : placed.startFrames,
+    durationFrames: clip.durationFrames,
+    sourceInFrames: clip.sourceInFrames ?? 0,
+    sourceOutFrames: clip.sourceOutFrames ?? null,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: clip.gainDb ?? 0,
+    fadeInFrames: clip.fadeInFrames ?? 0,
+    fadeOutFrames: clip.fadeOutFrames ?? 0,
+    label: clip.label ? `${clip.label} (Audio)` : 'Extracted Audio',
+    overrides: [],
+  };
+
+  const updatedVideoClip: SequenceClip = {
+    ...clip,
+    sourceAudioEnabled: false,
+  };
+
+  const nextClips = clips.map((c) => (c.id === clip.id ? updatedVideoClip : c)).concat(createdClip);
+  return { clips: nextClips, createdClip };
+}
+
+/**
+ * Beta S12 — duplicates selected clips directly on the timeline.
+ *
+ * Standard NLE duplicate (`Ctrl`+`D` / `Cmd`+`D`):
+ * - For each target clip:
+ *   - On a magnetic track: duplicates immediately after the source clip (`orderIndex + 1`),
+ *     shifting all subsequent clips on that track down by 1.
+ *   - On a free track: places the duplicate immediately after the source clip
+ *     (`startFrames: source.startFrames + source.durationFrames`).
+ * - Generates new unique IDs via `mintId`.
+ * - Returns `{ clips: updatedClips, duplicatedClips }`.
+ */
+export function duplicateClips(
+  clips: SequenceClip[],
+  tracks: readonly SequenceTrack[],
+  clipIds: readonly string[],
+  mintId: () => string,
+): { clips: SequenceClip[]; duplicatedClips: SequenceClip[] } {
+  if (clipIds.length === 0) return { clips, duplicatedClips: [] };
+
+  const targetSet = new Set(clipIds);
+  const trackMap = new Map(tracks.map((t) => [t.id, t]));
+  let currentClips = [...clips];
+  const duplicatedClips: SequenceClip[] = [];
+
+  const targets = clips.filter((c) => targetSet.has(c.id));
+
+  for (const original of targets) {
+    const track = trackMap.get(original.trackId);
+    if (!track || track.locked) continue;
+
+    const newId = mintId();
+    const placed = layoutTrack(currentClips, track).find((p) => p.clip.id === original.id);
+    const startFrames = placed ? placed.startFrames : (original.startFrames ?? 0);
+
+    const duplicate: SequenceClip = {
+      ...original,
+      id: newId,
+      label: original.label ? `${original.label} (Copy)` : original.label,
+      startFrames: track.magnetic ? null : startFrames + original.durationFrames,
+      orderIndex: original.orderIndex + 1,
+    };
+
+    if (track.magnetic) {
+      currentClips = currentClips.map((c) => {
+        if (c.trackId === track.id && c.orderIndex > original.orderIndex) {
+          return { ...c, orderIndex: c.orderIndex + 1 };
+        }
+        return c;
+      });
+    }
+
+    currentClips.push(duplicate);
+    duplicatedClips.push(duplicate);
+  }
+
+  return { clips: currentClips, duplicatedClips };
+}
+
+/**
+ * Beta S12 — inserts a freeze frame at the playhead inside a video clip.
+ *
+ * At the cut point:
+ * - If the cut is strictly inside the clip (offset > 0 && offset < durationFrames):
+ *   Splits the clip into first half and second half (same honest blade arithmetic as `splitClipAtFrame`).
+ * - Between them, inserts a new still clip with `freezeImagePath` of length `freezeDurationFrames`.
+ * - On a magnetic track, re-indexes orderIndex: first, freeze, second, and shifts subsequent clips.
+ * - On a free track, offsets the second half and subsequent clips by `freezeDurationFrames`.
+ * - If cut is at the boundary of a clip or clip is not video, returns null.
+ */
+export function insertFreezeFrame(
+  clips: SequenceClip[],
+  track: SequenceTrack,
+  videoClipId: string,
+  frame: number,
+  freezeImagePath: string,
+  freezeDurationFrames: number,
+  mintIds: { splitId: string; freezeId: string },
+): { clips: SequenceClip[]; freezeClip: SequenceClip } | null {
+  if (track.locked || freezeDurationFrames <= 0) return null;
+
+  const placed = clipAtFrame(layoutTrack(clips, track), frame);
+  if (!placed || placed.clip.id !== videoClipId) return null;
+
+  const offset = Math.round(frame - placed.startFrames);
+  if (offset <= 0 || offset >= placed.clip.durationFrames) return null;
+
+  const firstDuration = offset;
+  const secondDuration = placed.clip.durationFrames - offset;
+
+  const first: SequenceClip = {
+    ...placed.clip,
+    durationFrames: firstDuration,
+    overrides: placed.clip.overrides.includes('durationFrames')
+      ? placed.clip.overrides
+      : [...placed.clip.overrides, 'durationFrames'],
+  };
+
+  const halves = splitKeyframes(placed.clip.keyframes, offset);
+  first.keyframes = halves.first;
+
+  const freezeClip: SequenceClip = {
+    id: mintIds.freezeId,
+    sequenceId: placed.clip.sequenceId,
+    trackId: track.id,
+    orderIndex: placed.clip.orderIndex + 1,
+    sourceKind: 'still',
+    outputId: null,
+    storyShotId: placed.clip.storyShotId,
+    sourceTakeId: placed.clip.sourceTakeId,
+    filePath: freezeImagePath,
+    startFrames: track.magnetic ? null : Math.round(frame),
+    durationFrames: freezeDurationFrames,
+    sourceInFrames: null,
+    sourceOutFrames: null,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    label: placed.clip.label ? `${placed.clip.label} (Freeze)` : 'Freeze Frame',
+    overrides: [],
+  };
+
+  const second: SequenceClip = {
+    ...placed.clip,
+    id: mintIds.splitId,
+    orderIndex: placed.clip.orderIndex + 2,
+    durationFrames: secondDuration,
+    sourceInFrames:
+      placed.clip.sourceKind === 'video'
+        ? (placed.clip.sourceInFrames ?? 0) + offset
+        : placed.clip.sourceInFrames,
+    startFrames: track.magnetic ? null : Math.round(frame + freezeDurationFrames),
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    overrides: first.overrides,
+    keyframes: halves.second,
+  };
+
+  const nextClips = clips
+    .map((clip) => {
+      if (clip.id === placed.clip.id) return first;
+      if (clip.trackId === track.id) {
+        if (track.magnetic) {
+          if (clip.orderIndex > placed.clip.orderIndex) {
+            return { ...clip, orderIndex: clip.orderIndex + 2 };
+          }
+        } else {
+          // Free track: ripple clips that start at or after the cut point
+          if (typeof clip.startFrames === 'number' && clip.startFrames >= Math.round(frame)) {
+            return { ...clip, startFrames: clip.startFrames + freezeDurationFrames };
+          }
+        }
+      }
+      return clip;
+    })
+    .concat([freezeClip, second]);
+
+  return { clips: nextClips, freezeClip };
 }
 
 /** Why one narration line could not be placed. Reported, never silently fixed. */
@@ -685,6 +907,7 @@ export function placeSourcesAt(
   fps: number,
   sequenceId: string,
   mintId: () => string,
+  options?: { ripple?: boolean; bumperToleranceFrames?: number },
 ): PlaceSourcesResult {
   if (track.locked || items.length === 0) return { clips, placedIds: [], placed: [] };
 
@@ -701,9 +924,21 @@ export function placeSourcesAt(
   if (drafts.length === 0) return { clips, placedIds: [], placed: [] };
 
   const placedIds = drafts.map((clip) => clip.id);
-  const start = Math.max(0, Math.round(atFrame));
+  let start = Math.max(0, Math.round(atFrame));
+  const totalDuration = drafts.reduce((sum, d) => sum + d.durationFrames, 0);
 
   if (!track.magnetic) {
+    if (options?.bumperToleranceFrames !== undefined && !options?.ripple) {
+      start = resolveCollisionBumping(
+        clips,
+        track,
+        null,
+        start,
+        totalDuration,
+        options.bumperToleranceFrames,
+      ).snappedStart;
+    }
+
     const count = clips.filter((clip) => clip.trackId === track.id).length;
     let cursor = start;
     const laid = drafts.map((clip, index) => {
@@ -711,7 +946,20 @@ export function placeSourcesAt(
       cursor += clip.durationFrames;
       return placedClip;
     });
-    return { clips: [...clips, ...laid], placedIds, placed: placedSources };
+
+    let resultClips = [...clips, ...laid];
+    if (options?.ripple) {
+      resultClips = resultClips.map((clip) => {
+        if (placedIds.includes(clip.id) || clip.trackId !== track.id) return clip;
+        const clipStart = clip.startFrames ?? 0;
+        if (clipStart >= start) {
+          return { ...clip, startFrames: clipStart + totalDuration };
+        }
+        return clip;
+      });
+    }
+
+    return { clips: resultClips, placedIds, placed: placedSources };
   }
 
   // Magnetic — splice as a block at the slot under the frame (centre rule).
@@ -794,9 +1042,28 @@ function draftClip(
   if (sourceKind === 'text' || sourceKind === 'effect') {
     if (!item.presetId) return null;
     if (sourceKind === 'effect') {
-      const preset = effectPresetById(item.presetId);
-      if (!preset) return null;
-      return { ...base, effects: { filters: { ...preset.filters } } };
+      const vfxPreset = videoEffectPresetById(item.presetId);
+      if (vfxPreset) {
+        return {
+          ...base,
+          effects: {
+            videoEffect: {
+              id: crypto.randomUUID(),
+              presetId: vfxPreset.id,
+              label: vfxPreset.label,
+              category: vfxPreset.category,
+              intensity: vfxPreset.defaultIntensity,
+              speed: vfxPreset.defaultSpeed,
+              scale: vfxPreset.defaultScale,
+              param: vfxPreset.defaultParam,
+              colorHex: vfxPreset.colorHex,
+            },
+          },
+        };
+      }
+      const filterPreset = filterPresetById(item.presetId) ?? effectPresetById(item.presetId);
+      if (!filterPreset) return null;
+      return { ...base, effects: { filters: { ...filterPreset.filters }, filterIntensity: 100 } };
     }
     if (!(item.presetId in TEXT_PRESETS)) return null;
     const textPreset = TEXT_PRESETS[item.presetId as TextContent['preset']];
@@ -815,3 +1082,291 @@ function draftClip(
     sourceInFrames: sourceKind === 'still' ? null : 0,
   };
 }
+
+/**
+ * Step S17 — Timeline track gap representation.
+ */
+export interface TimelineTrackGap {
+  trackId: string;
+  startFrames: number;
+  endFrames: number;
+  durationFrames: number;
+}
+
+/**
+ * Step S17 — Computes empty spaces / gaps on a track.
+ * By definition, magnetic tracks have zero gaps.
+ * For free tracks, finds spaces between clips, and optionally leading space before frame 0.
+ */
+export function findTrackGaps(
+  clips: readonly SequenceClip[],
+  track: SequenceTrack,
+  includeLeading: boolean = true,
+): TimelineTrackGap[] {
+  if (track.magnetic) return [];
+  const placed = layoutTrack(clips as SequenceClip[], track);
+  if (placed.length === 0) return [];
+
+  const sorted = [...placed].sort((a, b) => a.startFrames - b.startFrames);
+  const gaps: TimelineTrackGap[] = [];
+
+  // Leading gap before the very first clip
+  if (includeLeading && sorted[0].startFrames > 0) {
+    gaps.push({
+      trackId: track.id,
+      startFrames: 0,
+      endFrames: sorted[0].startFrames,
+      durationFrames: sorted[0].startFrames,
+    });
+  }
+
+  // Intermediate gaps between clips
+  let cursor = sorted[0].endFrames;
+  for (let i = 1; i < sorted.length; i++) {
+    const item = sorted[i];
+    if (item.startFrames > cursor) {
+      gaps.push({
+        trackId: track.id,
+        startFrames: cursor,
+        endFrames: item.startFrames,
+        durationFrames: item.startFrames - cursor,
+      });
+    }
+    cursor = Math.max(cursor, item.endFrames);
+  }
+
+  return gaps;
+}
+
+/**
+ * Step S17 — Finds the gap enclosing `frame` on `track`, if any.
+ */
+export function findGapAtFrame(
+  clips: readonly SequenceClip[],
+  track: SequenceTrack,
+  frame: number,
+): TimelineTrackGap | null {
+  if (track.magnetic) return null;
+  const gaps = findTrackGaps(clips, track, true);
+  return gaps.find((g) => frame >= g.startFrames && frame < g.endFrames) ?? null;
+}
+
+/**
+ * Step S17 — Closes a specific gap on a track, shifting all downstream clips leftward.
+ */
+export function closeTrackGap(
+  clips: readonly SequenceClip[],
+  track: SequenceTrack,
+  gap: { startFrames: number; endFrames: number; durationFrames: number },
+): SequenceClip[] {
+  if (track.magnetic || track.locked || gap.durationFrames <= 0) {
+    return clips as SequenceClip[];
+  }
+
+  return clips.map((clip) => {
+    if (clip.trackId !== track.id) return clip;
+    const start = clip.startFrames ?? 0;
+    // Clips that start at or after the gap's end boundary shift left by the gap duration
+    if (start >= gap.endFrames) {
+      return {
+        ...clip,
+        startFrames: Math.max(gap.startFrames, start - gap.durationFrames),
+      };
+    }
+    return clip;
+  });
+}
+
+/**
+ * Step S17 — Closes all gaps on a single track, compacting clips consecutively.
+ */
+export function closeAllGapsOnTrack(
+  clips: readonly SequenceClip[],
+  track: SequenceTrack,
+  includeLeading: boolean = true,
+): SequenceClip[] {
+  if (track.magnetic || track.locked) return clips as SequenceClip[];
+  const placed = layoutTrack(clips as SequenceClip[], track);
+  if (placed.length === 0) return clips as SequenceClip[];
+  if (placed.length === 1 && (!includeLeading || placed[0].startFrames === 0)) {
+    return clips as SequenceClip[];
+  }
+
+  const sorted = [...placed].sort((a, b) => a.startFrames - b.startFrames);
+  const newStartByClipId = new Map<string, number>();
+
+  let cursor = includeLeading ? 0 : sorted[0].startFrames;
+  for (const item of sorted) {
+    newStartByClipId.set(item.clip.id, cursor);
+    cursor += item.clip.durationFrames;
+  }
+
+  return clips.map((clip) => {
+    if (clip.trackId !== track.id) return clip;
+    const newStart = newStartByClipId.get(clip.id);
+    if (newStart === undefined) return clip;
+    return {
+      ...clip,
+      startFrames: newStart,
+    };
+  });
+}
+
+/**
+ * Step S17 — Closes all gaps across all unlocked free tracks on the timeline.
+ */
+export function closeAllGapsAcrossTracks(
+  clips: readonly SequenceClip[],
+  tracks: readonly SequenceTrack[],
+  includeLeading: boolean = true,
+): SequenceClip[] {
+  let current = clips as SequenceClip[];
+  for (const track of tracks) {
+    if (track.locked || track.magnetic) continue;
+    current = closeAllGapsOnTrack(current, track, includeLeading);
+  }
+  return current;
+}
+
+/**
+ * Step S17 — Inserts a default text title clip at `frame` on `track`.
+ */
+export function insertTextClipAt(
+  clips: readonly SequenceClip[],
+  track: SequenceTrack,
+  frame: number,
+  durationFrames: number,
+  mintId: () => string,
+  label: string = 'Title Text',
+): { clips: SequenceClip[]; textClip: SequenceClip } {
+  const textPreset = TEXT_PRESETS.title;
+  const newClip: SequenceClip = {
+    id: mintId(),
+    sequenceId: track.sequenceId,
+    trackId: track.id,
+    orderIndex: track.magnetic ? clips.filter((c) => c.trackId === track.id).length : 0,
+    sourceKind: 'text',
+    outputId: null,
+    storyShotId: null,
+    sourceTakeId: null,
+    filePath: null,
+    startFrames: track.magnetic ? null : Math.max(0, Math.round(frame)),
+    durationFrames: Math.max(1, Math.round(durationFrames)),
+    sourceInFrames: null,
+    sourceOutFrames: null,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    label,
+    overrides: [],
+    effects: {
+      text: { ...textPreset, text: label },
+    },
+  };
+
+  return {
+    clips: [...clips, newClip],
+    textClip: newClip,
+  };
+}
+
+/**
+ * Step S19 — Slips the media contents inside the clip boundaries.
+ * Shifts `sourceInFrames` (and `sourceOutFrames` if defined) without changing timeline
+ * placement or duration.
+ */
+export function slipClipMedia(
+  clip: SequenceClip,
+  deltaFrames: number,
+  maxSourceFrames?: number,
+): SequenceClip {
+  const currentIn = clip.sourceInFrames ?? 0;
+  let nextIn = currentIn + Math.round(deltaFrames);
+  nextIn = Math.max(0, nextIn);
+
+  if (typeof maxSourceFrames === 'number' && maxSourceFrames > 0) {
+    const maxIn = Math.max(0, maxSourceFrames - clip.durationFrames);
+    nextIn = Math.min(nextIn, maxIn);
+  }
+
+  const shift = nextIn - currentIn;
+  const nextOut = typeof clip.sourceOutFrames === 'number' ? clip.sourceOutFrames + shift : null;
+
+  return {
+    ...clip,
+    sourceInFrames: nextIn,
+    sourceOutFrames: nextOut,
+  };
+}
+
+/**
+ * Step S19 — Slides a clip along the timeline on a track while trimming adjacent clips
+ * to maintain surrounding sequence timing and total duration.
+ */
+export function slideClipPosition(
+  clips: readonly SequenceClip[],
+  track: SequenceTrack,
+  clipId: string,
+  deltaFrames: number,
+): SequenceClip[] {
+  if (track.locked || deltaFrames === 0) return clips as SequenceClip[];
+  const placed = layoutTrack(clips as SequenceClip[], track);
+  const targetIndex = placed.findIndex((p) => p.clip.id === clipId);
+  if (targetIndex === -1) return clips as SequenceClip[];
+
+  const delta = Math.round(deltaFrames);
+  const target = placed[targetIndex];
+
+  if (track.magnetic) {
+    return clips as SequenceClip[];
+  }
+
+  const prev = targetIndex > 0 ? placed[targetIndex - 1] : null;
+  const next = targetIndex < placed.length - 1 ? placed[targetIndex + 1] : null;
+
+  let clampedDelta = delta;
+  if (delta > 0 && next) {
+    const maxSlideRight = Math.max(0, next.clip.durationFrames - 1);
+    clampedDelta = Math.min(clampedDelta, maxSlideRight);
+  } else if (delta < 0 && prev) {
+    const maxSlideLeft = Math.max(0, prev.clip.durationFrames - 1);
+    clampedDelta = Math.max(clampedDelta, -maxSlideLeft);
+  }
+
+  if (clampedDelta === 0) return clips as SequenceClip[];
+
+  return clips.map((clip) => {
+    if (clip.id === target.clip.id) {
+      return {
+        ...clip,
+        startFrames: Math.max(0, (clip.startFrames ?? 0) + clampedDelta),
+      };
+    }
+    if (prev && clip.id === prev.clip.id) {
+      return {
+        ...clip,
+        durationFrames: Math.max(1, clip.durationFrames + clampedDelta),
+      };
+    }
+    if (next && clip.id === next.clip.id) {
+      const nextStart = Math.max(0, (clip.startFrames ?? 0) + clampedDelta);
+      const nextDuration = Math.max(1, clip.durationFrames - clampedDelta);
+      const nextSourceIn =
+        typeof clip.sourceInFrames === 'number'
+          ? Math.max(0, clip.sourceInFrames + clampedDelta)
+          : null;
+      return {
+        ...clip,
+        startFrames: nextStart,
+        durationFrames: nextDuration,
+        sourceInFrames: nextSourceIn,
+      };
+    }
+    return clip;
+  });
+}
+
+

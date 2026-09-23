@@ -70,6 +70,27 @@ uniform float uFiltersB[7];
 uniform float uAdjust[${MAX_ADJUSTMENT_LAYERS * 7}];
 uniform int uAdjustCount;
 
+// S69: Extended GPU Effect Uniforms for Layer A & B
+// Film: [enabled, grainIntensity, grainRoughness, halationThreshold, halationIntensity, timeSeed]
+uniform float uFilmA[6];
+uniform float uFilmB[6];
+
+// Lens: [enabled, distortionK1, distortionK2, chromaticAberrationPx, chromaticAngleRad, anamorphicRatio]
+uniform float uLensA[6];
+uniform float uLensB[6];
+
+// Chroma: [enabled, keyR, keyG, keyB, similarity, smoothness, spillSuppression]
+uniform float uChromaA[7];
+uniform float uChromaB[7];
+
+// Grade: [enabled, liftR, liftG, liftB, gammaR, gammaG, gammaB, gainR, gainG, gainB, temperature, tint]
+uniform float uGradeA[12];
+uniform float uGradeB[12];
+
+// Mask: [enabled, shapeId, centerX, centerY, halfWidth, halfHeight, rotationRad, feather, invert]
+uniform float uMaskA[9];
+uniform float uMaskB[9];
+
 uniform int uFamily;
 uniform float uProgress;
 uniform vec2 uDirection;
@@ -141,28 +162,143 @@ vec3 applyColor(vec3 color, float brightness, float contrast, float saturation, 
   return applyHue(color, hue);
 }
 
+// S69: High-performance 2D hash for procedural film grain
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+// S69: Lens optical barrel & pincushion distortion
+vec2 distortUv(vec2 uv, float k1, float k2) {
+  if (abs(k1) < 0.001 && abs(k2) < 0.001) return uv;
+  vec2 p = uv - 0.5;
+  float r2 = dot(p, p);
+  float factor = 1.0 + k1 * r2 + k2 * r2 * r2;
+  return 0.5 + p * factor;
+}
+
+// S69: 3-Way Lift / Gamma / Gain balance with temperature & tint
+vec3 apply3WayColorGrade(vec3 c, float g[12]) {
+  if (g[0] < 0.5) return c;
+  vec3 lift = vec3(g[1], g[2], g[3]);
+  vec3 gamma = vec3(g[4], g[5], g[6]);
+  vec3 gain = vec3(g[7], g[8], g[9]);
+  float temp = g[10];
+  float tint = g[11];
+
+  c = c * gain + lift * (1.0 - c);
+  c = pow(max(vec3(0.0), c), 1.0 / max(vec3(0.01), gamma));
+
+  c.r += temp * 0.1;
+  c.b -= temp * 0.1;
+  c.g += tint * 0.1;
+  return clamp(c, 0.0, 1.0);
+}
+
+// S69: Signed Distance Field shape mask evaluator
+float evaluateShapeMask(float m[9], vec2 uv) {
+  int shapeId = int(m[1] + 0.5);
+  vec2 center = vec2(m[2], m[3]);
+  vec2 halfSize = vec2(m[4], m[5]);
+  float rot = m[6];
+  float feather = max(0.001, m[7]);
+  float invert = m[8];
+
+  vec2 p = uv - center;
+  if (abs(rot) > 0.001) {
+    float cr = cos(-rot);
+    float sr = sin(-rot);
+    p = mat2(cr, -sr, sr, cr) * p;
+  }
+
+  float alpha = 1.0;
+  if (shapeId == 1) {
+    // Rectangle
+    vec2 d = abs(p) - halfSize;
+    float dist = max(d.x, d.y);
+    alpha = 1.0 - smoothstep(0.0, feather, dist);
+  } else if (shapeId == 2 || shapeId == 3) {
+    // Circle or Ellipse
+    vec2 normalized = p / max(vec2(0.001), halfSize);
+    float dist = length(normalized) - 1.0;
+    alpha = 1.0 - smoothstep(0.0, feather / min(halfSize.x, halfSize.y), dist);
+  } else if (shapeId == 4) {
+    // Linear gradient
+    float dist = p.y + halfSize.y;
+    alpha = smoothstep(0.0, halfSize.y * 2.0, dist);
+  } else if (shapeId == 5) {
+    // Radial vignette
+    float dist = length(p) - halfSize.x;
+    alpha = 1.0 - smoothstep(0.0, feather, dist);
+  }
+
+  if (invert > 0.5) {
+    alpha = 1.0 - alpha;
+  }
+  return clamp(alpha, 0.0, 1.0);
+}
+
 /**
- * One picture, sampled at \`frameUv\` and graded.
- *
- * \`frameUv\` is the position in the *output* frame, which is \`vUv\` for every
- * family except \`slide\` — where both pictures translate, and passing a
- * shifted coordinate is the whole implementation. Outside the source
- * rectangle the frame is background: that is what makes \`contain\`
- * letterbox instead of smearing the edge texel.
+ * One picture, sampled at \`frameUv\` and graded with full S69 GPU shader pipeline.
  */
-vec4 sampleLayer(sampler2D tex, vec4 uvXform, vec2 texel, float f[7], vec2 frameUv) {
-  if (frameUv.x < 0.0 || frameUv.x > 1.0 || frameUv.y < 0.0 || frameUv.y > 1.0) {
+vec4 sampleLayer(
+  sampler2D tex,
+  vec4 uvXform,
+  vec2 texel,
+  float f[7],
+  float film[6],
+  float lens[6],
+  float chroma[7],
+  float grade[12],
+  float mask[9],
+  vec2 frameUv
+) {
+  // 1. Lens Distortion
+  vec2 distFrameUv = frameUv;
+  if (lens[0] > 0.5) {
+    distFrameUv = distortUv(frameUv, lens[1], lens[2]);
+  }
+
+  if (distFrameUv.x < 0.0 || distFrameUv.x > 1.0 || distFrameUv.y < 0.0 || distFrameUv.y > 1.0) {
     return vec4(uBackground, 0.0);
   }
-  vec2 uv = frameUv * uvXform.xy + uvXform.zw;
+  vec2 uv = distFrameUv * uvXform.xy + uvXform.zw;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
     return vec4(uBackground, 1.0);
   }
-  vec3 color = texture(tex, uv).rgb;
+
+  // 2. Chromatic Aberration & Base Texture Sampling
+  vec3 color;
+  if (lens[0] > 0.5 && lens[3] > 0.001) {
+    vec2 caDir = vec2(cos(lens[4]), sin(lens[4])) * (lens[3] * texel);
+    float cr = texture(tex, uv + caDir).r;
+    float cg = texture(tex, uv).g;
+    float cb = texture(tex, uv - caDir).b;
+    color = vec3(cr, cg, cb);
+  } else {
+    color = texture(tex, uv).rgb;
+  }
+
+  // 3. Chroma Keying & Spill Suppression
+  float keyAlpha = 1.0;
+  if (chroma[0] > 0.5) {
+    vec3 keyColor = vec3(chroma[1], chroma[2], chroma[3]);
+    float similarity = chroma[4];
+    float smoothness = chroma[5];
+    float spill = chroma[6];
+    float colorDist = length(color - keyColor);
+    keyAlpha = smoothstep(similarity - smoothness, similarity + smoothness, colorDist);
+
+    if (keyColor.g > keyColor.r && keyColor.g > keyColor.b) {
+      color.g = mix(color.g, min(color.g, max(color.r, color.b) * 0.95), spill);
+    } else if (keyColor.b > keyColor.r && keyColor.b > keyColor.g) {
+      color.b = mix(color.b, min(color.b, max(color.r, color.g) * 0.95), spill);
+    }
+  }
+
+  // 4. Unsharp Mask
   if (f[5] > 0.001) {
-    // Unsharp mask: a 4-tap cross is not \`unsharp=5:5\`, and does not claim
-    // to be — it is the same *direction* of correction at a cost the preview
-    // can pay every frame.
     vec3 blur = (
       texture(tex, uv + vec2(texel.x, 0.0)).rgb +
       texture(tex, uv - vec2(texel.x, 0.0)).rgb +
@@ -171,26 +307,57 @@ vec4 sampleLayer(sampler2D tex, vec4 uvXform, vec2 texel, float f[7], vec2 frame
     ) * 0.25;
     color += (color - blur) * f[5] * 1.5;
   }
+
+  // 5. Basic Color Correction (brightness, contrast, saturation, gamma, hue)
   color = applyColor(color, f[0], f[1], f[2], f[3], f[4]);
+
+  // 6. 3-Way Color Wheels (Lift / Gamma / Gain)
+  if (grade[0] > 0.5) {
+    color = apply3WayColorGrade(color, grade);
+  }
+
+  // 7. Film Emulation (Grain & Halation)
+  if (film[0] > 0.5) {
+    float luma = dot(color, vec3(0.299, 0.587, 0.114));
+    if (film[1] > 0.001) {
+      float n = hash12(uv * 1200.0 + vec2(film[5] * 73.1, film[5] * 91.3));
+      float grainWeight = 1.0 - abs(luma - 0.5) * 1.5;
+      float grain = (n - 0.5) * film[1] * grainWeight * 0.35;
+      color = clamp(color + grain, 0.0, 1.0);
+    }
+    if (film[3] > 0.01 && film[4] > 0.01 && luma > film[3]) {
+      float halSpread = (luma - film[3]) * film[4] * 0.4;
+      color.r = clamp(color.r + halSpread, 0.0, 1.0);
+      color.g = clamp(color.g + halSpread * 0.2, 0.0, 1.0);
+    }
+  }
+
+  // 8. Vignette Falloff
   if (f[6] > 0.001) {
-    // \`vignette=PI/5*strength\`: a cos^4 falloff off the frame centre, which
-    // is the filter's own model.
-    float r = length(frameUv - 0.5) * 2.0;
+    float r = length(distFrameUv - 0.5) * 2.0;
     float fall = pow(cos(clamp(r * (PI / 5.0) * f[6] * 2.5, 0.0, PI * 0.5)), 4.0);
     color *= mix(1.0, fall, clamp(f[6], 0.0, 1.0));
   }
-  return vec4(color, 1.0);
+
+  // 9. Shape Masking
+  float finalAlpha = keyAlpha;
+  if (mask[0] > 0.5) {
+    float maskAlpha = evaluateShapeMask(mask, distFrameUv);
+    finalAlpha *= maskAlpha;
+  }
+
+  return vec4(color, finalAlpha);
 }
 
 vec3 layerA(vec2 frameUv) {
   if (!uHasA) return uBackground;
-  vec4 c = sampleLayer(uTexA, uUvA, uTexelA, uFiltersA, frameUv);
+  vec4 c = sampleLayer(uTexA, uUvA, uTexelA, uFiltersA, uFilmA, uLensA, uChromaA, uGradeA, uMaskA, frameUv);
   return mix(uBackground, c.rgb, c.a);
 }
 
 vec3 layerB(vec2 frameUv) {
   if (!uHasB) return uBackground;
-  vec4 c = sampleLayer(uTexB, uUvB, uTexelB, uFiltersB, frameUv);
+  vec4 c = sampleLayer(uTexB, uUvB, uTexelB, uFiltersB, uFilmB, uLensB, uChromaB, uGradeB, uMaskB, frameUv);
   return mix(uBackground, c.rgb, c.a);
 }
 

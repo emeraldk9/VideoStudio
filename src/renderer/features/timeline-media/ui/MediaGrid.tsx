@@ -183,7 +183,7 @@ export function MediaGrid({
       ref={attachScrollElement}
       {...selection.containerProps}
       aria-label="Media"
-      className="min-h-0 flex-1 overflow-y-auto"
+      className="h-full w-full min-h-0 flex-1 overflow-y-auto"
     >
       {!isMeasured ? null : (
         <div className="relative" style={{ height: rowVirtualizer.getTotalSize() }}>

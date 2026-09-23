@@ -1,5 +1,7 @@
-import type { ClipEffects } from '../utils/timeline/effects';
+import type { ClipEffects, CompoundClipSettings } from '../utils/timeline/effects';
 import type { ClipKeyframe } from '../utils/timeline/keyframes';
+
+export type { ClipEffects, CompoundClipSettings };
 
 import type { WatermarkCleanedStamp } from './watermark';
 
@@ -115,6 +117,8 @@ export interface SequenceMarker {
    * about any non-cut boundary within ±{@link SYNC_LOCK_GUARD_FRAMES} frames.
    */
   locked: boolean;
+  /** Commentary, review feedback, or editorial cues attached to this frame marker. */
+  notes?: string;
 }
 
 /** S233 — half-width of a locked marker's guarded window, in frames. The cue sheet's ±8f rule. */
@@ -159,6 +163,8 @@ export interface SequenceTrack {
    */
   videoEnabled: boolean;
   heightPx: number;
+  /** Volume multiplier (0..2), defaults to 1.0 */
+  volume?: number;
   /**
    * Kind-scoped — see {@link TrackRole}: `narration`/`music` on audio,
    * `text` on video (never the spine), `null` is a plain track of its kind.
@@ -236,11 +242,11 @@ export function hasEffectClips(document: SequenceDocument): boolean {
  * on a free video-kind track, is excluded from the overlay stack, and renders
  * as one time-windowed filter pass after the composite.
  */
-export const SEQUENCE_SOURCE_KINDS = ['still', 'video', 'audio', 'text', 'effect'] as const;
+export const SEQUENCE_SOURCE_KINDS = ['still', 'video', 'audio', 'text', 'effect', 'compound'] as const;
 export type SequenceSourceKind = (typeof SEQUENCE_SOURCE_KINDS)[number];
 
 /** The file-backed kinds — what the media pool browses and a probe can measure. */
-export type MediaSourceKind = Exclude<SequenceSourceKind, 'text' | 'effect'>;
+export type MediaSourceKind = Exclude<SequenceSourceKind, 'text' | 'effect' | 'compound'>;
 
 /**
  * Ken Burns, as a closed set of presets rather than a keyframe curve.
@@ -422,6 +428,22 @@ export const CLIP_TRANSITION_LABELS: Record<ClipTransition, string> = {
 export const CLIP_OVERRIDABLE_FIELDS = ['durationFrames', 'filePath', 'motionPreset', 'label'] as const;
 export type ClipOverridableField = (typeof CLIP_OVERRIDABLE_FIELDS)[number];
 
+/**
+ * S25 — Curated studio clip color labels matching Premiere Pro & DaVinci Resolve
+ * to visually organize A-roll, B-roll, music, sound effects, titles, and graphics.
+ */
+export const CLIP_COLOR_LABELS = [
+  'default',
+  'rose',
+  'amber',
+  'emerald',
+  'cyan',
+  'violet',
+  'fuchsia',
+  'steel',
+] as const;
+export type ClipColorLabel = (typeof CLIP_COLOR_LABELS)[number];
+
 export interface SequenceClip {
   id: string;
   sequenceId: string;
@@ -528,6 +550,8 @@ export interface SequenceClip {
    */
   duckExempt?: boolean;
   label: string;
+  /** S25 — Studio clip color label for visual organization on the timeline. */
+  colorLabel?: ClipColorLabel;
   /** @see CLIP_OVERRIDABLE_FIELDS */
   overrides: ClipOverridableField[];
   /**
@@ -544,6 +568,24 @@ export interface SequenceClip {
    * clip on the wire, whole-document like everything else.
    */
   keyframes?: ClipKeyframe[];
+  /** S76 — ID of linked sibling clip (e.g. video linked to external audio). */
+  linkedClipId?: string | null;
+  /** S76 — Synchronized offset relative to linked master clip in frames. */
+  syncOffsetFrames?: number;
+}
+
+/** S76 — Returns true if the clip is linked to another clip. */
+export function isClipLinked(clip: SequenceClip | undefined | null): boolean {
+  return Boolean(clip?.linkedClipId);
+}
+
+/** S76 — Finds the linked sibling clip from a clips collection if it exists. */
+export function getLinkedClip(
+  clip: SequenceClip | undefined | null,
+  allClips: readonly SequenceClip[],
+): SequenceClip | null {
+  if (!clip?.linkedClipId) return null;
+  return allClips.find((c) => c.id === clip.linkedClipId) ?? null;
 }
 
 export interface Sequence {
@@ -854,8 +896,20 @@ export type RenderAudioBitrate = (typeof RENDER_AUDIO_BITRATES)[number];
  * them. `'png'` is a numbered frame sequence (`name_00001.png…`) beside the
  * chosen path; `'gif'`/`'apng'`/`'png'` carry no audio by nature.
  */
-export const RENDER_DELIVERY_FORMATS = ['mp4', 'gif', 'webm', 'apng', 'png'] as const;
+export const RENDER_DELIVERY_FORMATS = [
+  'mp4',
+  'gif',
+  'webm',
+  'apng',
+  'png',
+  'prores',
+  'dnxhd',
+  'hevc',
+  'wav',
+] as const;
 export type RenderDeliveryFormat = (typeof RENDER_DELIVERY_FORMATS)[number];
+
+export type AudioStemType = 'master' | 'dialogue' | 'music' | 'sfx';
 
 export interface SequenceRenderRequest {
   sequenceId: string;
@@ -881,8 +935,22 @@ export interface SequenceRenderRequest {
    * bitrate apply; the video stages never run.
    */
   audioOnly?: boolean;
-  /** S286 — delivery container. Absent = `'mp4'`, the pre-S286 output exactly. */
+  /** S286 / S68 — delivery container. Absent = `'mp4'`, the pre-S286 output exactly. */
   format?: RenderDeliveryFormat;
+  /** S68 — two-pass VBR encoding for maximum rate-control quality. */
+  twoPass?: boolean;
+  /** S68 — isolated audio stem render (dialogue, music, sfx, master). */
+  stemType?: AudioStemType;
+  /** S68 — optional ProRes profile: 0=Proxy, 1=LT, 2=Standard, 3=HQ (default 3). */
+  proresProfile?: number;
+  /** S68 — submix bus routing map (trackId -> busId) for stem filtering. */
+  stemRoutingMap?: Record<string, string>;
+  /** S73 — hard-coded subtitle / closed caption burn-in. */
+  burnInSubtitles?: boolean;
+  /** S73 — subtitle typography style preset id (classic_clean, cinema_gold, yellow_broadcast, tiktok_box, retro_teletext). */
+  subtitleStylePresetId?: string;
+  /** S73 — optional target subtitle track id to burn in (if not specified, all subtitle/text tracks are included). */
+  subtitleTrackId?: string;
 }
 
 export interface SequenceRenderResult {
@@ -1055,6 +1123,7 @@ export const PREFLIGHT_CODES = [
   'geometry_mismatch',
   'stale_approval',
   'empty_sequence',
+  'spine_track_hidden_or_muted',
   /**
    * Beta S154 phase 2 — a free video track ends after the spine does, so the
    * composite extends the spine with black (`tpad`) to keep the overlay.

@@ -473,6 +473,8 @@ export interface MuxOptions {
    * sequence muxes in seconds, and it stays.
    */
   encoder?: RenderEncoderInfo;
+  /** S73 — subtitle file path to burn into the video. Forces a re-encode. */
+  subtitlePath?: string;
 }
 
 export function buildMuxArgs(
@@ -481,12 +483,21 @@ export function buildMuxArgs(
   outputPath: string,
   options: MuxOptions = {},
 ): string[] {
-  const reencode = options.outputHeight !== undefined || options.quality === 'high';
+  const hasSubtitles = Boolean(options.subtitlePath);
+  const reencode = options.outputHeight !== undefined || options.quality === 'high' || hasSubtitles;
+
+  const vfFilters: string[] = [];
+  if (options.outputHeight !== undefined) {
+    vfFilters.push(`scale=-2:${Math.max(2, Math.round(options.outputHeight / 2) * 2)}`);
+  }
+  if (options.subtitlePath) {
+    const escaped = options.subtitlePath.replace(/\\/g, '/').replace(/:/g, '\\:');
+    vfFilters.push(`subtitles='${escaped}'`);
+  }
+
   const videoArgs = reencode
     ? [
-        ...(options.outputHeight !== undefined
-          ? ['-vf', `scale=-2:${Math.max(2, Math.round(options.outputHeight / 2) * 2)}`]
-          : []),
+        ...(vfFilters.length > 0 ? ['-vf', vfFilters.join(',')] : []),
         ...videoEncodeArgs({ quality: options.quality, encoder: options.encoder }),
       ]
     : null;
@@ -522,7 +533,7 @@ export function buildMuxArgs(
  * every container.
  */
 export interface TranscodeOptions {
-  format: Exclude<RenderDeliveryFormat, 'mp4'>;
+  format?: RenderDeliveryFormat;
   /**
    * `'gif'` only: the palette pass-1 output ({@link buildGifPaletteArgs}).
    * Two real passes rather than the single-command `split`/`palettegen`
@@ -530,8 +541,14 @@ export interface TranscodeOptions {
    * fine for a clip, a memory cliff for a minutes-long sequence.
    */
   palettePath?: string;
-  /** `'webm'` only: the Opus bitrate. Absent = 192, matching the mux's AAC default. */
+  /** `'webm'`/`'hevc'` only: the audio bitrate. Absent = 192, matching the mux's AAC default. */
   audioBitrateKbps?: number;
+  /** Encode quality tier for HEVC or VBR rate control. */
+  quality?: RenderQuality;
+  /** S68: ProRes profile: 0=Proxy, 1=LT, 2=Standard, 3=HQ (default 3). */
+  proresProfile?: number;
+  /** S68: Two-pass rate-control encoding. */
+  twoPass?: boolean;
 }
 
 /** S286 — GIF pass 1: the whole master distilled into one 256-colour palette. */
@@ -555,11 +572,9 @@ export function pngSequenceFirstFrame(outputPath: string): string {
 }
 
 /**
- * S286 — master mp4 → delivery container. Pure args, like every builder in
- * this file. GIF/APNG/PNG are silent by nature (`-an` states it rather than
- * relying on the muxer to notice); WebM re-encodes the bed to Opus. Always a
- * software encode — none of these codecs has a hardware path in the bundled
- * ffmpeg, so the S248 encoder never applies here.
+ * S286 / S68 — master mp4 → delivery container. Pure args, like every builder in
+ * this file. GIF/APNG/PNG are silent by nature; WebM re-encodes the bed to Opus;
+ * ProRes and DNxHD produce broadcast uncompressed PCM audio; WAV outputs 24-bit 48kHz audio.
  */
 export function buildTranscodeArgs(
   masterPath: string,
@@ -602,6 +617,67 @@ export function buildTranscodeArgs(
         `${options.audioBitrateKbps ?? 192}k`,
         outputPath,
       ];
+    case 'prores':
+      return [
+        '-y',
+        '-i',
+        masterPath,
+        '-c:v',
+        'prores_ks',
+        '-profile:v',
+        String(options.proresProfile ?? 3),
+        '-pix_fmt',
+        'yuv422p10le',
+        '-c:a',
+        'pcm_s24le',
+        outputPath,
+      ];
+    case 'dnxhd':
+      return [
+        '-y',
+        '-i',
+        masterPath,
+        '-c:v',
+        'dnxhd',
+        '-profile:v',
+        'dnxhr_hq',
+        '-pix_fmt',
+        'yuv422p',
+        '-c:a',
+        'pcm_s16le',
+        outputPath,
+      ];
+    case 'hevc':
+      return [
+        '-y',
+        '-i',
+        masterPath,
+        '-c:v',
+        'libx265',
+        '-crf',
+        options.quality === 'high' ? '20' : '23',
+        '-preset',
+        'medium',
+        '-pix_fmt',
+        'yuv420p10le',
+        '-c:a',
+        'aac',
+        '-b:a',
+        `${options.audioBitrateKbps ?? 192}k`,
+        outputPath,
+      ];
+    case 'wav':
+      return [
+        '-y',
+        '-i',
+        masterPath,
+        '-vn',
+        '-c:a',
+        'pcm_s24le',
+        '-ar',
+        '48000',
+        outputPath,
+      ];
     case 'apng':
       // -plays 0 loops forever — the GIF's -loop 0, under the APNG muxer's name.
       return ['-y', '-i', masterPath, '-an', '-c:v', 'apng', '-plays', '0', outputPath];
@@ -617,6 +693,32 @@ export function buildTranscodeArgs(
         '1',
         pngSequencePattern(outputPath),
       ];
+    case 'mp4':
+    default: {
+      const crf = options.quality === 'high' ? '18' : '23';
+      const args = [
+        '-y',
+        '-i',
+        masterPath,
+        '-c:v',
+        'libx264',
+        '-crf',
+        crf,
+        '-preset',
+        'medium',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-b:a',
+        `${options.audioBitrateKbps ?? 192}k`,
+      ];
+      if (options.twoPass) {
+        args.push('-pass', '2');
+      }
+      args.push(outputPath);
+      return args;
+    }
   }
 }
 
@@ -723,21 +825,29 @@ export function buildAlphaSegmentArgs(
     transformScale?: number;
     /** S154 phase 6 — static opacity, multiplied into the alpha channel. @default 1 */
     opacity?: number;
+    /** S75 — Grid / Split-Screen cell dimensions. */
+    cellRect?: { widthPct: number; heightPct: number };
   },
 ): string[] {
   const scale = options.draft ? 0.5 : 1;
   const pip = clamp(options.transformScale ?? 1, 0.05, 1);
-  // The segment is only as big as its PiP box — the layer graph positions it.
-  const width = Math.max(2, Math.round(clamp(options.width, 2, 7680) * scale * pip));
-  const height = Math.max(2, Math.round(clamp(options.height, 2, 4320) * scale * pip));
+  const cellW = options.cellRect ? clamp(options.cellRect.widthPct, 0.05, 1) : pip;
+  const cellH = options.cellRect ? clamp(options.cellRect.heightPct, 0.05, 1) : pip;
+  // The segment is sized to its target PiP or split-screen cell.
+  const width = Math.max(2, Math.round(clamp(options.width, 2, 7680) * scale * cellW));
+  const height = Math.max(2, Math.round(clamp(options.height, 2, 4320) * scale * cellH));
   const evenWidth = width % 2 === 0 ? width : width + 1;
   const evenHeight = height % 2 === 0 ? height : height + 1;
   const fps = Math.max(1, Math.round(clamp(options.fps, 1, 120)));
   const speed = clamp(options.speed ?? 1, 0.25, 4);
   const opacity = clamp(options.opacity ?? 1, 0, 1);
+
+  const scaleChain = options.cellRect
+    ? `scale=${evenWidth}:${evenHeight}:force_original_aspect_ratio=increase,crop=${evenWidth}:${evenHeight}`
+    : `scale=${evenWidth}:${evenHeight}:force_original_aspect_ratio=decrease,pad=${evenWidth}:${evenHeight}:(ow-iw)/2:(oh-ih)/2:color=black@0.0`;
+
   const filter = [
-    `scale=${evenWidth}:${evenHeight}:force_original_aspect_ratio=decrease`,
-    `pad=${evenWidth}:${evenHeight}:(ow-iw)/2:(oh-ih)/2:color=black@0.0`,
+    scaleChain,
     'setsar=1',
     // Same phase-3 ordering as the spine's chain: retime, colour, then CFR.
     ...(!options.still && Math.abs(speed - 1) > 0.001 ? [`setpts=PTS/${speed.toFixed(4)}`] : []),

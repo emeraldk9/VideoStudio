@@ -1,13 +1,15 @@
 import { app, ipcMain } from 'electron';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import util from 'node:util';
 
 import {
   buildOtioDocument,
+  buildTimelineFullJson,
   buildTimelineSetupJson,
+  parseTimelineSetupFile,
   IPC_CHANNELS,
   IPC_SCHEMAS,
   MEDIA_IMPORT_EXTENSIONS,
@@ -203,11 +205,20 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
     // "unknown".
     const lengthOf = (probe: ClipProbe): number | null =>
       probe.durationSec > 0 ? probe.durationSec : null;
-    const cached = probes.get(key);
+    let cached: ClipProbe | null = null;
+    try {
+      cached = probes.get(key);
+    } catch (cacheErr) {
+      logger.warn('probes.get failed', { filePath, error: String(cacheErr) });
+    }
     if (cached) return lengthOf(cached);
     try {
       const probe = await probeClip(filePath, ffmpegPath, TIMELINE_PROBE_OPTIONS);
-      probes.upsert(key, probe, randomUUID(), now());
+      try {
+        probes.upsert(key, probe, randomUUID(), now());
+      } catch (cacheErr) {
+        logger.warn('probes.upsert failed', { filePath, error: String(cacheErr) });
+      }
       return lengthOf(probe);
     } catch (error) {
       logger.warn('import probe failed', {
@@ -380,7 +391,7 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
       (_event, payload): SequenceMarker[] | null =>
         sequences.addMarker(
           payload.sequenceId,
-          { frame: payload.frame, name: payload.name, color: payload.color, locked: payload.locked },
+          { frame: payload.frame, name: payload.name, notes: payload.notes, color: payload.color, locked: payload.locked },
           now(),
         ),
     ),
@@ -394,6 +405,7 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
         sequences.updateMarker(payload.sequenceId, payload.markerId, {
           frame: payload.frame,
           name: payload.name,
+          notes: payload.notes,
           color: payload.color,
           locked: payload.locked,
         }),
@@ -441,14 +453,23 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
             results[sourcePath] = null;
             continue;
           }
-          const cached = probes.get(key);
+          let cached: ClipProbe | null = null;
+          try {
+            cached = probes.get(key);
+          } catch (cacheErr) {
+            logger.warn('probes.get failed in probeSources', { sourcePath, error: String(cacheErr) });
+          }
           if (cached) {
             results[sourcePath] = cached;
             continue;
           }
           try {
             const probe = await probeClip(sourcePath, ffmpegPath, TIMELINE_PROBE_OPTIONS);
-            probes.upsert(key, probe, randomUUID(), now());
+            try {
+              probes.upsert(key, probe, randomUUID(), now());
+            } catch (cacheErr) {
+              logger.warn('probes.upsert failed in probeSources', { sourcePath, error: String(cacheErr) });
+            }
             results[sourcePath] = probe;
           } catch (error) {
             logger.warn('timeline probe failed', {
@@ -626,6 +647,59 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_CAPTURE_FRAME,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_CAPTURE_FRAME],
+      async (_event, payload): Promise<{ imagePath: string; url: string } | null> => {
+        if (!mayRead(payload.sourcePath, 'captureFrame')) {
+          return null;
+        }
+        try {
+          const stat = fs.statSync(payload.sourcePath);
+          const hash = createHash('sha1')
+            .update(`${payload.sourcePath}:${stat.size}:${Math.round(stat.mtimeMs)}:${payload.atSeconds.toFixed(3)}`)
+            .digest('hex')
+            .slice(0, 16);
+
+          const freezeDir = path.join(managedOutputsRoot, 'freeze-frames');
+          await fs.promises.mkdir(freezeDir, { recursive: true });
+          const imagePath = path.join(freezeDir, `freeze_${hash}.jpg`);
+
+          if (!fs.existsSync(imagePath)) {
+            await execFileAsync(
+              ffmpegPath,
+              [
+                '-y',
+                '-ss',
+                payload.atSeconds.toFixed(3),
+                '-i',
+                payload.sourcePath,
+                '-vframes',
+                '1',
+                '-q:v',
+                '2',
+                imagePath,
+              ],
+              { maxBuffer: 16 * 1024 * 1024 },
+            );
+          }
+
+          const url = toMediaUrl(imagePath);
+          if (!url) return null;
+          return { imagePath, url };
+        } catch (error) {
+          logger.warn('capture frame failed', {
+            sourcePath: payload.sourcePath,
+            atSeconds: payload.atSeconds,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }
+      },
+    ),
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.SEQUENCE_GET_ENCODER,
     withValidation(
       IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_GET_ENCODER],
@@ -723,11 +797,104 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
     ),
   );
 
+  // Full Studio Timeline JSON Export (v2): All tracks, timestamps, durations, transitions, motions, sketches, and effects
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_EXPORT_FULL_JSON,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_EXPORT_FULL_JSON],
+      async (_event, payload): Promise<string | null> => {
+        const document = sequences.get(payload.sequenceId);
+        if (!document) {
+          throw new Error(`Sequence ${payload.sequenceId} no longer exists.`);
+        }
+        const result = await showSaveDialog({
+          title: 'Export Full Timeline JSON',
+          defaultPath: `${document.sequence.name}.timeline.json`,
+          filters: [{ name: 'VideoStudio Timeline JSON (*.json)', extensions: ['json'] }],
+        });
+        if (result.canceled || !result.filePath) return null;
+        await fs.promises.writeFile(
+          result.filePath,
+          buildTimelineFullJson(document, sequences.listMarkers(payload.sequenceId)),
+          'utf8',
+        );
+        logger.info('Exported full timeline JSON', { filePath: result.filePath });
+        return result.filePath;
+      },
+    ),
+  );
+
+  // Full Studio Timeline JSON Import (v2 / v1): Read file, parse, and return for preview & application
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_IMPORT_FULL_JSON,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_IMPORT_FULL_JSON],
+      async (_event, payload) => {
+        const picked = await showOpenDialog({
+          title: 'Import Timeline JSON',
+          properties: ['openFile'],
+          filters: [
+            { name: 'Timeline JSON (*.json)', extensions: ['json'] },
+            { name: 'All files', extensions: ['*'] },
+          ],
+        });
+        if (picked.canceled || picked.filePaths.length === 0) return null;
+
+        const filePath = picked.filePaths[0];
+        const text = await fs.promises.readFile(filePath, 'utf8');
+        const fileName = path.basename(filePath);
+        const parse = parseTimelineSetupFile(text, fileName);
+        logger.info('Parsed timeline JSON for import', {
+          fileName,
+          rowsCount: parse.rows.length,
+          markersCount: parse.markers.length,
+          tracksCount: parse.tracks?.length,
+        });
+        return {
+          filePath,
+          fileName,
+          rawJson: text,
+          parse,
+        };
+      },
+    ),
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_IMPORT_TIMELINE_SETUP,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_IMPORT_TIMELINE_SETUP],
+      async (_event, payload) => {
+        const picked = await showOpenDialog({
+          title: 'Import Timeline Setup (JSON or CSV)',
+          properties: ['openFile'],
+          filters: [
+            { name: 'Timeline setup (JSON, CSV)', extensions: ['json', 'csv', 'tsv', 'txt'] },
+            { name: 'All files', extensions: ['*'] },
+          ],
+        });
+        if (picked.canceled || picked.filePaths.length === 0) return null;
+
+        const filePath = picked.filePaths[0];
+        const text = await fs.promises.readFile(filePath, 'utf8');
+        const fileName = path.basename(filePath);
+        const parse = parseTimelineSetupFile(text, fileName);
+        return {
+          filePath,
+          fileName,
+          rawJson: text,
+          parse,
+        };
+      },
+    ),
+  );
+
   ipcMain.handle(
     IPC_CHANNELS.SEQUENCE_PICK_MEDIA,
     withValidation(
       IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_PICK_MEDIA],
       async (_event, payload): Promise<ImportedMediaFile[]> => {
+        logger.info('SEQUENCE_PICK_MEDIA requested', { kind: payload.kind, projectId: payload.projectId });
         // `'text'` is not pickable — a text clip has no file. The schema's own
         // enum already excludes it; this Record mirrors that.
         const filters: Record<MediaSourceKind, Electron.FileFilter> = {
@@ -739,6 +906,11 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
           title: 'Add files to the bin',
           properties: ['openFile', 'multiSelections'],
           filters: [filters[payload.kind], { name: 'All files', extensions: ['*'] }],
+        });
+        logger.info('SEQUENCE_PICK_MEDIA dialog closed', {
+          canceled: picked.canceled,
+          count: picked.filePaths.length,
+          files: picked.filePaths,
         });
         if (picked.canceled || picked.filePaths.length === 0) {
           // A cancel is not an empty pool — return what is already there, so
@@ -756,22 +928,29 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
             results.push({ path: filePath, kind: 'still', label, durationSec: null });
             continue;
           }
+          const duration = await measure(filePath);
+          logger.info('SEQUENCE_PICK_MEDIA measured file', { filePath, kind, duration });
           results.push({
             path: filePath,
             kind,
             label,
-            durationSec: await measure(filePath),
+            durationSec: duration,
           });
         }
         // S180 — the pick is *recorded*, not merely returned. The row is what
         // makes `media://` serve the file at all (see the channel comment), so
         // a pick that returned without writing one produced a bin entry that
         // could never display.
-        return sequences.recordMedia(
+        const recorded = sequences.recordMedia(
           payload.projectId,
           results.map((file) => ({ ...file, kind: file.kind as MediaSourceKind })),
           now(),
         );
+        logger.info('SEQUENCE_PICK_MEDIA recorded successfully', {
+          projectId: payload.projectId,
+          recordedCount: recorded.length,
+        });
+        return recorded;
       },
     ),
   );

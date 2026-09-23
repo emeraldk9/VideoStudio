@@ -1,3 +1,4 @@
+import { formatIpcError } from '../../../shared/lib/formatIpcError';
 import { useToastStore } from '../../../shared/model/toastStore';
 
 /**
@@ -19,7 +20,7 @@ import { useToastStore } from '../../../shared/model/toastStore';
  * `entities/world-asset` already reach `toastStore` exactly this way.
  */
 export function announceTimelineError(error: unknown, fallback: string): string {
-  let message = error instanceof Error ? error.message : fallback;
+  let message = formatIpcError(error, fallback);
   // S298 — a schema rejection of renderer-produced data means the two halves
   // of the app disagree about the contract, and in practice that is version
   // skew: this window is running newer code than the main process (a dev

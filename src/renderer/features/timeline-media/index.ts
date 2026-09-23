@@ -13,3 +13,5 @@ export { useMediaPanelStore, type MediaPanelCategory } from './lib/mediaPanelSto
 export { FilesPane } from './ui/FilesPane';
 export { TransitionsPane } from './ui/TransitionsPane';
 export { TextPane } from './ui/TextPane';
+export { EffectsPane } from './ui/EffectsPane';
+export { FiltersPane } from './ui/FiltersPane';

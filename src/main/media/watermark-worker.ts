@@ -79,7 +79,7 @@ function countChanged(before: Uint8ClampedArray, after: Uint8ClampedArray): numb
   return n;
 }
 
-function handle(req: WatermarkStillRequest): WatermarkStillResponse {
+export function handleStillCleaning(req: WatermarkStillRequest): WatermarkStillResponse {
   const pixels = new Uint8ClampedArray(req.pixels);
   const original = new Uint8ClampedArray(pixels);
 
@@ -142,7 +142,7 @@ function handle(req: WatermarkStillRequest): WatermarkStillResponse {
 parentPort?.on('message', (req: WatermarkStillRequest) => {
   let response: WatermarkStillResponse;
   try {
-    response = handle(req);
+    response = handleStillCleaning(req);
   } catch (error) {
     response = {
       itemId: req.itemId,

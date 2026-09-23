@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type MediaPanelCategory = 'media' | 'transitions' | 'text' | 'effects' | 'sketch' | 'export';
+export type MediaPanelCategory = 'media' | 'transitions' | 'text' | 'effects' | 'filters' | 'sketch';
 
 interface MediaPanelState {
   category: MediaPanelCategory;

@@ -18,6 +18,7 @@ import {
 
 import { useProjectStore } from '../../../entities/project';
 import { useImportedMediaStore, useSequenceStore } from '../../../entities/sequence';
+import { formatIpcError } from '../../../shared/lib/formatIpcError';
 import { useToastStore } from '../../../shared/model/toastStore';
 import { Button } from '../../../shared/ui/Button';
 import { Section } from '../../../shared/ui/Section';
@@ -313,7 +314,7 @@ export function RenderPanel() {
       } catch (error) {
         pushToast({
           variant: 'error',
-          message: error instanceof Error ? error.message : 'The export failed.',
+          message: formatIpcError(error, 'The export failed.'),
         });
       } finally {
         setLocalBusy(false);
@@ -360,7 +361,7 @@ export function RenderPanel() {
     } catch (error) {
       pushToast({
         variant: 'error',
-        message: error instanceof Error ? error.message : 'The audio export failed.',
+        message: formatIpcError(error, 'The audio export failed.'),
       });
     } finally {
       setLocalBusy(false);
@@ -376,7 +377,7 @@ export function RenderPanel() {
     } catch (error) {
       pushToast({
         variant: 'error',
-        message: error instanceof Error ? error.message : 'The OTIO export failed.',
+        message: formatIpcError(error, 'The OTIO export failed.'),
       });
     }
   }, [document, pushToast]);

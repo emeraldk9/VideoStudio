@@ -65,6 +65,8 @@ export const MODAL_IDS = {
    * three slices that may not import a fourth.
    */
   QUALITY_UPGRADE: 'quality-upgrade',
+  /** S26 — Subtitle & Caption Import (.SRT / .VTT) and Export Engine */
+  SUBTITLES: 'subtitles',
 } as const;
 
 export type ModalId = (typeof MODAL_IDS)[keyof typeof MODAL_IDS];

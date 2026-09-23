@@ -466,7 +466,7 @@ export function WatermarkBatchModal() {
   const presetHint = presets.find((item) => item.id === presetId)?.hint ?? '';
 
   return (
-    <Modal open={open} onClose={handleClose} title="Remove watermark" size="xl" bodyScroll={false}>
+    <Modal open={open} onClose={handleClose} title="Remove watermark" size="2xl" bodyScroll={false}>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto md:flex-row md:gap-6 md:overflow-visible">
           {/* ------------------------------------------------------- Canvas */}

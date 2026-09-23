@@ -1,15 +1,29 @@
 import { useEffect, useRef } from 'react';
 
 import {
+  duplicateClips,
+  findNextCut,
+  findPreviousCut,
+  framesToSeconds,
+  insertFreezeFrame,
   layoutTrack,
   rippleDelete,
+  snapTargets,
   splitAtFrame,
+  timelineSnapTargets,
   transportDurationFrames,
   trimClipEdge,
+  findGapAtFrame,
+  closeTrackGap,
+  slipClipMedia,
+  rippleTrimToPlayhead,
+  toggleDefaultTransition,
+  createAdjustmentLayerClip,
 } from '@shared';
 
 import { useProjectStore } from '../../../entities/project';
 import { currentPlayheadFrame, useSequenceStore } from '../../../entities/sequence';
+import { useModalStore } from '../../../shared/model/modalStore';
 
 import {
   AudioMixerDock,
@@ -18,8 +32,9 @@ import {
   TimelineToolbar,
 } from '../../../features/timeline-edit';
 import { MediaPanel } from '../../../features/timeline-media';
+import { ensureOverlayTrack } from '../../../features/timeline-media/lib/ensure-free-track';
 import { TimelinePreview } from '../../../features/timeline-preview';
-import { RenderPanel } from '../../../features/timeline-render';
+import { useVideoScopesStore } from '../../../features/timeline-preview/model/videoScopesStore';
 import { WatermarkBatchModal } from '../../../features/watermark-removal';
 import { Spinner } from '../../../shared/ui/Spinner';
 
@@ -155,6 +170,171 @@ export function TimelineScreen() {
         }
         return;
       }
+      // S27 — Ctrl+C / Cmd+C: Copy selected clips
+      if ((event.ctrlKey || event.metaKey) && key === 'c' && !event.shiftKey) {
+        event.preventDefault();
+        state.copySelection();
+        return;
+      }
+      // S27 — Ctrl+X / Cmd+X: Cut selected clips (Ctrl+Shift+X: Ripple Cut)
+      if ((event.ctrlKey || event.metaKey) && key === 'x') {
+        event.preventDefault();
+        state.cutSelection(event.shiftKey);
+        return;
+      }
+      // S27 — Ctrl+V / Cmd+V: Overwrite Paste (Ctrl+Shift+V: Ripple Insert Paste)
+      if ((event.ctrlKey || event.metaKey) && key === 'v') {
+        event.preventDefault();
+        state.pasteClipboard({ ripple: event.shiftKey });
+        return;
+      }
+      // S12 — Ctrl+D / Cmd+D: Duplicate selected clips
+      if ((event.ctrlKey || event.metaKey) && key === 'd') {
+        event.preventDefault();
+        if (state.document && state.selectedClipIds.length > 0) {
+          const { clips: next, duplicatedClips } = duplicateClips(
+            state.document.clips,
+            state.document.tracks,
+            state.selectedClipIds,
+            () => crypto.randomUUID(),
+          );
+          if (next !== state.document.clips) {
+            state.commitClips(next);
+            state.select(duplicatedClips.map((c) => c.id));
+          }
+        }
+        return;
+      }
+      // S23 — Shift+D: Apply / toggle default transition (Cross Dissolve) on selected clips
+      if (
+        event.shiftKey &&
+        (key === 'd' || key === 'D') &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        if (state.document && state.selectedClipIds.length > 0) {
+          let nextClips = state.document.clips;
+          for (const id of state.selectedClipIds) {
+            nextClips = toggleDefaultTransition(nextClips, id);
+          }
+          if (nextClips !== state.document.clips) {
+            state.commitClips(nextClips);
+          }
+        }
+        return;
+      }
+      // S29 — Shift+S: Toggle real-time audio scrubbing engine
+      if (
+        event.shiftKey &&
+        (key === 's' || key === 'S') &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        state.toggleAudioScrub();
+        return;
+      }
+      // S31 — Shift+C: Toggle broadcast video scopes (Waveform, Parade, Vectorscope)
+      if (
+        event.shiftKey &&
+        (key === 'c' || key === 'C') &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        useVideoScopesStore.getState().toggleIsOpen();
+        return;
+      }
+      // S21 — Ctrl+R / Cmd+R: Open Speed / Duration retiming modal
+      if ((event.ctrlKey || event.metaKey) && key === 'r' && state.selectedClipIds.length > 0) {
+        event.preventDefault();
+        useModalStore.getState().openModal('speed');
+        return;
+      }
+      // S67 — Alt+K: Toggle track automation curve lane on selected clip(s)
+      if (
+        event.altKey &&
+        (key === 'k' || key === 'K') &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        event.preventDefault();
+        for (const id of state.selectedClipIds) {
+          window.dispatchEvent(
+            new CustomEvent('toggle-clip-automation', {
+              detail: { clipId: id },
+            }),
+          );
+        }
+        return;
+      }
+      // S72 — Alt+R: Toggle in-clip speed ramp Bézier curve editor on selected clip(s)
+      if (
+        event.altKey &&
+        (key === 'r' || key === 'R') &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        event.preventDefault();
+        for (const id of state.selectedClipIds) {
+          window.dispatchEvent(
+            new CustomEvent('toggle-clip-speed-ramp', {
+              detail: { clipId: id },
+            }),
+          );
+        }
+        return;
+      }
+      // S12 — Alt+F: Freeze frame at playhead
+      if (event.altKey && key === 'f') {
+        event.preventDefault();
+        if (state.document && state.selectedClipIds.length === 1) {
+          const clip = state.document.clips.find((c) => c.id === state.selectedClipIds[0]);
+          if (clip && clip.sourceKind === 'video' && clip.filePath) {
+            const track = state.document.tracks.find((t) => t.id === clip.trackId);
+            if (track) {
+              const placed = layoutTrack(state.document.clips, track).find((p) => p.clip.id === clip.id);
+              const frame = state.playheadFrame;
+              if (placed && frame > placed.startFrames && frame < placed.endFrames) {
+                const offset = frame - placed.startFrames;
+                const sourceIn = placed.clip.sourceInFrames ?? 0;
+                const atSeconds = framesToSeconds(sourceIn + offset, fps);
+                void window.api.sequence
+                  .captureFrame({
+                    sourcePath: clip.filePath,
+                    atSeconds,
+                    sequenceId: state.document.sequence.id,
+                  })
+                  .then((capture) => {
+                    if (!capture?.imagePath) return;
+                    const freezeDurationFrames = Math.round(3 * fps);
+                    const res = insertFreezeFrame(
+                      state.document!.clips,
+                      track,
+                      clip.id,
+                      frame,
+                      capture.imagePath,
+                      freezeDurationFrames,
+                      {
+                        splitId: crypto.randomUUID(),
+                        freezeId: crypto.randomUUID(),
+                      },
+                    );
+                    if (res) {
+                      state.commitClips(res.clips);
+                      state.select([res.freezeClip.id]);
+                    }
+                  });
+              }
+            }
+          }
+        }
+        return;
+      }
       if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedClipIds.length > 0) {
         event.preventDefault();
         // S160 — Shift+Delete ripples: the clips go *and* the time they held.
@@ -169,10 +349,70 @@ export function TimelineScreen() {
         return;
       }
 
+      // S17 — Shift+Delete / Shift+Backspace with NO clips selected closes the gap under the playhead
+      if ((event.key === 'Delete' || event.key === 'Backspace') && event.shiftKey && state.selectedClipIds.length === 0 && state.document) {
+        event.preventDefault();
+        const frame = currentPlayheadFrame();
+        for (const track of state.document.tracks) {
+          if (track.locked || track.magnetic) continue;
+          const gap = findGapAtFrame(state.document.clips, track, frame);
+          if (gap) {
+            const next = closeTrackGap(state.document.clips, track, gap);
+            if (next !== state.document.clips) {
+              state.commitClips(next);
+              return;
+            }
+          }
+        }
+        return;
+      }
+
+      // S14 — Shift+M / Alt+M: Jump to Next / Previous marker
+      if (key === 'm' && (event.shiftKey || event.altKey) && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        if (state.markers.length > 0) {
+          const markerFrames = state.markers.map((m) => m.frame);
+          const from = currentPlayheadFrame();
+          setPlaying(false);
+          if (event.altKey) {
+            setPlayhead(findPreviousCut(markerFrames, from));
+          } else {
+            setPlayhead(findNextCut(markerFrames, from, duration));
+          }
+        }
+        return;
+      }
+
       // S160 (owner item 8) — tool selection, the Premiere letters. Bare
       // keypresses, so they sit before the shuttle/step block only by not
       // colliding with it.
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        // S21 — `Q`: Ripple trim head to playhead
+        if (key === 'q' && state.document) {
+          event.preventDefault();
+          const next = rippleTrimToPlayhead(
+            state.document.clips,
+            state.document.tracks,
+            currentPlayheadFrame(),
+            'head',
+            state.selectedClipIds,
+          );
+          if (next !== state.document.clips) state.commitClips(next);
+          return;
+        }
+        // S21 — `W`: Ripple trim tail to playhead
+        if (key === 'w' && state.document) {
+          event.preventDefault();
+          const next = rippleTrimToPlayhead(
+            state.document.clips,
+            state.document.tracks,
+            currentPlayheadFrame(),
+            'tail',
+            state.selectedClipIds,
+          );
+          if (next !== state.document.clips) state.commitClips(next);
+          return;
+        }
         if (key === 'v') {
           event.preventDefault();
           state.setToolMode('select');
@@ -181,6 +421,16 @@ export function TimelineScreen() {
         if (key === 'c') {
           event.preventDefault();
           state.setToolMode('split');
+          return;
+        }
+        if (key === 'b') {
+          event.preventDefault();
+          state.setToolMode('ripple');
+          return;
+        }
+        if (key === 'n') {
+          event.preventDefault();
+          state.setToolMode('roll');
           return;
         }
         if (key === 'a') {
@@ -196,10 +446,85 @@ export function TimelineScreen() {
           state.select([]);
           return;
         }
-        // S160 — `M` drops a marker at the playhead (migration 066).
+        // S160 / S14 — `M` drops a marker at the playhead; if marker exists, opens editor
         if (key === 'm') {
           event.preventDefault();
-          void state.addMarker(currentPlayheadFrame());
+          const frame = currentPlayheadFrame();
+          const existing = state.markers.find((m) => Math.abs(m.frame - frame) <= 0.5);
+          if (existing) {
+            state.setEditingMarkerId(existing.id);
+          } else {
+            void state.addMarker(frame);
+          }
+          return;
+        }
+        // S27 — `;` (semicolon): Lift work area (leaves gap)
+        if (event.key === ';') {
+          event.preventDefault();
+          state.liftWorkArea();
+          return;
+        }
+        // S27 — `'` (apostrophe): Extract work area (ripples timeline backward)
+        if (event.key === "'") {
+          event.preventDefault();
+          state.extractWorkArea();
+          return;
+        }
+        // S22 — `G`: Open Audio Gain & Fades modal for selected clip
+        if (key === 'g' && state.selectedClipIds.length > 0) {
+          event.preventDefault();
+          useModalStore.getState().openModal('audio-gain');
+          return;
+        }
+      }
+
+      // S13 — Up/Down Arrow: Jump playhead to previous/next edit cut point or marker
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (state.document) {
+          const clipTargets = snapTargets(state.document.tracks, state.document.clips);
+          const markerFrames = state.markers.map((m) => m.frame);
+          const allTargets = timelineSnapTargets({
+            base: clipTargets,
+            markerFrames,
+            playheadFrame: null,
+            sequenceEndFrame: duration,
+          });
+          const from = currentPlayheadFrame();
+          setPlaying(false);
+          if (event.key === 'ArrowUp') {
+            setPlayhead(findPreviousCut(allTargets, from));
+          } else {
+            setPlayhead(findNextCut(allTargets, from, duration));
+          }
+        }
+        return;
+      }
+
+      // S13 — `[` / `]`: Nudge selected clip(s) gain by ±1 dB
+      if ((key === '[' || key === ']') && state.selectedClipIds.length > 0 && state.document) {
+        event.preventDefault();
+        const deltaDb = key === ']' ? 1 : -1;
+        state.patchClipsWith(state.selectedClipIds, (clip) => {
+          const currentGain = clip.gainDb ?? 0;
+          const nextGain = Math.min(12, Math.max(-60, currentGain + deltaDb));
+          return { gainDb: nextGain };
+        });
+        return;
+      }
+
+      // S19 — Alt+ArrowLeft / Alt+ArrowRight slips media inside selected clip
+      if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && state.selectedClipIds.length === 1 && state.document) {
+        event.preventDefault();
+        const selectedId = state.selectedClipIds[0];
+        const targetClip = state.document.clips.find((c) => c.id === selectedId);
+        if (targetClip && (targetClip.sourceKind === 'video' || targetClip.sourceKind === 'audio') && targetClip.filePath) {
+          const delta = (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 10 : 1);
+          const next = slipClipMedia(targetClip, delta);
+          state.patchClip(targetClip.id, {
+            sourceInFrames: next.sourceInFrames,
+            sourceOutFrames: next.sourceOutFrames,
+          });
           return;
         }
       }
@@ -217,9 +542,73 @@ export function TimelineScreen() {
         setPlayhead(Math.min(duration, Math.max(0, from + step)));
         return;
       }
+      // S20 — Loop Playback toggle: Ctrl+L / Cmd+L
+      if ((event.ctrlKey || event.metaKey) && key === 'l') {
+        event.preventDefault();
+        state.toggleLooping();
+        return;
+      }
+
+      // S20 — Clear In/Out points: Alt+X, or Alt+I (clear in), Alt+O (clear out)
+      if (event.altKey && !event.ctrlKey && !event.metaKey) {
+        if (key === 'x') {
+          event.preventDefault();
+          state.clearInOutPoints();
+          return;
+        }
+        if (key === 'i') {
+          event.preventDefault();
+          state.setInPoint(null);
+          return;
+        }
+        if (key === 'o') {
+          event.preventDefault();
+          state.setOutPoint(null);
+          return;
+        }
+        // S62 — Add Adjustment Layer: Alt+A
+        if (key === 'a') {
+          event.preventDefault();
+          const doc = state.document;
+          if (!doc) return;
+          const fps = doc.sequence.fps;
+          const startFrames = currentPlayheadFrame();
+          const durationFrames = Math.max(1, Math.round(fps * 5));
+          void ensureOverlayTrack('Adjustment Layers', startFrames, durationFrames).then((trackId) => {
+            const fresh = useSequenceStore.getState();
+            if (!trackId || !fresh.document) return;
+            const newClip = createAdjustmentLayerClip({
+              sequenceId: fresh.document.sequence.id,
+              trackId,
+              startFrames,
+              durationFrames,
+              orderIndex: fresh.document.clips.filter((c) => c.trackId === trackId).length,
+            });
+            fresh.commitClips([...fresh.document.clips, newClip]);
+            fresh.select([newClip.id]);
+          });
+          return;
+        }
+        // S64 — Create Compound Clip: Alt+G (or Alt+Shift+G for Decompose)
+        if (key === 'g') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            const selIds = state.selectedClipIds;
+            if (selIds.length === 1) {
+              state.decomposeCompoundClip(selIds[0]);
+            }
+          } else {
+            if (state.selectedClipIds.length > 0) {
+              void state.createCompoundClipFromSelection();
+            }
+          }
+          return;
+        }
+      }
+
       if (event.key === 'Home' || event.key === 'End') {
         event.preventDefault();
-        setPlayhead(event.key === 'Home' ? 0 : duration);
+        setPlayhead(event.key === 'Home' ? (state.inPointFrame ?? 0) : (state.outPointFrame ?? duration));
         return;
       }
 
@@ -275,23 +664,37 @@ export function TimelineScreen() {
         return;
       }
 
-      // In / out on the selected clip, relative to where its edge sits now.
-      if ((key === 'i' || key === 'o') && state.document && state.selectedClipIds.length === 1) {
-        const clipId = state.selectedClipIds[0];
-        const clip = state.document.clips.find((item) => item.id === clipId);
-        if (!clip) return;
-        const clipTrack = state.document.tracks.find((item) => item.id === clip.trackId);
-        if (!clipTrack || clipTrack.locked) return;
-        const placed = layoutTrack(state.document.clips, clipTrack).find(
-          (item) => item.clip.id === clipId,
-        );
-        if (!placed) return;
-        const edge = key === 'i' ? 'start' : 'end';
-        const from = edge === 'start' ? placed.startFrames : placed.endFrames;
-        const next = trimClipEdge(state.document.clips, clipId, edge, currentPlayheadFrame() - from);
-        if (next !== state.document.clips) {
+      // In / out: If 1 clip is selected, trims that clip's edge.
+      // S20: If NO clips are selected, marks timeline Work Area In / Out!
+      if ((key === 'i' || key === 'o') && !event.ctrlKey && !event.metaKey && !event.altKey && state.document) {
+        if (state.selectedClipIds.length === 1) {
+          const clipId = state.selectedClipIds[0];
+          const clip = state.document.clips.find((item) => item.id === clipId);
+          if (!clip) return;
+          const clipTrack = state.document.tracks.find((item) => item.id === clip.trackId);
+          if (!clipTrack || clipTrack.locked) return;
+          const placed = layoutTrack(state.document.clips, clipTrack).find(
+            (item) => item.clip.id === clipId,
+          );
+          if (!placed) return;
+          const edge = key === 'i' ? 'start' : 'end';
+          const from = edge === 'start' ? placed.startFrames : placed.endFrames;
+          const next = trimClipEdge(state.document.clips, clipId, edge, currentPlayheadFrame() - from);
+          if (next !== state.document.clips) {
+            event.preventDefault();
+            state.commitClips(next);
+          }
+          return;
+        }
+        if (state.selectedClipIds.length === 0) {
           event.preventDefault();
-          state.commitClips(next);
+          const frame = currentPlayheadFrame();
+          if (key === 'i') {
+            state.setInPoint(frame);
+          } else {
+            state.setOutPoint(frame);
+          }
+          return;
         }
       }
     };
@@ -328,10 +731,10 @@ export function TimelineScreen() {
                scroll as a whole. `RenderPanel` rides in through the slot —
                `timeline-media` and `timeline-render` are siblings and compose
                here, at the screen, never through each other. */
-            <MediaPanel exportPanel={<RenderPanel />} />
+            <MediaPanel />
           }
           player={
-            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 pb-2">
+            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-2 pb-1">
               <TimelinePreview />
             </div>
           }

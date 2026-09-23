@@ -54,6 +54,12 @@ function filterArray(values: ResolvedFilterValues): Float32Array {
   return new Float32Array(FILTER_KEYS.map((key) => values[key]));
 }
 
+const ZERO_FILM = new Float32Array(6);
+const ZERO_LENS = new Float32Array(6);
+const ZERO_CHROMA = new Float32Array(7);
+const ZERO_GRADE = new Float32Array(12);
+const ZERO_MASK = new Float32Array(9);
+
 /**
  * Frame UV → source UV, as `(scaleX, scaleY, offsetX, offsetY)`.
  *
@@ -252,6 +258,11 @@ export class GlCompositor {
         gl.getUniformLocation(program, `uFilters${suffix}`),
         filterArray(NEUTRAL_FILTER_VALUES),
       );
+      gl.uniform1fv(gl.getUniformLocation(program, `uFilm${suffix}`), ZERO_FILM);
+      gl.uniform1fv(gl.getUniformLocation(program, `uLens${suffix}`), ZERO_LENS);
+      gl.uniform1fv(gl.getUniformLocation(program, `uChroma${suffix}`), ZERO_CHROMA);
+      gl.uniform1fv(gl.getUniformLocation(program, `uGrade${suffix}`), ZERO_GRADE);
+      gl.uniform1fv(gl.getUniformLocation(program, `uMask${suffix}`), ZERO_MASK);
       return false;
     }
 
@@ -270,6 +281,26 @@ export class GlCompositor {
       1 / source.height,
     );
     gl.uniform1fv(gl.getUniformLocation(program, `uFilters${suffix}`), filterArray(layer.filters));
+    gl.uniform1fv(
+      gl.getUniformLocation(program, `uFilm${suffix}`),
+      layer.gpuEffects?.film ?? ZERO_FILM,
+    );
+    gl.uniform1fv(
+      gl.getUniformLocation(program, `uLens${suffix}`),
+      layer.gpuEffects?.lens ?? ZERO_LENS,
+    );
+    gl.uniform1fv(
+      gl.getUniformLocation(program, `uChroma${suffix}`),
+      layer.gpuEffects?.chroma ?? ZERO_CHROMA,
+    );
+    gl.uniform1fv(
+      gl.getUniformLocation(program, `uGrade${suffix}`),
+      layer.gpuEffects?.grade ?? ZERO_GRADE,
+    );
+    gl.uniform1fv(
+      gl.getUniformLocation(program, `uMask${suffix}`),
+      layer.gpuEffects?.mask ?? ZERO_MASK,
+    );
     return true;
   }
 

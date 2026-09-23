@@ -23,19 +23,34 @@
  * the first try. Static opacity ships in `effects.transform`.
  */
 
-export const KEYFRAME_PROPERTIES = ['x', 'y', 'volume'] as const;
+import { interpolateKeyframePair } from './keyframe-curve-ops';
+
+export const KEYFRAME_PROPERTIES = ['x', 'y', 'volume', 'scale', 'opacity', 'rotation'] as const;
 export type KeyframeProperty = (typeof KEYFRAME_PROPERTIES)[number];
 
-export const KEYFRAME_INTERPOLATIONS = ['linear', 'hold'] as const;
+export const KEYFRAME_INTERPOLATIONS = [
+  'linear',
+  'hold',
+  'bezier',
+  'ease_in',
+  'ease_out',
+] as const;
 export type KeyframeInterpolation = (typeof KEYFRAME_INTERPOLATIONS)[number];
+
+export interface BezierTangentHandle {
+  frameOffset: number;
+  valueOffset: number;
+}
 
 export interface ClipKeyframe {
   property: KeyframeProperty;
   /** Clip-relative, integer frames at the sequence fps. */
   frame: number;
-  /** `x`/`y`: fraction of the frame (0–1). `volume`: dB (−40..40). */
+  /** `x`/`y`: fraction (0–1). `volume`: dB (−40..40). `scale`: ratio (0.1..5). `opacity`: fraction (0..1). `rotation`: degrees (−360..360). */
   value: number;
   interpolation: KeyframeInterpolation;
+  handleIn?: BezierTangentHandle;
+  handleOut?: BezierTangentHandle;
 }
 
 /** The property's keys in frame order — every consumer sorts the same way. */
@@ -53,8 +68,8 @@ export function keyframesFor(
  *
  * Before the first key: the first key's value (a curve does not lurch from
  * the fallback to its first key). After the last: the last key's. Between
- * two: linear, or the earlier key's value under `hold`. No keys at all:
- * `fallback`.
+ * two: linear, hold, or cubic Bézier ease according to `interpolation`.
+ * No keys at all: `fallback`.
  */
 export function valueAtFrame(
   keyframes: readonly ClipKeyframe[] | undefined,
@@ -73,8 +88,11 @@ export function valueAtFrame(
     const to = keys[index + 1];
     if (frame < to.frame) {
       if (from.interpolation === 'hold' || to.frame === from.frame) return from.value;
-      const progress = (frame - from.frame) / (to.frame - from.frame);
-      return from.value + (to.value - from.value) * progress;
+      if (from.interpolation === 'linear') {
+        const progress = (frame - from.frame) / (to.frame - from.frame);
+        return from.value + (to.value - from.value) * progress;
+      }
+      return interpolateKeyframePair(from, to, frame);
     }
   }
   return last.value;
@@ -96,8 +114,8 @@ export interface ExpressionOptions {
  * The same curve as an ffmpeg expression over `t` (seconds).
  *
  * Shape: a right-folded `if(lt(t,tN),…)` ladder — before the first key the
- * first value, linear (or held) between keys, the last value after. Times are
- * fixed to 4 decimals; values to 6 — both well inside a frame/quantum at any
+ * first value, linear (or held or bezier-subdivided) between keys, the last value after.
+ * Times are fixed to 4 decimals; values to 6 — both well inside a frame/quantum at any
  * supported fps.
  */
 export function toFfmpegExpression(
@@ -118,11 +136,30 @@ export function toFfmpegExpression(
   for (let index = keys.length - 2; index >= 0; index -= 1) {
     const from = keys[index];
     const to = keys[index + 1];
-    const segment =
-      from.interpolation === 'hold' || to.frame === from.frame
-        ? value(from.value)
-        : `${value(from.value)}+(${value(to.value)}-${value(from.value)})*(t-${time(from.frame)})/(${time(to.frame)}-${time(from.frame)})`;
-    expression = `if(lt(t,${time(to.frame)}),${segment},${expression})`;
+
+    if (from.interpolation === 'hold' || to.frame === from.frame) {
+      const segment = value(from.value);
+      expression = `if(lt(t,${time(to.frame)}),${segment},${expression})`;
+    } else if (from.interpolation === 'linear') {
+      const segment = `${value(from.value)}+(${value(to.value)}-${value(from.value)})*(t-${time(from.frame)})/(${time(to.frame)}-${time(from.frame)})`;
+      expression = `if(lt(t,${time(to.frame)}),${segment},${expression})`;
+    } else {
+      // Subdivide bezier/ease into 4 linear micro-segments for faithful ffmpeg playback
+      const steps = 4;
+      const dF = (to.frame - from.frame) / steps;
+      let subExpr = value(to.value);
+      for (let s = steps - 1; s >= 0; s--) {
+        const f0 = Math.round(from.frame + s * dF);
+        const f1 = Math.round(from.frame + (s + 1) * dF);
+        const v0 = interpolateKeyframePair(from, to, f0);
+        const v1 = interpolateKeyframePair(from, to, f1);
+        const t0 = time(f0);
+        const t1 = time(f1);
+        const seg = `${value(v0)}+(${value(v1)}-${value(v0)})*(t-${t0})/(${t1}-${t0})`;
+        subExpr = `if(lt(t,${t1}),${seg},${subExpr})`;
+      }
+      expression = `if(lt(t,${time(to.frame)}),${subExpr},${expression})`;
+    }
   }
   // Before the first key: its value, not the interpolation into it.
   return `if(lt(t,${time(keys[0].frame)}),${value(keys[0].value)},${expression})`;

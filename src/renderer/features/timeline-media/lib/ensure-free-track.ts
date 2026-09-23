@@ -43,10 +43,26 @@ export function ensureTextTrack(): Promise<string | null> {
   );
 }
 
-/** The topmost overlay lane (`role: 'overlay'`), minting `name` when none exists. */
-export function ensureOverlayTrack(name: string): Promise<string | null> {
+/** The topmost overlay lane (`role: 'overlay'`), finding a collision-free lane for the span or minting `name`. */
+export function ensureOverlayTrack(
+  name: string,
+  startFrames?: number,
+  durationFrames?: number,
+): Promise<string | null> {
   return ensureLane(
-    (track) => isOverlayTrack(track),
+    (track) => {
+      if (!isOverlayTrack(track)) return false;
+      if (startFrames === undefined || durationFrames === undefined) return true;
+      const state = useSequenceStore.getState();
+      const clips = state.document?.clips ?? [];
+      const trackClips = clips.filter((c) => c.trackId === track.id);
+      const overlaps = trackClips.some((c) => {
+        const start = c.startFrames ?? 0;
+        const end = start + c.durationFrames;
+        return startFrames < end && startFrames + durationFrames > start;
+      });
+      return !overlaps;
+    },
     () => useSequenceStore.getState().addTrack('video', name, 'overlay'),
   );
 }

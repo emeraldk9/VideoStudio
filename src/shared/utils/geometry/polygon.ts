@@ -176,3 +176,41 @@ export function polygonClipPath(points: readonly PolygonPoint[]): string | null 
     .join(', ');
   return `polygon(evenodd, ${vertices})`;
 }
+
+/**
+ * S6 — Calculates an SVG viewBox string for zooming/focusing on a zone's bounding box.
+ * Coordinates are in frame units (default 1920x1080) with configurable padding.
+ */
+export function zoneThumbnailViewBox(
+  points: readonly PolygonPoint[],
+  frameWidth = 1920,
+  frameHeight = 1080,
+  paddingFraction = 0.05,
+): string {
+  if (points.length === 0) return `0 0 ${frameWidth} ${frameHeight}`;
+  const bounds = polygonBounds(points);
+  const w = Math.max(0.05, bounds.maxX - bounds.minX);
+  const h = Math.max(0.05, bounds.maxY - bounds.minY);
+  const padX = w * paddingFraction;
+  const padY = h * paddingFraction;
+
+  const minX = Math.max(0, (bounds.minX - padX) * frameWidth);
+  const minY = Math.max(0, (bounds.minY - padY) * frameHeight);
+  const boxW = Math.min(frameWidth - minX, (w + padX * 2) * frameWidth);
+  const boxH = Math.min(frameHeight - minY, (h + padY * 2) * frameHeight);
+
+  return `${minX.toFixed(1)} ${minY.toFixed(1)} ${boxW.toFixed(1)} ${boxH.toFixed(1)}`;
+}
+
+/**
+ * S6 — Formats polygon points as an SVG points attribute string scaled to given dimensions.
+ */
+export function polygonPointsSvg(
+  points: readonly PolygonPoint[],
+  frameWidth = 1920,
+  frameHeight = 1080,
+): string {
+  return points
+    .map((p) => `${(p.x * frameWidth).toFixed(1)},${(p.y * frameHeight).toFixed(1)}`)
+    .join(' ');
+}

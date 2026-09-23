@@ -152,6 +152,7 @@ interface MarkerRow {
   sequence_id: string;
   frame: number;
   name: string;
+  notes?: string | null;
   color: string;
   created_at: string;
   locked: number;
@@ -228,6 +229,7 @@ function toMarker(row: MarkerRow): SequenceMarker {
     sequenceId: row.sequence_id,
     frame: row.frame,
     name: row.name,
+    notes: row.notes ?? '',
     // The CHECK in migration 066 guarantees membership; the cast narrows it.
     color: row.color as MarkerColor,
     locked: row.locked === 1,
@@ -385,7 +387,11 @@ export interface CreateSequenceInput {
 }
 
 export class SequenceRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  private readonly db: BetterSqlite3.Database;
+
+  constructor(db: BetterSqlite3.Database) {
+    this.db = db;
+  }
 
   list(projectId: string): Sequence[] {
     const rows = this.db
@@ -721,23 +727,25 @@ export class SequenceRepository {
 
   addMarker(
     sequenceId: string,
-    input: { frame: number; name?: string; color?: MarkerColor; locked?: boolean },
+    input: { frame: number; name?: string; notes?: string; color?: MarkerColor; locked?: boolean },
     now: string,
   ): SequenceMarker[] | null {
     const exists = this.db.prepare('SELECT id FROM sequences WHERE id = ?').get(sequenceId);
     if (!exists) return null;
     this.db
       .prepare(
-        'INSERT INTO sequence_markers (id, sequence_id, frame, name, color, created_at, locked) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO sequence_markers (id, sequence_id, frame, name, notes, color, created_at, locked, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         randomUUID(),
         sequenceId,
         Math.max(0, Math.round(input.frame)),
         input.name ?? '',
+        input.notes ?? '',
         input.color ?? 'ai',
         now,
         input.locked ? 1 : 0,
+        now,
       );
     return this.listMarkers(sequenceId);
   }
@@ -745,19 +753,24 @@ export class SequenceRepository {
   updateMarker(
     sequenceId: string,
     markerId: string,
-    patch: { frame?: number; name?: string; color?: MarkerColor; locked?: boolean },
+    patch: { frame?: number; name?: string; notes?: string; color?: MarkerColor; locked?: boolean },
   ): SequenceMarker[] | null {
     const row = this.db
       .prepare('SELECT * FROM sequence_markers WHERE id = ? AND sequence_id = ?')
       .get(markerId, sequenceId) as MarkerRow | undefined;
     if (!row) return null;
+    const now = new Date().toISOString();
     this.db
-      .prepare('UPDATE sequence_markers SET frame = ?, name = ?, color = ?, locked = ? WHERE id = ?')
+      .prepare(
+        'UPDATE sequence_markers SET frame = ?, name = ?, notes = ?, color = ?, locked = ?, updated_at = ? WHERE id = ?',
+      )
       .run(
         patch.frame === undefined ? row.frame : Math.max(0, Math.round(patch.frame)),
         patch.name ?? row.name,
+        patch.notes !== undefined ? patch.notes : row.notes ?? '',
         patch.color ?? row.color,
         patch.locked === undefined ? row.locked : patch.locked ? 1 : 0,
+        now,
         markerId,
       );
     return this.listMarkers(sequenceId);
@@ -1235,12 +1248,16 @@ export class SequenceRepository {
 
     const byPath = new Map<string, ImportedMediaUsage>();
     for (const row of rows) {
-      const usage = byPath.get(row.filePath) ?? { clipCount: 0, sequenceNames: [] };
+      if (!row.filePath) continue;
+      const usage = byPath.get(row.filePath) ?? byPath.get(path.resolve(row.filePath)) ?? byPath.get(row.filePath.toLowerCase()) ?? { clipCount: 0, sequenceNames: [] };
       usage.clipCount += row.clipCount;
       // Grouped by sequence, so a name repeats only across distinct sequences
       // that happen to share a name — worth keeping both, the user named them.
       usage.sequenceNames.push(row.sequenceName);
       byPath.set(row.filePath, usage);
+      byPath.set(path.resolve(row.filePath), usage);
+      byPath.set(row.filePath.toLowerCase(), usage);
+      byPath.set(path.resolve(row.filePath).toLowerCase(), usage);
     }
     return byPath;
   }
@@ -1332,7 +1349,15 @@ export class SequenceRepository {
       )
       .all(projectId) as MediaRow[];
     const usage = this.usageByPath(projectId);
-    return rows.map((row) => toImportedMedia(row, usage.get(row.file_path)));
+    return rows.map((row) =>
+      toImportedMedia(
+        row,
+        usage.get(row.file_path) ??
+          usage.get(path.resolve(row.file_path)) ??
+          usage.get(row.file_path.toLowerCase()) ??
+          usage.get(path.resolve(row.file_path).toLowerCase()),
+      ),
+    );
   }
 
   /**
@@ -1376,8 +1401,8 @@ export class SequenceRepository {
    * the monitor, exactly the bug this step exists to fix — which is why the
    * two travel together or not at all.
    *
-   * The peaks cache goes with the row: it is keyed by `source_path`, and a
-   * re-import of a since-edited file must re-measure rather than draw the
+   * The peaks and thumbs caches go with the row: they are keyed by `source_path`,
+   * and a re-import of a since-edited file must re-measure rather than draw the
    * waveform of what used to be there.
    */
   removeMedia(
@@ -1391,14 +1416,24 @@ export class SequenceRepository {
     for (const file of existing) {
       byPath.set(file.path, file);
       byPath.set(path.resolve(file.path), file);
+      byPath.set(file.path.toLowerCase(), file);
+      byPath.set(path.resolve(file.path).toLowerCase(), file);
     }
-    const targets = paths.map((candidate) => byPath.get(candidate)?.path ?? byPath.get(path.resolve(candidate))?.path).filter((p): p is string => Boolean(p));
+    const targets = paths
+      .map(
+        (candidate) =>
+          byPath.get(candidate)?.path ??
+          byPath.get(path.resolve(candidate))?.path ??
+          byPath.get(candidate.toLowerCase())?.path ??
+          byPath.get(path.resolve(candidate).toLowerCase())?.path,
+      )
+      .filter((p): p is string => Boolean(p));
     const uniqueTargets = Array.from(new Set(targets));
 
     const blocked: ImportedMediaFile[] = [];
     const removable: string[] = [];
     for (const target of uniqueTargets) {
-      const file = byPath.get(target);
+      const file = byPath.get(target) ?? byPath.get(target.toLowerCase());
       if (!file) continue;
       if (!deleteClips && file.usage.clipCount > 0) {
         blocked.push(file);
@@ -1426,7 +1461,7 @@ export class SequenceRepository {
             )
             .all(projectId, ...removable) as { clipId: string; sequenceId: string }[])
         : [];
-      
+
       deletedClipIds = deletedClips.map((row) => row.clipId);
       const touchedSequenceIds = Array.from(new Set(deletedClips.map((row) => row.sequenceId)));
 
@@ -1473,9 +1508,22 @@ export class SequenceRepository {
       this.db
         .prepare(`DELETE FROM sequence_media WHERE project_id = ? AND file_path IN (${placeholders})`)
         .run(projectId, ...removable);
-      this.db
-        .prepare(`DELETE FROM sequence_clip_peaks WHERE source_path IN (${placeholders})`)
-        .run(...removable);
+
+      try {
+        this.db
+          .prepare(`DELETE FROM sequence_clip_peaks WHERE source_path IN (${placeholders})`)
+          .run(...removable);
+      } catch {
+        // Auxiliary cache deletion should never abort media removal
+      }
+
+      try {
+        this.db
+          .prepare(`DELETE FROM sequence_clip_thumbs WHERE source_path IN (${placeholders})`)
+          .run(...removable);
+      } catch {
+        // Auxiliary cache deletion should never abort media removal
+      }
     });
     run();
 

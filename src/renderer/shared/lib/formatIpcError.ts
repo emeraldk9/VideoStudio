@@ -17,6 +17,24 @@
  * says nothing at all.
  */
 export function formatIpcError(error: unknown, fallback = 'Something went wrong.'): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw.replace(/^.*?Error:\s*/s, '').trim() || fallback;
+  if (error === null || error === undefined) return fallback;
+
+  let msg =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error !== null && 'message' in error && typeof (error as { message: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : String(error);
+
+  let prev: string;
+  do {
+    prev = msg;
+    msg = msg
+      .replace(/^(?:Error|ElectronRemoteError):\s*/i, '')
+      .replace(/^Error invoking remote method (?:'[^']*'|"[^"]*"|`[^`]*`|[^:]+):\s*/i, '')
+      .replace(/^Error:\s*/i, '')
+      .trim();
+  } while (msg !== prev && msg.length > 0);
+
+  return msg || fallback;
 }

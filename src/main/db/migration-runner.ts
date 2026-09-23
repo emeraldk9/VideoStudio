@@ -3,6 +3,8 @@ import type BetterSqlite3 from 'better-sqlite3';
 import type { ChildLogger } from '../logging/logger';
 
 import { migration001 } from './migrations/001-init-videostudio';
+import { migration002 } from './migrations/002-align-media-tables';
+import { migration003 } from './migrations/003-add-marker-notes';
 
 export interface Migration {
   version: number;
@@ -10,7 +12,7 @@ export interface Migration {
   up: (db: BetterSqlite3.Database) => void;
 }
 
-const MIGRATIONS: Migration[] = [migration001];
+const MIGRATIONS: Migration[] = [migration001, migration002, migration003];
 
 export const LATEST_MIGRATION_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 

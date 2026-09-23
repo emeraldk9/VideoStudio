@@ -40,7 +40,11 @@ import type { OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveD
  */
 export function dialogOwner(): BaseWindow | undefined {
   try {
-    return BaseWindow.getFocusedWindow() ?? BaseWindow.getAllWindows()[0];
+    const win = BaseWindow.getFocusedWindow() ?? BaseWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) {
+      return win;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -48,10 +52,50 @@ export function dialogOwner(): BaseWindow | undefined {
 
 export function showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogReturnValue> {
   const owner = dialogOwner();
-  return owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options);
+  // On Windows, passing an owner window with `titleBarStyle: 'hidden'` causes Win32 IFileDialog
+  // to deadlock its modal message pump when querying virtual/cloud filesystems (Google Drive G:\, OneDrive).
+  // Opening unowned on Windows completely eliminates this deadlock while `owner.focus()` restores focus on close.
+  const safeProperties = [...(options.properties ?? [])];
+  if (!safeProperties.includes('dontAddToRecent')) {
+    safeProperties.push('dontAddToRecent');
+  }
+  if (!safeProperties.includes('noResolveAliases')) {
+    safeProperties.push('noResolveAliases');
+  }
+
+  const safeOptions: OpenDialogOptions = {
+    ...options,
+    properties: safeProperties,
+  };
+
+  const promise =
+    owner && process.platform !== 'win32'
+      ? dialog.showOpenDialog(owner, safeOptions)
+      : dialog.showOpenDialog(safeOptions);
+
+  return promise.then((result) => {
+    if (owner && !owner.isDestroyed() && 'focus' in owner) {
+      try {
+        (owner as any).focus();
+      } catch {}
+    }
+    return result;
+  });
 }
 
 export function showSaveDialog(options: SaveDialogOptions): Promise<SaveDialogReturnValue> {
   const owner = dialogOwner();
-  return owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options);
+  const promise =
+    owner && process.platform !== 'win32'
+      ? dialog.showSaveDialog(owner, options)
+      : dialog.showSaveDialog(options);
+
+  return promise.then((result) => {
+    if (owner && !owner.isDestroyed() && 'focus' in owner) {
+      try {
+        (owner as any).focus();
+      } catch {}
+    }
+    return result;
+  });
 }

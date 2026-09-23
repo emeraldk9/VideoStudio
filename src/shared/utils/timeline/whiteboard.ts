@@ -47,6 +47,13 @@ export interface WhiteboardSettings {
    * a retime can never strand the draw inside (or past) the picture.
    */
   drawFraction?: number;
+  /**
+   * S5 — fractional start time of drawing (0..drawFraction, default 0).
+   * Keyframe In for sketches.
+   */
+  inFraction?: number;
+  /** S5 — absolute draw start time in seconds. */
+  inSeconds?: number;
   hand: 'pen' | 'marker' | 'none';
   /**
    * S296 — the reveal clock's step rate in Hz (4..30). Absent = smooth: the
@@ -281,6 +288,95 @@ export function resolveWhiteboardDrawSeconds(
 }
 
 /**
+ * S5 — symmetric alias for resolveWhiteboardDrawSeconds (Keyframe Out).
+ */
+export function resolveWhiteboardOutSeconds(
+  settings: Pick<WhiteboardSettings, 'drawSeconds' | 'drawFraction'>,
+  durationFrames: number,
+  fps: number,
+): number {
+  return resolveWhiteboardDrawSeconds(settings, durationFrames, fps);
+}
+
+/**
+ * S5 — start of drawing in seconds (Keyframe In). Clamped strictly between 0 and
+ * the out time minus one frame.
+ */
+export function resolveWhiteboardInSeconds(
+  settings: Pick<WhiteboardSettings, 'drawSeconds' | 'drawFraction' | 'inSeconds' | 'inFraction'>,
+  durationFrames: number,
+  fps: number,
+): number {
+  const safeFps = Math.min(120, Math.max(1, Math.round(fps)));
+  const totalSeconds = Math.max(1, Math.round(durationFrames)) / safeFps;
+  const requested =
+    settings.inFraction != null
+      ? settings.inFraction * totalSeconds
+      : (settings.inSeconds ?? 0);
+  const outSeconds = resolveWhiteboardOutSeconds(settings, durationFrames, fps);
+  const maxIn = Math.max(0, outSeconds - 1 / safeFps);
+  return Math.min(maxIn, Math.max(0, requested));
+}
+
+/**
+ * S5 — Keyframe In in integer frames (clip-relative, 0..durationFrames - 1).
+ */
+export function resolveWhiteboardInFrame(
+  settings: Pick<WhiteboardSettings, 'drawSeconds' | 'drawFraction' | 'inSeconds' | 'inFraction'>,
+  durationFrames: number,
+  fps: number,
+): number {
+  const safeFps = Math.min(120, Math.max(1, Math.round(fps)));
+  const inSec = resolveWhiteboardInSeconds(settings, durationFrames, safeFps);
+  return Math.min(Math.max(0, durationFrames - 1), Math.max(0, Math.round(inSec * safeFps)));
+}
+
+/**
+ * S5 — Keyframe Out in integer frames (clip-relative, inFrame + 1..durationFrames).
+ */
+export function resolveWhiteboardOutFrame(
+  settings: Pick<WhiteboardSettings, 'drawSeconds' | 'drawFraction'>,
+  durationFrames: number,
+  fps: number,
+): number {
+  const safeFps = Math.min(120, Math.max(1, Math.round(fps)));
+  const outSec = resolveWhiteboardOutSeconds(settings, durationFrames, safeFps);
+  return Math.min(durationFrames, Math.max(1, Math.round(outSec * safeFps)));
+}
+
+/**
+ * S5 — Keyframe In as an effective fraction of the clip (0..1).
+ */
+export function whiteboardEffectiveInFraction(
+  settings: Pick<WhiteboardSettings, 'drawSeconds' | 'drawFraction' | 'inSeconds' | 'inFraction'>,
+  durationFrames: number,
+  fps: number,
+): number {
+  if (settings.inFraction != null) {
+    return Math.min(1, Math.max(0, settings.inFraction));
+  }
+  const safeFps = Math.min(120, Math.max(1, Math.round(fps)));
+  const totalSeconds = Math.max(1, Math.round(durationFrames)) / safeFps;
+  const resolved = resolveWhiteboardInSeconds(settings, durationFrames, fps);
+  return Math.min(1, Math.max(0, resolved / totalSeconds));
+}
+
+/**
+ * S5 — draw progress (0..1) at any given clip-relative frame, respecting In and Out keyframes.
+ * 0 before inFrame, linear ramp 0..1 between inFrame and outFrame, and 1 (hold) after outFrame.
+ */
+export function whiteboardProgressAtFrame(
+  frame: number,
+  inFrame: number,
+  outFrame: number,
+): number {
+  if (frame <= inFrame) return 0;
+  if (frame >= outFrame) return 1;
+  const span = Math.max(1, outFrame - inFrame);
+  return (frame - inFrame) / span;
+}
+
+/**
  * The draw window as a fraction of the clip — what the draw-time slider
  * edits and displays. Inverts {@link resolveWhiteboardDrawSeconds} for legacy
  * absolute-seconds documents so the slider lands where the render does.
@@ -395,6 +491,51 @@ export function whiteboardZoneWindows(
     cursor = end;
   }
   return windows;
+}
+
+export interface WhiteboardZoneTimeSlice {
+  index: number;
+  zone: WhiteboardZone;
+  /** 0..1 fraction within the active drawing window [in, out] */
+  startFraction: number;
+  endFraction: number;
+  /** Clip-relative frame numbers */
+  startFrame: number;
+  endFrame: number;
+  durationFrames: number;
+  durationSeconds: number;
+}
+
+/**
+ * S6 — Computes the exact clip-relative timeline frame and second windows for each zone.
+ */
+export function whiteboardZoneTimeSlices(
+  zones: readonly WhiteboardZone[],
+  inFrame: number,
+  outFrame: number,
+  fps: number,
+): WhiteboardZoneTimeSlice[] {
+  const windows = whiteboardZoneWindows(zones);
+  const drawSpanFrames = Math.max(1, outFrame - inFrame);
+  const safeFps = Math.max(1, Math.round(fps));
+
+  return zones.map((zone, i) => {
+    const win = windows[i] ?? { start: 0, end: 1 };
+    const zoneStartFrame = Math.round(inFrame + win.start * drawSpanFrames);
+    const zoneEndFrame = Math.round(inFrame + win.end * drawSpanFrames);
+    const durFrames = Math.max(1, zoneEndFrame - zoneStartFrame);
+
+    return {
+      index: i,
+      zone,
+      startFraction: win.start,
+      endFraction: win.end,
+      startFrame: zoneStartFrame,
+      endFrame: zoneEndFrame,
+      durationFrames: durFrames,
+      durationSeconds: durFrames / safeFps,
+    };
+  });
 }
 
 export interface WhiteboardZoneState {

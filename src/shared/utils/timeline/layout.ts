@@ -300,10 +300,18 @@ export function timelineSnapTargets(input: {
   markerFrames: readonly number[];
   playheadFrame: number | null;
   sequenceEndFrame: number;
+  inPointFrame?: number | null;
+  outPointFrame?: number | null;
 }): number[] {
   const targets = new Set<number>(input.base);
   for (const frame of input.markerFrames) targets.add(Math.max(0, Math.round(frame)));
   if (input.playheadFrame !== null) targets.add(Math.max(0, Math.round(input.playheadFrame)));
+  if (input.inPointFrame !== null && input.inPointFrame !== undefined) {
+    targets.add(Math.max(0, Math.round(input.inPointFrame)));
+  }
+  if (input.outPointFrame !== null && input.outPointFrame !== undefined) {
+    targets.add(Math.max(0, Math.round(input.outPointFrame)));
+  }
   targets.add(Math.max(0, Math.round(input.sequenceEndFrame)));
   return [...targets].sort((a, b) => a - b);
 }
@@ -320,4 +328,46 @@ export function snapFrame(frame: number, targets: number[], toleranceFrames: num
     }
   }
   return best;
+}
+
+/**
+ * Beta S13 — finds the previous edit cut/boundary before `currentFrame`.
+ *
+ * Industry-standard `Up Arrow` edit jumping (Premiere, Resolve, FCP):
+ * - Takes sorted snap targets (clip boundaries, markers, sequence start 0).
+ * - Finds the greatest target frame strictly less than `currentFrame - 0.5`.
+ * - If already at or before the first cut, returns 0.
+ */
+export function findPreviousCut(targets: readonly number[], currentFrame: number): number {
+  const threshold = Math.round(currentFrame) - 0.5;
+  let previous = 0;
+  for (const target of targets) {
+    if (target < threshold) {
+      previous = target;
+    } else {
+      break;
+    }
+  }
+  return previous;
+}
+
+/**
+ * Beta S13 — finds the next edit cut/boundary after `currentFrame`.
+ *
+ * Industry-standard `Down Arrow` edit jumping:
+ * - Finds the smallest target frame strictly greater than `currentFrame + 0.5`.
+ * - If at or past the last target, returns `durationFrames`.
+ */
+export function findNextCut(
+  targets: readonly number[],
+  currentFrame: number,
+  durationFrames: number,
+): number {
+  const threshold = Math.round(currentFrame) + 0.5;
+  for (const target of targets) {
+    if (target > threshold) {
+      return Math.min(target, durationFrames);
+    }
+  }
+  return durationFrames;
 }

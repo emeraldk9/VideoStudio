@@ -44,7 +44,11 @@ export function clipProbeKey(
 }
 
 export class ClipProbeRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  private readonly db: BetterSqlite3.Database;
+
+  constructor(db: BetterSqlite3.Database) {
+    this.db = db;
+  }
 
   get(key: ClipProbeKey): ClipProbe | null {
     const row = this.db

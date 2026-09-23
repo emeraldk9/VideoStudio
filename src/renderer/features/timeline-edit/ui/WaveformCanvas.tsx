@@ -11,6 +11,8 @@ export interface WaveformCanvasProps {
   pixelsPerSecond: number;
   widthPx: number;
   heightPx: number;
+  /** 'audio' (default, full lane height) or 'video' (lower third overlay). */
+  laneKind?: 'audio' | 'video';
 }
 
 /**
@@ -33,15 +35,32 @@ export interface WaveformCanvasProps {
  * redraw when the theme flips; see that hook for why the signal is a DOM
  * observer rather than the shell store.
  */
-export function WaveformCanvas({ placed, fps, pixelsPerSecond, widthPx, heightPx }: WaveformCanvasProps) {
+export function WaveformCanvas({
+  placed,
+  fps,
+  pixelsPerSecond,
+  widthPx,
+  heightPx,
+  laneKind = 'audio',
+}: WaveformCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Peaks by source path — clips sharing a file (a split narration) share one fetch. */
   const [peaksByPath, setPeaksByPath] = useState<Record<string, number[] | null>>({});
   const { read, themeVersion } = useThemeTokens();
 
+  const isVideo = laneKind === 'video';
+  const relevantClips = isVideo
+    ? placed.filter(
+        (item) =>
+          item.clip.sourceKind === 'video' &&
+          item.clip.sourceAudioEnabled !== false &&
+          item.clip.filePath !== null,
+      )
+    : placed.filter((item) => item.clip.filePath !== null);
+
   const paths = [
     ...new Set(
-      placed
+      relevantClips
         .map((item) => item.clip.filePath)
         .filter((filePath): filePath is string => filePath !== null),
     ),
@@ -57,7 +76,7 @@ export function WaveformCanvas({ placed, fps, pixelsPerSecond, widthPx, heightPx
   // and re-ran the per-pixel-column fill loop for every audio lane — the
   // single largest per-move cost in the dock. The caller memoizes now, and
   // this key means a future caller who forgets cannot reintroduce it.
-  const layoutKey = placed
+  const layoutKey = relevantClips
     .map((item) => `${item.clip.id}:${item.startFrames}:${item.clip.durationFrames}`)
     .join('|');
 
@@ -101,13 +120,19 @@ export function WaveformCanvas({ placed, fps, pixelsPerSecond, widthPx, heightPx
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, widthPx, heightPx);
 
-    context.fillStyle = read('--text-secondary');
-    context.globalAlpha = 0.55;
+    if (isVideo) {
+      context.fillStyle = read('--accent-ai');
+      context.globalAlpha = 0.45;
+    } else {
+      context.fillStyle = read('--text-secondary');
+      context.globalAlpha = 0.55;
+    }
 
     const pixelsPerFrame = pixelsPerSecond / fps;
-    const middle = heightPx / 2;
+    const middle = isVideo ? heightPx - heightPx * 0.18 : heightPx / 2;
+    const maxBarHeight = isVideo ? heightPx * 0.32 : heightPx - 2;
 
-    for (const item of placed) {
+    for (const item of relevantClips) {
       if (!item.clip.filePath) continue;
       const peaks = peaksByPath[item.clip.filePath];
       if (!peaks || peaks.length === 0) continue;
@@ -118,7 +143,7 @@ export function WaveformCanvas({ placed, fps, pixelsPerSecond, widthPx, heightPx
         // Peaks are a fixed-length summary of the whole file, so sample it at
         // the clip's current width rather than assuming one bucket per pixel.
         const peak = peaks[Math.floor((column / columns) * peaks.length)] ?? 0;
-        const barHeight = Math.max(1, peak * (heightPx - 2));
+        const barHeight = Math.max(1, peak * maxBarHeight);
         context.fillRect(left + column, middle - barHeight / 2, 1, barHeight);
       }
     }
@@ -126,7 +151,7 @@ export function WaveformCanvas({ placed, fps, pixelsPerSecond, widthPx, heightPx
     // `placed` is read but keyed by `layoutKey` — see the comment above; the
     // lint suppression is the point, not an oversight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutKey, peaksByPath, widthPx, heightPx, pixelsPerSecond, fps, read, themeVersion]);
+  }, [layoutKey, peaksByPath, widthPx, heightPx, pixelsPerSecond, fps, read, themeVersion, isVideo]);
 
   return (
     <canvas

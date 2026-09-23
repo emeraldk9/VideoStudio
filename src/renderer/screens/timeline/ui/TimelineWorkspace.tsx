@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { ErrorBoundary } from '../../../shared/ui/ErrorBoundary';
 import { ResizeHandle } from './ResizeHandle';
 
 /**
@@ -161,7 +162,9 @@ export function TimelineWorkspace({ media, player, inspector, dock }: TimelineWo
       />
 
       <section aria-label="Player" className="flex min-h-0 min-w-0 flex-col overflow-hidden pt-2">
-        {player}
+        <ErrorBoundary fallbackTitle="Player Error">
+          {player}
+        </ErrorBoundary>
       </section>
 
       <ResizeHandle
@@ -189,7 +192,9 @@ export function TimelineWorkspace({ media, player, inspector, dock }: TimelineWo
       />
 
       <section aria-label="Clip properties" className="flex min-h-0 min-w-0 flex-col overflow-hidden pt-2">
-        {inspector}
+        <ErrorBoundary fallbackTitle="Inspector Error">
+          {inspector}
+        </ErrorBoundary>
       </section>
 
       {/* The row handle spans every column — one bar under the whole top zone. */}

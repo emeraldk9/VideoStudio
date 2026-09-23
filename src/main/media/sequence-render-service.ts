@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   WHITEBOARD_TRACE_DEFAULTS,
   buildColorFilterChain,
+  buildAudioFilterChain,
   applySplitEditOffset,
   buildFlashFilter,
   buildVideoFadeFilter,
@@ -29,6 +30,9 @@ import {
   type SequenceRenderStage,
   hasEffectClips,
   overlayTracksOf,
+  isTrackMatchingStem,
+  timelineClipsToASS,
+  getClipGridRect,
   type SequenceRenderRequest,
   type SequenceRenderResult,
   type SequenceTrack,
@@ -392,11 +396,12 @@ export class SequenceRenderService {
     if (!spineTrack) {
       throw new Error('This sequence has no spine track — re-bind one in the storyboard panel.');
     }
-    const video = spineTrack.muted ? [] : layoutTrack(clips, spineTrack);
+    const isSpineDisabled = spineTrack.muted || spineTrack.videoEnabled === false;
+    const video = isSpineDisabled ? [] : layoutTrack(clips, spineTrack);
     if (video.length === 0) {
       throw new Error(
-        spineTrack.muted
-          ? 'The spine track is muted — there is nothing to render.'
+        isSpineDisabled
+          ? `The spine track is ${spineTrack.muted && spineTrack.videoEnabled === false ? 'hidden and muted' : spineTrack.muted ? 'muted' : 'hidden'} — there is nothing to render.`
           : 'The video track is empty — there is nothing to render.',
       );
     }
@@ -498,6 +503,7 @@ export class SequenceRenderService {
       workDir,
       request.duckMusicUnderNarration === true,
       (done, total) => this.report({ sequenceId: sequence.id, stage: 'audio', completed: done, total }),
+      request,
     );
 
     // --------------------------------------------------------- stage: mux
@@ -515,6 +521,22 @@ export class SequenceRenderService {
       !request.draft && request.outputHeight !== undefined && request.outputHeight !== sequence.height
         ? request.outputHeight
         : undefined;
+
+    // S73 — Subtitle / closed caption burn-in synthesis
+    let subtitlePath: string | undefined;
+    if (request.burnInSubtitles) {
+      const assScript = timelineClipsToASS(clips, sequence.fps, {
+        styleId: request.subtitleStylePresetId,
+        videoWidth: sequence.width,
+        videoHeight: sequence.height,
+        trackId: request.subtitleTrackId,
+      });
+      if (assScript.includes('Dialogue:')) {
+        subtitlePath = path.join(workDir, 'burnin_subtitles.ass');
+        await fs.promises.writeFile(subtitlePath, assScript, 'utf-8');
+      }
+    }
+
     // S253 — streamed, because the mux is two very different passes behind
     // one name. With no resolution change and no `high` quality it is
     // `-c:v copy` and takes seconds; with either, it is a full re-encode of
@@ -526,6 +548,7 @@ export class SequenceRenderService {
         quality: request.draft ? undefined : request.quality,
         audioBitrateKbps: request.audioBitrateKbps,
         encoder: this.encoder,
+        subtitlePath,
       }),
       durationSeconds,
       (fraction) =>
@@ -581,6 +604,9 @@ export class SequenceRenderService {
         buildTranscodeArgs(muxTarget, request.outputPath, {
           format: delivery,
           audioBitrateKbps: request.audioBitrateKbps,
+          quality: request.quality,
+          proresProfile: request.proresProfile,
+          twoPass: request.twoPass,
         }),
         durationSeconds,
         (fraction) =>
@@ -621,6 +647,7 @@ export class SequenceRenderService {
       request.duckMusicUnderNarration === true,
       (done, total) =>
         this.report({ sequenceId: sequence.id, stage: 'audio', completed: done, total }),
+      request,
     );
     if (!audioPath) {
       throw new Error('There is no audio to export — every audio track is empty or muted.');
@@ -628,16 +655,13 @@ export class SequenceRenderService {
     this.throwIfCancelled();
     this.report({ sequenceId: sequence.id, stage: 'mux', completed: 0, total: 0 });
     await fs.promises.mkdir(path.dirname(request.outputPath), { recursive: true });
-    await this.runFfmpeg([
-      '-y',
-      '-i',
-      audioPath,
-      '-c:a',
-      'aac',
-      '-b:a',
-      `${request.audioBitrateKbps ?? 192}k`,
-      request.outputPath,
-    ]);
+
+    const isWav = request.format === 'wav' || request.outputPath.toLowerCase().endsWith('.wav');
+    const audioArgs = isWav
+      ? ['-y', '-i', audioPath, '-vn', '-c:a', 'pcm_s24le', '-ar', '48000', request.outputPath]
+      : ['-y', '-i', audioPath, '-c:a', 'aac', '-b:a', `${request.audioBitrateKbps ?? 192}k`, request.outputPath];
+
+    await this.runFfmpeg(audioArgs);
     this.report({ sequenceId: sequence.id, stage: 'mux', completed: 1, total: 1 });
     return { outputPath: request.outputPath, durationSeconds, skipped: [] };
   }
@@ -672,6 +696,7 @@ export class SequenceRenderService {
           placed.clip.effects,
           framesToSeconds(placed.startFrames, sequence.fps),
           framesToSeconds(placed.endFrames, sequence.fps),
+          { width: sequence.width, height: sequence.height },
         ),
       )
       .filter((chain) => chain.length > 0);
@@ -788,6 +813,9 @@ export class SequenceRenderService {
           skipped.push(placed.clip.label || placed.clip.id);
           continue;
         }
+        const gridSettings = placed.clip.effects?.pipGrid;
+        const cellRect = gridSettings?.enabled ? getClipGridRect(gridSettings) : undefined;
+
         const alphaArgs = buildAlphaSegmentArgs(placed.clip.filePath, segmentPath, {
           width: sequence.width,
           height: sequence.height,
@@ -797,11 +825,15 @@ export class SequenceRenderService {
           durationSeconds: framesToSeconds(placed.clip.durationFrames, sequence.fps),
           draft: request.draft,
           speed: clipSpeed(placed.clip.effects),
-          colorFilter: buildColorFilterChain(placed.clip.effects),
-          // S154 phase 6 — the PiP box and static opacity bake into the
+          colorFilter: buildColorFilterChain(placed.clip.effects, {
+            width: sequence.width,
+            height: sequence.height,
+          }),
+          // S154 phase 6 / S75 — the PiP/split-screen box and static opacity bake into the
           // segment; position is the layer graph's job below.
           transformScale: placed.clip.effects?.transform?.scale,
           opacity: placed.clip.effects?.transform?.opacity,
+          cellRect,
           // Decode side only — the segment itself stays qtrle for its alpha.
           encoder: this.encoder,
         });
@@ -885,6 +917,17 @@ export class SequenceRenderService {
     placed: PlacedClip,
     fps: number,
   ): { xExpression?: string; yExpression?: string } {
+    const gridSettings = placed.clip.effects?.pipGrid;
+    const gridRect = gridSettings?.enabled ? getClipGridRect(gridSettings) : undefined;
+    if (gridRect) {
+      const cx = gridRect.xPct + gridRect.widthPct / 2;
+      const cy = gridRect.yPct + gridRect.heightPct / 2;
+      return {
+        xExpression: cx.toFixed(6),
+        yExpression: cy.toFixed(6),
+      };
+    }
+
     const transform = placed.clip.effects?.transform;
     const hasKeys =
       keyframesFor(placed.clip.keyframes, 'x').length > 0 ||
@@ -1078,16 +1121,33 @@ export class SequenceRenderService {
       clip.transitionIn === 'flash_frame' && !sequenceHead
         ? buildFlashFilter(clip.effects?.transition, clip.transitionFrames)
         : '';
+    // S66 MultiCam angle resolution for video:
+    let effectiveFilePath = clip.filePath;
+    let effectiveSourceInFrames = clip.sourceInFrames ?? 0;
+    if (clip.effects?.multiCam?.enabled && clip.effects.multiCam.angles?.length) {
+      const activeIdx = clip.effects.multiCam.activeAngleIndex ?? 0;
+      const angle = clip.effects.multiCam.angles[activeIdx];
+      if (angle?.filePath && fs.existsSync(angle.filePath)) {
+        effectiveFilePath = angle.filePath;
+      }
+      if (angle?.syncOffsetFrames) {
+        effectiveSourceInFrames += angle.syncOffsetFrames;
+      }
+    }
+
     // S154 phase 3 — one derivation for both kinds; `''`/1 add nothing. The
     // fade rides after the colour chain so a graded clip fades its grade;
     // the flash rides last so it paints over everything.
-    const colorFilter = [buildColorFilterChain(clip.effects), fadeFilter, flashFilter]
+    const colorFilter = [
+      buildColorFilterChain(clip.effects, { width: sequence.width, height: sequence.height }),
+      fadeFilter,
+      flashFilter,
+    ]
       .filter(Boolean)
       .join(',');
-    // S161 — a still carrying whiteboard settings routes through the reveal
-    // producer instead of Ken Burns; the two are mutually exclusive by the
-    // inspector's rule, and this branch is the render-side statement of it.
-    if (clip.sourceKind === 'still' && clip.effects?.whiteboard) {
+    // S161 / S5 — a still or video carrying whiteboard settings routes through the reveal
+    // producer instead of Ken Burns / plain transcode.
+    if ((clip.sourceKind === 'still' || clip.sourceKind === 'video') && clip.effects?.whiteboard) {
       const settings = clip.effects.whiteboard;
       const width = request.draft ? Math.round(sequence.width / 2) : sequence.width;
       const height = request.draft ? Math.round(sequence.height / 2) : sequence.height;
@@ -1109,7 +1169,7 @@ export class SequenceRenderService {
         try {
           traceArtifact = await ensureTraceArtifact({
             ffmpegPath: this.ffmpegPath,
-            filePath: clip.filePath,
+            filePath: effectiveFilePath,
             trace: settings.trace ?? WHITEBOARD_TRACE_DEFAULTS,
             frameWidth: sequence.width,
             frameHeight: sequence.height,
@@ -1122,7 +1182,7 @@ export class SequenceRenderService {
           });
         }
       }
-      return buildWhiteboardSegmentArgs(clip.filePath, segmentPath, {
+      return buildWhiteboardSegmentArgs(effectiveFilePath, segmentPath, {
         settings,
         width,
         height,
@@ -1153,7 +1213,7 @@ export class SequenceRenderService {
       if (clip.transitionIn === 'match_dissolve' && match && !sequenceHead) {
         motion = composeMatchNudge(motion, match.out, match.in, clip.transitionFrames);
       }
-      return buildStillSegmentArgs(clip.filePath, segmentPath, {
+      return buildStillSegmentArgs(effectiveFilePath, segmentPath, {
         motion,
         // A draft halves the geometry the same way a video clip's does, so the
         // two kinds still concatenate.
@@ -1165,11 +1225,11 @@ export class SequenceRenderService {
         encoder: this.encoder,
       });
     }
-    return buildNormalizeVideoArgs(clip.filePath, segmentPath, {
+    return buildNormalizeVideoArgs(effectiveFilePath, segmentPath, {
       width: sequence.width,
       height: sequence.height,
       fps: sequence.fps,
-      startSeconds: framesToSeconds(clip.sourceInFrames ?? 0, sequence.fps),
+      startSeconds: framesToSeconds(effectiveSourceInFrames, sequence.fps),
       durationSeconds: framesToSeconds(clip.durationFrames, sequence.fps),
       draft: request.draft,
       speed: clipSpeed(clip.effects),
@@ -1333,6 +1393,7 @@ export class SequenceRenderService {
     workDir: string,
     duck: boolean,
     onProgress: (done: number, total: number) => void,
+    request?: SequenceRenderRequest,
   ): Promise<string | null> {
     const { clips, tracks, sequence } = document;
     const fps = sequence.fps;
@@ -1348,8 +1409,8 @@ export class SequenceRenderService {
     // rule (lowest order) via `narrationTrackOf`, which reproduces migration
     // 065's stamping exactly. Every other non-muted audio track is the bed.
     const keyTrack = narrationTrackOf(audioTracks);
-    const narration = keyTrack ? placedFor(keyTrack) : [];
-    const music = audioTracks.filter((track) => track !== keyTrack).flatMap((track) => placedFor(track));
+    let narration = keyTrack ? placedFor(keyTrack) : [];
+    let music = audioTracks.filter((track) => track !== keyTrack).flatMap((track) => placedFor(track));
 
     // S181 — a video clip's own audio, which never reached this stage before:
     // it collected audio *tracks* only, so the exported file silently dropped
@@ -1367,6 +1428,18 @@ export class SequenceRenderService {
     narration.push(...exempt);
     music.push(...ducked);
 
+    // S68 — Audio Stem Isolation (dialogue, music, sfx, master)
+    if (request?.stemType && request.stemType !== 'master') {
+      const stem = request.stemType;
+      const trackMap = new Map(tracks.map((t) => [t.id, t]));
+      const matchesStem = (placed: PlacedClip) => {
+        const track = trackMap.get(placed.clip.trackId);
+        return track ? isTrackMatchingStem(track, stem, request.stemRoutingMap) : false;
+      };
+      narration = narration.filter(matchesStem);
+      music = music.filter(matchesStem);
+    }
+
     if (narration.length === 0 && music.length === 0) return null;
 
     const total = narration.length + music.length;
@@ -1377,7 +1450,7 @@ export class SequenceRenderService {
     if (!duck || narration.length === 0 || music.length === 0) {
       const bedPath = path.join(workDir, 'audio.wav');
       await this.runFfmpeg(
-        buildAudioTimelineArgs(this.toSegments([...narration, ...music], fps), bedPath, {
+        buildAudioTimelineArgs(this.toSegments([...narration, ...music], fps, document.tracks), bedPath, {
           durationSeconds: Math.max(0.001, durationSeconds),
           format: 'wav',
         }),
@@ -1388,7 +1461,7 @@ export class SequenceRenderService {
 
     const narrationBed = path.join(workDir, 'audio-narration.wav');
     await this.runFfmpeg(
-      buildAudioTimelineArgs(this.toSegments(narration, fps), narrationBed, {
+      buildAudioTimelineArgs(this.toSegments(narration, fps, document.tracks), narrationBed, {
         durationSeconds: Math.max(0.001, durationSeconds),
         format: 'wav',
       }),
@@ -1398,7 +1471,7 @@ export class SequenceRenderService {
 
     const musicBed = path.join(workDir, 'audio-music.wav');
     await this.runFfmpeg(
-      buildAudioTimelineArgs(this.toSegments(music, fps), musicBed, {
+      buildAudioTimelineArgs(this.toSegments(music, fps, document.tracks), musicBed, {
         durationSeconds: Math.max(0.001, durationSeconds),
         format: 'wav',
       }),
@@ -1487,28 +1560,52 @@ export class SequenceRenderService {
    * `filePath` and ffmpeg reads the audio stream out of a container without
    * caring what else is in it. That reuse is the reason this step needed no
    * new filter-graph code.
+   *
+   * S15 — factors track-level volume (`track.volume`) into the export.
    */
-  private toSegments(placed: PlacedClip[], fps: number): DubSegmentInput[] {
+  private toSegments(placed: PlacedClip[], fps: number, tracks?: readonly SequenceTrack[]): DubSegmentInput[] {
+    const trackMap = new Map((tracks ?? []).map((t) => [t.id, t]));
     return placed.map((item) => {
+      // S66 MultiCam angle resolution for audio:
+      let effectiveAudioPath = item.clip.filePath!;
+      let effectiveSourceInFrames = item.clip.sourceInFrames ?? 0;
+      if (item.clip.effects?.multiCam?.enabled && item.clip.effects.multiCam.angles?.length) {
+        const activeIdx = item.clip.effects.multiCam.activeAngleIndex ?? 0;
+        const angle = item.clip.effects.multiCam.angles[activeIdx];
+        if (angle?.filePath && fs.existsSync(angle.filePath)) {
+          effectiveAudioPath = angle.filePath;
+        }
+        if (angle?.syncOffsetFrames) {
+          effectiveSourceInFrames += angle.syncOffsetFrames;
+        }
+      }
+
       // S230 — the split edit: a video clip's own audio may lead (J) or lag
       // (L) its picture cut. Pure arithmetic in @shared; the clamped lead is
       // the preflight's business, not silently re-decided here.
       const window = applySplitEditOffset(
         {
           offsetSeconds: framesToSeconds(item.startFrames, fps),
-          sourceInSeconds: framesToSeconds(item.clip.sourceInFrames ?? 0, fps),
+          sourceInSeconds: framesToSeconds(effectiveSourceInFrames, fps),
           durationSeconds: framesToSeconds(item.clip.durationFrames, fps),
         },
         item.clip.sourceKind === 'video' ? (item.clip.audioOffsetFrames ?? 0) : 0,
         fps,
       );
+      const track = trackMap.get(item.clip.trackId);
+      const trackVol = track?.muted ? 0 : (track?.volume ?? 1);
+      const baseGain = Math.min(2, Math.max(0, 10 ** (item.clip.gainDb / 20) * trackVol));
+
+      // S66 — Synthesized full audio filter chain (EQ, compressor, gate, reverb, pitch, pan, isolation, denoiser)
+      const audioFilter = buildAudioFilterChain(item.clip.effects);
+
       return {
         // Non-null by `placedFor`'s filter; audio clips always carry a path.
-        audioPath: item.clip.filePath!,
+        audioPath: effectiveAudioPath,
         offsetSeconds: window.offsetSeconds,
-        // dB → linear. `audio-timeline.ts` takes a 0-2 multiplier; the document
-        // stores dB because that is what a mixer control means to a person.
-        volume: Math.min(2, Math.max(0, 10 ** (item.clip.gainDb / 20))),
+        // dB → linear. `audio-timeline.ts` takes a 0-2 multiplier; scaled by track volume.
+        volume: baseGain,
+        audioFilter: audioFilter.length > 0 ? audioFilter : undefined,
         // Beta S151 (F3). These columns existed from migration 060 and were
         // round-tripped by the repository, but no render pass had ever read
         // them — `afade` closes that. `durationSeconds` is the clip's *timeline*
@@ -1521,21 +1618,24 @@ export class SequenceRenderService {
         // and speed rides the same `atrim` window.
         sourceInSeconds: window.sourceInSeconds,
         tempo: clipSpeed(item.clip.effects),
-      // S154 phase 6 — a volume curve replaces the static gain when keys
-      // exist. Values are authored in dB and converted per key: the curve
-      // interpolates in linear gain, which is what `volume` multiplies.
-      volumeExpression:
-        keyframesFor(item.clip.keyframes, 'volume').length > 0
-          ? toFfmpegExpression(
-              (item.clip.keyframes ?? []).map((keyframe) =>
-                keyframe.property === 'volume'
-                  ? { ...keyframe, value: Math.min(2, Math.max(0, 10 ** (keyframe.value / 20))) }
-                  : keyframe,
-              ),
-              'volume',
-              { fps, fallback: Math.min(2, Math.max(0, 10 ** (item.clip.gainDb / 20))) },
-            )
-          : undefined,
+        // S154 phase 6 — a volume curve replaces the static gain when keys
+        // exist. Values are authored in dB and converted per key: the curve
+        // interpolates in linear gain, scaled by track volume.
+        volumeExpression:
+          keyframesFor(item.clip.keyframes, 'volume').length > 0
+            ? toFfmpegExpression(
+                (item.clip.keyframes ?? []).map((keyframe) =>
+                  keyframe.property === 'volume'
+                    ? {
+                        ...keyframe,
+                        value: Math.min(2, Math.max(0, 10 ** (keyframe.value / 20) * trackVol)),
+                      }
+                    : keyframe,
+                ),
+                'volume',
+                { fps, fallback: baseGain },
+              )
+            : undefined,
       };
     });
   }
