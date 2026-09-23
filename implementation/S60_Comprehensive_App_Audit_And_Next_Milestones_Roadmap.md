@@ -358,6 +358,24 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
       - Interactive cut location preview pills with 1-click playhead seeking.
       - "Duplicate sequence before cutting" non-destructive toggle.
   - 100% test pass rate: 909/909 tests passing across 73 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 09:50]** Step S84 successfully completed:
+  - Built CapCut AI Auto-Beats & Dynamic Music Cut Synchronizer engine in `src/shared/utils/timeline/auto-beat-sync-ops.ts`:
+    - `buildAudioEnergyEnvelope`: Normalizes and tracks root-mean-square transient audio energy per frame.
+    - `detectMusicBeatsAndDrops`: Dual-mode beat analysis supporting transient onset/bass drop detection (`drops_and_snares`) and metronomic BPM subdivision (`metronomic_bpm`).
+    - `generateBeatSyncMarkers`: Synthesizes musical rhythm `SequenceMarker` points (cyan downbeats, gold rhythmic beats) for instant timeline ruler display and magnetic HUD snapping (`useTimelineDrag.ts`).
+    - `autoCutClipsOnBeats`: 1-Click video montage cutter that slices continuous video footage across musical beat boundaries with configurable minimum segment duration (e.g. 15 frames) for montage pacing.
+    - `snapSubtitlesToBeatGrid`: Snaps subtitle/lyric cue boundaries to nearest musical beats within tolerance.
+    - `applyAutoBeatSyncToSequence`: Unified pipeline handling sequence marker generation, video montage splicing, subtitle cadence snapping, and non-destructive sequence duplication.
+  - Added unit test suite `src/shared/utils/timeline/__tests__/auto-beat-sync-ops.test.ts` (7 tests passing).
+  - Built `src/renderer/features/timeline-edit/ui/AutoBeatSyncModal.tsx`:
+    - Music track selector.
+    - Detection mode picker (`drops_and_snares` vs `metronomic_bpm`).
+    - Beat cadence subdivision selector (`1/1 Beat`, `1/2 Beat`, `1/4 Beat`, `Drop Only`).
+    - Sensitivity slider and minimum cut length slider.
+    - Live rhythm preview timeline diagram showing transient spikes and beat markers.
+    - Non-destructive "Duplicate sequence before applying" option.
+  - Integrated launcher button in `src/renderer/features/timeline-edit/ui/TimelineToolbar.tsx` and mounted in `src/renderer/features/timeline-edit/ui/TimelinePanel.tsx`.
+  - 100% test pass rate: 916/916 tests passing across 74 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
 
 
 

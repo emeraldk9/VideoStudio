@@ -691,6 +691,14 @@ export function TimelineToolbar() {
         onClick={() => useModalStore.getState().openModal(MODAL_IDS.AUTO_REFRAME)}
       />
 
+      {/* S84 — CapCut AI Auto-Beats & Dynamic Music Cut Synchronizer */}
+      <IconButton
+        icon="graphic_eq"
+        label="Auto-Beats & Music Sync (BPM & Drops)..."
+        size="sm"
+        onClick={() => useModalStore.getState().openModal(MODAL_IDS.BEAT_SYNC)}
+      />
+
       {/* Magnet snapping */}
       <IconButton
         icon={<MagnetIcon />}

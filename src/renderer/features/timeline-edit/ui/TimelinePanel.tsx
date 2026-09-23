@@ -84,6 +84,7 @@ import { SpeedModal } from './SpeedModal';
 import { AudioGainModal } from './AudioGainModal';
 import { SubtitleModal } from './SubtitleModal';
 import { AutoReframeModal } from './AutoReframeModal';
+import { AutoBeatSyncModal } from './AutoBeatSyncModal';
 import { LANE_LABEL_WIDTH_PX, TimelineTrackRow } from './TimelineLane';
 import { SketchKeyframeLane } from './SketchKeyframeLane';
 import { TIMELINE_RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler';
@@ -955,6 +956,7 @@ export function TimelinePanel() {
   const isAudioGainModalOpen = useModalStore((state) => state.activeModal === 'audio-gain');
   const isSubtitleModalOpen = useModalStore((state) => state.activeModal === MODAL_IDS.SUBTITLES);
   const isAutoReframeModalOpen = useModalStore((state) => state.activeModal === MODAL_IDS.AUTO_REFRAME);
+  const isBeatSyncModalOpen = useModalStore((state) => state.activeModal === MODAL_IDS.BEAT_SYNC);
   const closeModal = useModalStore((state) => state.closeModal);
   const selectedClip = useSequenceStore(selectSelectedClip);
   const [speedModalClip, setSpeedModalClip] = useState<SequenceClip | null>(null);
@@ -2668,6 +2670,16 @@ export function TimelinePanel() {
       {isAutoReframeModalOpen && (
         <AutoReframeModal
           open={isAutoReframeModalOpen}
+          document={document}
+          fps={fps}
+          onClose={closeModal}
+        />
+      )}
+
+      {/* S84 — CapCut AI Auto-Beats & Dynamic Music Cut Synchronizer */}
+      {isBeatSyncModalOpen && (
+        <AutoBeatSyncModal
+          open={isBeatSyncModalOpen}
           document={document}
           fps={fps}
           onClose={closeModal}

@@ -69,6 +69,8 @@ export const MODAL_IDS = {
   SUBTITLES: 'subtitles',
   /** S82 — AI Auto-Reframe & Dynamic Aspect Ratio Engine */
   AUTO_REFRAME: 'auto-reframe',
+  /** S84 — CapCut AI Auto-Beats & Dynamic Music Cut Synchronizer */
+  BEAT_SYNC: 'beat-sync',
 } as const;
 
 export type ModalId = (typeof MODAL_IDS)[keyof typeof MODAL_IDS];
