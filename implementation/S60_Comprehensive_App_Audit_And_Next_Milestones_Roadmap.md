@@ -375,7 +375,29 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Live rhythm preview timeline diagram showing transient spikes and beat markers.
     - Non-destructive "Duplicate sequence before applying" option.
   - Integrated launcher button in `src/renderer/features/timeline-edit/ui/TimelineToolbar.tsx` and mounted in `src/renderer/features/timeline-edit/ui/TimelinePanel.tsx`.
-  - 100% test pass rate: 916/916 tests passing across 74 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 10:17]** Step S85 successfully completed:
+  - Built CapCut AI Smart Text Templates & Dynamic Title Animation Engine in `src/shared/utils/timeline/text-template-ops.ts`:
+    - `SMART_TEXT_TEMPLATES`: 24+ curated CapCut-grade motion text templates across 5 categories (`Titles & Intros`, `Social & Vlog`, `Lower Thirds`, `Callouts & Badges`, `Kinetic & Quotes`).
+    - Extended `TextContent` schema with multi-field support: `secondaryText`, `secondaryFontSizePx`, `secondaryColorHex`, `badgeIcon`, `templateStyleId`, `templateLayout` (`single`, `stacked`, `badge_pill`, `callout_pointer`, `news_ticker`, `bordered_card`), and `compoundAnimation`.
+    - `calculateCompoundTextMotion`: Evaluates 3-phase coordinated motion (Entrance In, Middle Loop, Exit Out) with easing curves, elastic drops, flip-x, heartbeat, tracking expansions, and glitches.
+    - `generateAITitleHooks`: Algorithmic AI Title & Hook Generator producing 5 high-converting, viral Title + Subtitle pairs with badges across Viral, Professional, Cinematic, and Energetic tones.
+    - `applyTextTemplateToClip`: 1-Click transformation converting any timeline text clip into a selected motion template while preserving user custom text.
+  - Added unit test suite `src/shared/utils/timeline/__tests__/text-template-ops.test.ts` (12 tests passing).
+  - Upgraded `TimelinePreview.tsx`:
+    - Evaluates compound 3-phase motion animations during real-time playback and scrubbing.
+    - Renders multi-field stacked templates, pill capsules, and Google Material Symbols badge icons on the preview canvas.
+  - Upgraded `TextPane.tsx`:
+    - Full sub-sidebar category filtering (`Titles & Intros`, `Social & Vlog`, `Lower Thirds`, `Callouts & Badges`, `Kinetic & Quotes`).
+    - Search filtering across titles, descriptions, and sample text.
+    - Live animated preview cards with drag-and-drop and 1-click addition.
+    - Expandable **AI Smart Title & Hook Generator** drawer with tone selector and 1-click insertion.
+  - Upgraded `TextInspectorTab.tsx`:
+    - Added Smart Motion Template switcher dropdown.
+    - Added Secondary Subtitle / Handle text input field.
+    - Added Badge Icon selector with 15 curated icons.
+    - Added Compound 3-Phase Motion controls (In, Loop, Out animation selectors and duration sliders).
+  - 100% test pass rate: 928/928 tests passing across 75 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+
 
 
 

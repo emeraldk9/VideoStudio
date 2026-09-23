@@ -92,21 +92,36 @@ export type TextAnimationType =
   | 'bounce'
   | 'zoom_in'
   | 'glitch'
+  | 'flip_x'
+  | 'elastic_drop'
+  | 'tracking_expand'
   // Exit (Out)
   | 'fade_out'
   | 'slide_down_out'
   | 'zoom_out'
   | 'dissolve'
+  | 'shrink_out'
+  | 'wipe_right'
   // Loop / Karaoke
   | 'karaoke_highlight'
   | 'glow_pulse'
   | 'wave'
   | 'shimmer'
-  | 'bounce_loop';
+  | 'bounce_loop'
+  | 'rainbow_cycle'
+  | 'heartbeat';
 
 export interface TextAnimationSettings {
   type: TextAnimationType;
   durationFrames: number; // e.g. 15 to 90 frames
+}
+
+export interface CompoundTextAnimationSettings {
+  inAnimation?: TextAnimationType;
+  inDurationFrames?: number;
+  loopAnimation?: TextAnimationType;
+  outAnimation?: TextAnimationType;
+  outDurationFrames?: number;
 }
 
 export interface StudioTextPreset {
@@ -350,6 +365,31 @@ export function calculateTextMotionTransform(
       };
     }
 
+    case 'flip_x': {
+      const angle = (1 - easeOut) * 90;
+      return {
+        transform: `perspective(500px) rotateX(${angle.toFixed(1)}deg)`,
+        opacity: easeOut,
+      };
+    }
+
+    case 'elastic_drop': {
+      if (t >= 1) return { transform: 'none', opacity: 1 };
+      const dropY = -60 * Math.cos(t * Math.PI * 2.5) * Math.exp(-3 * t);
+      return {
+        transform: `translateY(${dropY.toFixed(1)}px)`,
+        opacity: Math.min(1, t * 2),
+      };
+    }
+
+    case 'tracking_expand': {
+      const scale = 0.85 + easeOut * 0.15;
+      return {
+        transform: `scale(${scale.toFixed(3)})`,
+        opacity: easeOut,
+      };
+    }
+
     // Exit Animations (progress based on durationFrames)
     case 'fade_out': {
       return { opacity: Math.max(0, 1 - t) };
@@ -373,6 +413,22 @@ export function calculateTextMotionTransform(
 
     case 'dissolve': {
       return { opacity: Math.max(0, 1 - Math.pow(t, 2)) };
+    }
+
+    case 'shrink_out': {
+      const scale = Math.max(0, (1 - t) * 0.9);
+      return {
+        transform: `scale(${scale.toFixed(3)})`,
+        opacity: Math.max(0, 1 - t),
+      };
+    }
+
+    case 'wipe_right': {
+      const translateX = t * 60;
+      return {
+        transform: `translateX(${translateX.toFixed(1)}px)`,
+        opacity: Math.max(0, 1 - t),
+      };
     }
 
     // Loop & Continuous Animations
@@ -407,6 +463,28 @@ export function calculateTextMotionTransform(
       const bounce = -Math.abs(Math.sin(seconds * Math.PI * 2)) * 8;
       return {
         transform: `translateY(${bounce.toFixed(1)}px)`,
+      };
+    }
+
+    case 'rainbow_cycle': {
+      const seconds = frameInClip / fps;
+      const hue = Math.round((seconds * 120) % 360);
+      return {
+        transform: `filter: hue-rotate(${hue}deg)`,
+      };
+    }
+
+    case 'heartbeat': {
+      const seconds = frameInClip / fps;
+      const cycle = (seconds * 1.8) % 1; // 1.8 beats/sec
+      let scale = 1.0;
+      if (cycle < 0.15) {
+        scale = 1.0 + Math.sin((cycle / 0.15) * Math.PI) * 0.14;
+      } else if (cycle >= 0.2 && cycle < 0.35) {
+        scale = 1.0 + Math.sin(((cycle - 0.2) / 0.15) * Math.PI) * 0.08;
+      }
+      return {
+        transform: `scale(${scale.toFixed(3)})`,
       };
     }
 

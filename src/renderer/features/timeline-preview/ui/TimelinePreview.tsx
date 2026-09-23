@@ -61,6 +61,7 @@ import {
   FONT_FAMILIES,
   calculateTypewriterSlice,
   calculateTextMotionTransform,
+  calculateCompoundTextMotion,
   calculateKaraokeHighlight,
   buildCssGridStyle,
   buildCssLensStyle,
@@ -717,7 +718,7 @@ export function TimelinePreview() {
         ? calculateTypewriterSlice(effectsText.text, frameInClip, effectsText.animation.durationFrames)
         : effectsText.text;
 
-    const motionState = calculateTextMotionTransform(effectsText.animation, frameInClip, fps);
+    const motionState = calculateCompoundTextMotion(effectsText, frameInClip, durationFrames, fps);
 
     const fontDef = effectsText.fontFamily
       ? FONT_FAMILIES.find((f) => f.family === effectsText.fontFamily)
@@ -898,6 +899,57 @@ export function TimelinePreview() {
               {token.word}
             </span>
           ))
+        ) : effectsText.templateLayout === 'badge_pill' ? (
+          <div className="flex items-center gap-2">
+            {effectsText.badgeIcon && (
+              <span
+                className="material-symbols-outlined shrink-0"
+                style={{ fontSize: `${effectsText.fontSizePx * 0.7 * textScale}px` }}
+              >
+                {effectsText.badgeIcon}
+              </span>
+            )}
+            <div className="flex flex-col text-left">
+              <span>{displayedText}</span>
+              {effectsText.secondaryText && (
+                <span
+                  style={{
+                    fontSize: `${(effectsText.secondaryFontSizePx ?? effectsText.fontSizePx * 0.6) * textScale}px`,
+                    color: effectsText.secondaryColorHex ?? 'rgba(255, 255, 255, 0.75)',
+                    fontWeight: 600,
+                    letterSpacing: 'normal',
+                  }}
+                >
+                  {effectsText.secondaryText}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : effectsText.secondaryText ? (
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              {effectsText.badgeIcon && (
+                <span
+                  className="material-symbols-outlined shrink-0"
+                  style={{ fontSize: `${effectsText.fontSizePx * 0.65 * textScale}px` }}
+                >
+                  {effectsText.badgeIcon}
+                </span>
+              )}
+              <span>{displayedText}</span>
+            </div>
+            <span
+              style={{
+                fontSize: `${(effectsText.secondaryFontSizePx ?? effectsText.fontSizePx * 0.55) * textScale}px`,
+                color: effectsText.secondaryColorHex ?? 'rgba(255, 255, 255, 0.75)',
+                fontWeight: 600,
+                marginTop: `${3 * textScale}px`,
+                letterSpacing: 'normal',
+              }}
+            >
+              {effectsText.secondaryText}
+            </span>
+          </div>
         ) : (
           displayedText
         )}

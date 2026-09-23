@@ -41,6 +41,7 @@ import {
   type TextGlowSettings,
   type TextGradientSettings,
   type TextAnimationSettings,
+  type CompoundTextAnimationSettings,
 } from './typography-ops';
 import { type AudioReverbSettings, buildFfmpegReverbFilter } from './audio-reverb-ops';
 import { type ClipNoiseGateSettings, buildFfmpegGateFilter } from './audio-gate-ops';
@@ -155,6 +156,14 @@ export interface TextContent {
   glow?: TextGlowSettings;
   gradient?: TextGradientSettings;
   animation?: TextAnimationSettings;
+  /** S85 — CapCut Smart Text Templates & Dynamic Multi-Field Title Engine */
+  secondaryText?: string;
+  secondaryFontSizePx?: number;
+  secondaryColorHex?: string;
+  badgeIcon?: string;
+  templateStyleId?: string;
+  templateLayout?: 'single' | 'stacked' | 'badge_pill' | 'callout_pointer' | 'news_ticker' | 'bordered_card';
+  compoundAnimation?: CompoundTextAnimationSettings;
 }
 
 /** S160 / S78 — what the inspector's box toggle stamps on first enable. */

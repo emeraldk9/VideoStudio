@@ -10,6 +10,9 @@ import {
   TTS_VOICE_PERSONAS,
   estimateSpeechDurationSeconds,
   createSpeechAudioClipForCaption,
+  SMART_TEXT_TEMPLATES,
+  applyTextTemplateToClip,
+  type CompoundTextAnimationSettings,
   type FontFamily,
   type FontWeight,
   type MotionSimulationType,
@@ -297,29 +300,105 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
       {/* SUB-TAB 1: BASIC (TYPOGRAPHY & LAYOUT) */}
       {subTab === 'basic' && (
         <>
-          <Section title="Caption Text">
-            <div className="flex flex-col gap-1.5">
-              <textarea
-                aria-label="Text content"
-                defaultValue={effectsText.text}
-                key={clip.id}
-                rows={3}
-                maxLength={2000}
-                className="w-full resize-y rounded-[var(--radius-button)] bg-bg-workspace p-2 text-sm text-text-primary outline-none focus:ring-1 focus:ring-accent-ai"
-                onBlur={(event) => {
-                  const text = event.target.value;
-                  if (text === effectsText.text) return;
-                  updateText({ text });
-                }}
-              />
-              <div className="flex items-center justify-between text-[11px] text-text-disabled">
-                <span>{effectsText.text.length} characters</span>
-                {isLongLine && (
-                  <span className="flex items-center gap-1 text-accent-warning font-medium">
-                    <span className="material-symbols-outlined text-xs">warning</span>
-                    Line &gt; 37 CPL
-                  </span>
-                )}
+          <Section title="Smart Motion Template">
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1 text-xs text-text-secondary">
+                <span className="font-medium text-text-disabled">Apply Template Style</span>
+                <Select
+                  aria-label="Smart text template"
+                  value={effectsText.templateStyleId ?? ''}
+                  onChange={(templateId) => {
+                    if (!templateId) return;
+                    const tmpl = SMART_TEXT_TEMPLATES.find((t) => t.id === templateId);
+                    if (tmpl) {
+                      const updated = applyTextTemplateToClip(clip, tmpl, true);
+                      patchClip(clip.id, {
+                        label: updated.label,
+                        effects: updated.effects,
+                      });
+                    }
+                  }}
+                  options={[
+                    { value: '', label: 'Custom / Standard Text' },
+                    ...SMART_TEXT_TEMPLATES.map((t) => ({
+                      value: t.id,
+                      label: `[${t.categoryLabel}] ${t.name}`,
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Caption Text & Content">
+            <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-medium text-text-disabled">Primary Text</span>
+                <textarea
+                  aria-label="Text content"
+                  defaultValue={effectsText.text}
+                  key={clip.id}
+                  rows={2}
+                  maxLength={2000}
+                  className="w-full resize-y rounded-[var(--radius-button)] bg-bg-workspace p-2 text-sm text-text-primary outline-none focus:ring-1 focus:ring-accent-ai"
+                  onBlur={(event) => {
+                    const text = event.target.value;
+                    if (text === effectsText.text) return;
+                    updateText({ text });
+                  }}
+                />
+                <div className="flex items-center justify-between text-[11px] text-text-disabled">
+                  <span>{effectsText.text.length} characters</span>
+                  {isLongLine && (
+                    <span className="flex items-center gap-1 text-accent-warning font-medium">
+                      <span className="material-symbols-outlined text-xs">warning</span>
+                      Line &gt; 37 CPL
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-medium text-text-disabled">
+                  Secondary Subtitle / Handle (Optional)
+                </span>
+                <input
+                  type="text"
+                  placeholder="e.g. Subtitle, executive title, @handle, or quote author..."
+                  defaultValue={effectsText.secondaryText ?? ''}
+                  key={`sec-${clip.id}`}
+                  className="w-full rounded-[var(--radius-button)] bg-bg-workspace px-2.5 py-1.5 text-xs text-text-primary outline-none focus:ring-1 focus:ring-accent-ai"
+                  onBlur={(event) => {
+                    const val = event.target.value.trim();
+                    updateText({ secondaryText: val || undefined });
+                  }}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 text-xs text-text-secondary">
+                <span className="font-medium text-text-disabled">Badge Icon</span>
+                <Select
+                  aria-label="Badge icon"
+                  value={effectsText.badgeIcon ?? ''}
+                  onChange={(icon) => updateText({ badgeIcon: icon || undefined })}
+                  options={[
+                    { value: '', label: 'None' },
+                    { value: 'notifications_active', label: '🔔 Bell Notification' },
+                    { value: 'alternate_email', label: '📧 Social Handle @' },
+                    { value: 'trending_up', label: '📈 Trending Up' },
+                    { value: 'thumb_up', label: '👍 Like / Thumbs Up' },
+                    { value: 'location_on', label: '📍 Location Pin' },
+                    { value: 'terminal', label: '💻 Code Terminal' },
+                    { value: 'campaign', label: '📢 Breaking News Banner' },
+                    { value: 'verified', label: '🛡️ Verified Badge' },
+                    { value: 'sell', label: '🏷️ Price Tag' },
+                    { value: 'warning', label: '⚠️ Caution Warning' },
+                    { value: 'help', label: '❓ Question Mark' },
+                    { value: 'format_quote', label: '💬 Quotation Mark' },
+                    { value: 'bolt', label: '⚡ Energy Bolt' },
+                    { value: 'movie', label: '🎬 Cinema Film' },
+                  ]}
+                />
               </div>
             </div>
           </Section>
@@ -993,87 +1072,164 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
 
       {/* SUB-TAB 3: ANIMATION (IN / OUT / LOOP / KARAOKE) */}
       {subTab === 'animation' && (
-        <Section title="Motion & Animation Presets">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1 text-xs text-text-secondary">
-              <span className="font-medium text-text-disabled">Animation Preset</span>
-              <Select
-                aria-label="Animation preset"
-                value={effectsText.animation?.type ?? 'none'}
-                onChange={(val) => {
-                  const animType = val as TextAnimationType;
-                  updateText({
-                    animation:
-                      animType === 'none'
-                        ? undefined
-                        : {
-                            type: animType,
-                            durationFrames:
-                              effectsText.animation?.durationFrames ||
-                              (animType === 'typewriter' ? 45 : 24),
-                          },
-                  });
-                }}
-                options={[
-                  // General
-                  { value: 'none', label: 'None (Static)' },
-                  // Entrance (In)
-                  { value: 'fade_in', label: 'In: Smooth Fade In' },
-                  { value: 'slide_up', label: 'In: Kinetic Slide Up' },
-                  { value: 'slide_down', label: 'In: Kinetic Slide Down' },
-                  { value: 'slide_left', label: 'In: Kinetic Slide Left' },
-                  { value: 'slide_right', label: 'In: Kinetic Slide Right' },
-                  { value: 'pop_scale', label: 'In: Pop Scale Elastic' },
-                  { value: 'zoom_in', label: 'In: Smooth Zoom In' },
-                  { value: 'bounce', label: 'In: Physics Bounce' },
-                  { value: 'typewriter', label: 'In: Typewriter (Live Typing Reveal)' },
-                  { value: 'glitch', label: 'In: Digital Glitch Jitter' },
-                  // Exit (Out)
-                  { value: 'fade_out', label: 'Out: Smooth Fade Out' },
-                  { value: 'slide_down_out', label: 'Out: Slide Down & Out' },
-                  { value: 'zoom_out', label: 'Out: Zoom Out' },
-                  { value: 'dissolve', label: 'Out: Dissolve' },
-                  // Loop / Karaoke
-                  {
-                    value: 'karaoke_highlight',
-                    label: 'Karaoke: Word-by-Word Highlight (Spoken Cadence)',
-                  },
-                  { value: 'glow_pulse', label: 'Loop: Neon Glow Pulse' },
-                  { value: 'wave', label: 'Loop: Wave Oscillation' },
-                  { value: 'shimmer', label: 'Loop: Shimmering Luminosity' },
-                  { value: 'bounce_loop', label: 'Loop: Continuous Bounce' },
-                ]}
-              />
-            </div>
-
-            {effectsText.animation && effectsText.animation.type !== 'none' && (
-              <label className="flex items-center gap-3 text-xs text-text-secondary">
-                <span className="w-16 shrink-0">Duration</span>
-                <input
-                  type="range"
-                  min={6}
-                  max={90}
-                  step={1}
-                  value={effectsText.animation.durationFrames}
-                  aria-label="Animation duration frames"
-                  className="flex-1 accent-[var(--accent-ai)]"
-                  onChange={(e) =>
-                    updateText({
-                      animation: {
-                        ...effectsText.animation!,
-                        durationFrames: Number(e.target.value),
-                      },
-                    })
-                  }
-                />
-                <span className="w-14 shrink-0 text-right font-mono">
-                  {effectsText.animation.durationFrames}f (
-                  {(effectsText.animation.durationFrames / 30).toFixed(1)}s)
+        <>
+          <Section title="Compound 3-Phase Motion (In / Loop / Out)">
+            <div className="flex flex-col gap-3">
+              {/* Entrance (In) Animation */}
+              <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-bg-app border border-hairline">
+                <span className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-accent-ai">login</span>
+                  Entrance (In) Animation
                 </span>
-              </label>
-            )}
-          </div>
-        </Section>
+                <Select
+                  aria-label="Entrance animation"
+                  value={effectsText.compoundAnimation?.inAnimation ?? (effectsText.animation?.type || 'none')}
+                  onChange={(val) => {
+                    const animType = val as TextAnimationType;
+                    const prevCompound = effectsText.compoundAnimation ?? {};
+                    updateText({
+                      compoundAnimation: {
+                        ...prevCompound,
+                        inAnimation: animType === 'none' ? undefined : animType,
+                        inDurationFrames: prevCompound.inDurationFrames ?? 18,
+                      },
+                    });
+                  }}
+                  options={[
+                    { value: 'none', label: 'None' },
+                    { value: 'fade_in', label: 'Smooth Fade In' },
+                    { value: 'slide_up', label: 'Kinetic Slide Up' },
+                    { value: 'slide_down', label: 'Kinetic Slide Down' },
+                    { value: 'slide_left', label: 'Kinetic Slide Left' },
+                    { value: 'slide_right', label: 'Kinetic Slide Right' },
+                    { value: 'pop_scale', label: 'Pop Scale Elastic' },
+                    { value: 'zoom_in', label: 'Smooth Zoom In' },
+                    { value: 'bounce', label: 'Physics Gravity Bounce' },
+                    { value: 'typewriter', label: 'Typewriter Typing Reveal' },
+                    { value: 'glitch', label: 'Digital Glitch Jitter' },
+                    { value: 'flip_x', label: '3D Flip X Rotation' },
+                    { value: 'elastic_drop', label: 'Elastic Ceiling Drop' },
+                    { value: 'tracking_expand', label: 'Tracking Kerning Expansion' },
+                  ]}
+                />
+                {effectsText.compoundAnimation?.inAnimation && effectsText.compoundAnimation.inAnimation !== 'none' && (
+                  <label className="flex items-center gap-3 text-xs text-text-secondary mt-1">
+                    <span className="w-16 shrink-0">Duration</span>
+                    <input
+                      type="range"
+                      min={6}
+                      max={60}
+                      step={1}
+                      value={effectsText.compoundAnimation.inDurationFrames ?? 18}
+                      aria-label="In duration frames"
+                      className="flex-1 accent-[var(--accent-ai)]"
+                      onChange={(e) => {
+                        updateText({
+                          compoundAnimation: {
+                            ...effectsText.compoundAnimation!,
+                            inDurationFrames: Number(e.target.value),
+                          },
+                        });
+                      }}
+                    />
+                    <span className="w-12 shrink-0 text-right font-mono">
+                      {effectsText.compoundAnimation.inDurationFrames ?? 18}f
+                    </span>
+                  </label>
+                )}
+              </div>
+
+              {/* Loop / Continuous Animation */}
+              <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-bg-app border border-hairline">
+                <span className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-purple-400">sync</span>
+                  Continuous Loop Motion
+                </span>
+                <Select
+                  aria-label="Loop animation"
+                  value={effectsText.compoundAnimation?.loopAnimation ?? 'none'}
+                  onChange={(val) => {
+                    const animType = val as TextAnimationType;
+                    const prevCompound = effectsText.compoundAnimation ?? {};
+                    updateText({
+                      compoundAnimation: {
+                        ...prevCompound,
+                        loopAnimation: animType === 'none' ? undefined : animType,
+                      },
+                    });
+                  }}
+                  options={[
+                    { value: 'none', label: 'None (Steady)' },
+                    { value: 'heartbeat', label: 'Pulsing Heartbeat' },
+                    { value: 'glow_pulse', label: 'Neon Glow Pulse' },
+                    { value: 'wave', label: 'Smooth Sine Wave' },
+                    { value: 'shimmer', label: 'Luminous Shimmer' },
+                    { value: 'bounce_loop', label: 'Continuous Bouncing' },
+                    { value: 'rainbow_cycle', label: 'Chromatic Rainbow Cycle' },
+                    { value: 'karaoke_highlight', label: 'Word-by-Word Spoken Cadence' },
+                  ]}
+                />
+              </div>
+
+              {/* Exit (Out) Animation */}
+              <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-bg-app border border-hairline">
+                <span className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-amber-400">logout</span>
+                  Exit (Out) Animation
+                </span>
+                <Select
+                  aria-label="Exit animation"
+                  value={effectsText.compoundAnimation?.outAnimation ?? 'none'}
+                  onChange={(val) => {
+                    const animType = val as TextAnimationType;
+                    const prevCompound = effectsText.compoundAnimation ?? {};
+                    updateText({
+                      compoundAnimation: {
+                        ...prevCompound,
+                        outAnimation: animType === 'none' ? undefined : animType,
+                        outDurationFrames: prevCompound.outDurationFrames ?? 15,
+                      },
+                    });
+                  }}
+                  options={[
+                    { value: 'none', label: 'None (Cut)' },
+                    { value: 'fade_out', label: 'Smooth Fade Out' },
+                    { value: 'slide_down_out', label: 'Slide Down & Out' },
+                    { value: 'zoom_out', label: 'Smooth Zoom Out' },
+                    { value: 'dissolve', label: 'Quadratic Dissolve' },
+                    { value: 'shrink_out', label: 'Elastic Shrink Out' },
+                    { value: 'wipe_right', label: 'Linear Wipe Right' },
+                  ]}
+                />
+                {effectsText.compoundAnimation?.outAnimation && effectsText.compoundAnimation.outAnimation !== 'none' && (
+                  <label className="flex items-center gap-3 text-xs text-text-secondary mt-1">
+                    <span className="w-16 shrink-0">Duration</span>
+                    <input
+                      type="range"
+                      min={6}
+                      max={60}
+                      step={1}
+                      value={effectsText.compoundAnimation.outDurationFrames ?? 15}
+                      aria-label="Out duration frames"
+                      className="flex-1 accent-[var(--accent-ai)]"
+                      onChange={(e) => {
+                        updateText({
+                          compoundAnimation: {
+                            ...effectsText.compoundAnimation!,
+                            outDurationFrames: Number(e.target.value),
+                          },
+                        });
+                      }}
+                    />
+                    <span className="w-12 shrink-0 text-right font-mono">
+                      {effectsText.compoundAnimation.outDurationFrames ?? 15}f
+                    </span>
+                  </label>
+                )}
+              </div>
+            </div>
+          </Section>
+        </>
       )}
 
       {/* SUB-TAB 4: TRACKING (SUBJECT FOLLOWER & CAMERA DRIFT) */}
