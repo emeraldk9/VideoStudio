@@ -75,5 +75,6 @@ export * from './utils/timeline/color-match-ops';
 export * from './utils/timeline/audio-sync-ops';
 export * from './utils/timeline/tts-generator-ops';
 export * from './utils/timeline/auto-captions-ops';
+export * from './utils/timeline/subtitle-translation-ops';
 export * from './ipc/ipc-channels';
 export * from './ipc/ipc-schemas';

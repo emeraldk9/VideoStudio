@@ -19,11 +19,18 @@ import {
   CADENCE_PACING_PRESETS,
   SPOKEN_LANGUAGES,
   generateAutoCaptionsForSequence,
+  TRANSLATION_LANGUAGES,
+  formatBilingualSubtitleText,
+  translateSubtitleClips,
+  translateSubtitleText,
+  type BilingualLayout,
   type CaptionPresetId,
   type PacingPresetId,
   type SequenceClip,
   type SpokenLanguageCode,
   type SubtitleCasing,
+  type TranslationLanguageCode,
+  type TranslationMode,
 } from '@shared';
 
 import {
@@ -72,6 +79,15 @@ export function SubtitlesPane() {
   const [autoCapSilenceThreshold, setAutoCapSilenceThreshold] = useState(0.35);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribeProgress, setTranscribeProgress] = useState<{ step: string; pct: number } | null>(null);
+
+  // Multi-Language Translation & Bilingual state
+  const [isTranslateOpen, setIsTranslateOpen] = useState(false);
+  const [transSourceLang, setTransSourceLang] = useState<TranslationLanguageCode | 'auto'>('auto');
+  const [transTargetLang, setTransTargetLang] = useState<TranslationLanguageCode>('es');
+  const [transMode, setTransMode] = useState<TranslationMode>('dual_bilingual');
+  const [transBilingualLayout, setTransBilingualLayout] = useState<BilingualLayout>('stacked');
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translateProgressPct, setTranslateProgressPct] = useState<number | null>(null);
 
   // Hidden file input for SRT/VTT import
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -537,6 +553,101 @@ export function SubtitlesPane() {
     }, 250);
   };
 
+  // Handle Multi-Language Translation & Dual Bilingual formatting
+  const handleApplyTranslation = async () => {
+    const doc = useSequenceStore.getState().document;
+    if (!doc) return;
+
+    if (subtitleClips.length === 0) {
+      pushToast({ variant: 'warning', message: 'No subtitles found to translate.' });
+      return;
+    }
+
+    setIsTranslating(true);
+    setTranslateProgressPct(35);
+
+    setTimeout(async () => {
+      setTranslateProgressPct(70);
+
+      setTimeout(async () => {
+        const freshDoc = useSequenceStore.getState().document;
+        if (!freshDoc) {
+          setIsTranslating(false);
+          setTranslateProgressPct(null);
+          return;
+        }
+
+        const clipsToTranslate = freshDoc.clips.filter(
+          (c) =>
+            c.sourceKind === 'text' &&
+            (selectedTrackId === 'all' || c.trackId === selectedTrackId),
+        );
+
+        if (transMode === 'duplicate_new_track') {
+          // Create new text track for translated subtitles
+          const targetLangName = TRANSLATION_LANGUAGES[transTargetLang].name;
+          const trackLabel = `Subtitles [${targetLangName}]`;
+          await useSequenceStore.getState().addTrack('video', trackLabel, 'text');
+          const postDoc = useSequenceStore.getState().document;
+          const newTrack =
+            postDoc?.tracks.find((t) => t.name === trackLabel) ??
+            postDoc?.tracks[postDoc.tracks.length - 1];
+          const newTrackId = newTrack?.id;
+          if (!newTrackId) {
+            setIsTranslating(false);
+            setTranslateProgressPct(null);
+            pushToast({ variant: 'error', message: 'Failed to create translation track.' });
+            return;
+          }
+
+          const translatedClips = translateSubtitleClips(clipsToTranslate, {
+            sourceLang: transSourceLang,
+            targetLang: transTargetLang,
+            mode: 'duplicate_new_track',
+            targetTrackId: newTrackId,
+            secondaryColorHex: '#fef08a',
+            secondaryFontScale: 0.85,
+          });
+
+          useSequenceStore.getState().commitClips([...freshDoc.clips, ...translatedClips]);
+          setIsTranslating(false);
+          setTranslateProgressPct(null);
+          setIsTranslateOpen(false);
+
+          pushToast({
+            variant: 'success',
+            message: `Created new track with ${translatedClips.length} translated subtitles in ${targetLangName}.`,
+          });
+        } else {
+          // In-place translation (replace_in_place or dual_bilingual)
+          const translatedClips = translateSubtitleClips(clipsToTranslate, {
+            sourceLang: transSourceLang,
+            targetLang: transTargetLang,
+            mode: transMode,
+            bilingualLayout: transBilingualLayout,
+          });
+
+          const translatedMap = new Map(translatedClips.map((c) => [c.id, c]));
+          const updatedClips = freshDoc.clips.map((c) => translatedMap.get(c.id) ?? c);
+
+          useSequenceStore.getState().commitClips(updatedClips);
+          setIsTranslating(false);
+          setTranslateProgressPct(null);
+          setIsTranslateOpen(false);
+
+          const modeLabel =
+            transMode === 'dual_bilingual'
+              ? 'dual bilingual subtitles'
+              : `subtitles translated into ${TRANSLATION_LANGUAGES[transTargetLang].name}`;
+          pushToast({
+            variant: 'success',
+            message: `Updated ${translatedClips.length} ${modeLabel}.`,
+          });
+        }
+      }, 250);
+    }, 250);
+  };
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-bg-app text-text-primary text-xs">
       {/* Hidden File Input */}
@@ -587,6 +698,14 @@ export function SubtitlesPane() {
               emphasis={isAutoCaptionsOpen}
               aria-pressed={isAutoCaptionsOpen}
               onClick={() => setIsAutoCaptionsOpen((prev) => !prev)}
+            />
+            <IconButton
+              icon="translate"
+              size="sm"
+              label="Translate & Dual Bilingual Subtitles"
+              emphasis={isTranslateOpen}
+              aria-pressed={isTranslateOpen}
+              onClick={() => setIsTranslateOpen((prev) => !prev)}
             />
             <div className="relative">
               <IconButton
@@ -945,6 +1064,219 @@ export function SubtitlesPane() {
             >
               <span className="material-symbols-outlined text-sm">auto_awesome</span>
               Generate Auto-Captions
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Expandable Multi-Language Translation & Bilingual Drawer */}
+      {isTranslateOpen && (
+        <div className="flex shrink-0 flex-col gap-3 border-b border-hairline bg-bg-surface/90 p-3 shadow-inner">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+              <span className="material-symbols-outlined text-sm text-accent-ai">translate</span>
+              <span>Translate & Bilingual Subtitles</span>
+            </div>
+            <span className="rounded bg-accent-ai/20 px-1.5 py-0.5 text-[10px] font-medium text-accent-ai">
+              12 Languages
+            </span>
+          </div>
+
+          {/* Source & Target Language Selectors */}
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="flex flex-col gap-1">
+              <span className="text-text-secondary">Source Language:</span>
+              <select
+                value={transSourceLang}
+                onChange={(e) =>
+                  setTransSourceLang(e.target.value as TranslationLanguageCode | 'auto')
+                }
+                className="h-7 w-full rounded border border-hairline bg-bg-canvas px-2 text-xs text-text-primary focus:border-accent-ai focus:outline-none"
+              >
+                <option value="auto">🌐 Auto-Detect</option>
+                {Object.entries(TRANSLATION_LANGUAGES).map(([code, lang]) => (
+                  <option key={code} value={code}>
+                    {lang.flag} {lang.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-text-secondary">Translate To:</span>
+              <select
+                value={transTargetLang}
+                onChange={(e) =>
+                  setTransTargetLang(e.target.value as TranslationLanguageCode)
+                }
+                className="h-7 w-full rounded border border-hairline bg-bg-canvas px-2 text-xs text-text-primary focus:border-accent-ai focus:outline-none"
+              >
+                {Object.entries(TRANSLATION_LANGUAGES).map(([code, lang]) => (
+                  <option key={code} value={code}>
+                    {lang.flag} {lang.name} ({lang.nativeName})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Translation Mode */}
+          <div className="flex flex-col gap-1 text-[11px]">
+            <span className="text-text-secondary">Workflow Mode:</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setTransMode('dual_bilingual')}
+                className={`flex flex-col items-center justify-center rounded-lg border p-1.5 text-center transition-all ${
+                  transMode === 'dual_bilingual'
+                    ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                    : 'border-hairline bg-bg-canvas text-text-secondary hover:border-hairline-bright'
+                }`}
+                title="Stack primary subtitle and translated subtitle in the same cue card"
+              >
+                <span className="text-[10px] line-clamp-1">Dual Bilingual</span>
+                <span className="text-[9px] font-mono text-text-disabled">2-line stack</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTransMode('replace_in_place')}
+                className={`flex flex-col items-center justify-center rounded-lg border p-1.5 text-center transition-all ${
+                  transMode === 'replace_in_place'
+                    ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                    : 'border-hairline bg-bg-canvas text-text-secondary hover:border-hairline-bright'
+                }`}
+                title="Replace existing subtitle text with translation directly"
+              >
+                <span className="text-[10px] line-clamp-1">In-Place</span>
+                <span className="text-[9px] font-mono text-text-disabled">Replace text</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTransMode('duplicate_new_track')}
+                className={`flex flex-col items-center justify-center rounded-lg border p-1.5 text-center transition-all ${
+                  transMode === 'duplicate_new_track'
+                    ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                    : 'border-hairline bg-bg-canvas text-text-secondary hover:border-hairline-bright'
+                }`}
+                title="Keep original subtitles and create a new dedicated language track"
+              >
+                <span className="text-[10px] line-clamp-1">New Track</span>
+                <span className="text-[9px] font-mono text-text-disabled">+Track</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Bilingual Layout Options (Only for dual_bilingual) */}
+          {transMode === 'dual_bilingual' && (
+            <div className="flex flex-col gap-1 text-[11px]">
+              <span className="text-text-secondary">Bilingual Layout:</span>
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setTransBilingualLayout('stacked')}
+                  className={`rounded border px-2 py-1 text-[10px] transition-all truncate ${
+                    transBilingualLayout === 'stacked'
+                      ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                      : 'border-hairline bg-bg-canvas text-text-secondary hover:bg-bg-hover'
+                  }`}
+                >
+                  Primary / Trans
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransBilingualLayout('reverse_stacked')}
+                  className={`rounded border px-2 py-1 text-[10px] transition-all truncate ${
+                    transBilingualLayout === 'reverse_stacked'
+                      ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                      : 'border-hairline bg-bg-canvas text-text-secondary hover:bg-bg-hover'
+                  }`}
+                >
+                  Trans / Primary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransBilingualLayout('brackets')}
+                  className={`rounded border px-2 py-1 text-[10px] transition-all truncate ${
+                    transBilingualLayout === 'brackets'
+                      ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                      : 'border-hairline bg-bg-canvas text-text-secondary hover:bg-bg-hover'
+                  }`}
+                >
+                  Text (Trans)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Live Preview Card */}
+          <div className="flex flex-col gap-1 rounded-lg border border-hairline/80 bg-bg-canvas p-2 text-[11px]">
+            <span className="text-[10px] text-text-secondary font-medium">Live Preview:</span>
+            <div className="rounded bg-bg-surface/80 p-1.5 text-center font-medium leading-relaxed">
+              {(() => {
+                const sampleText =
+                  subtitleClips[0]?.effects?.text?.text ?? 'Welcome to this video';
+                const sampleTrans = translateSubtitleText(
+                  sampleText,
+                  transTargetLang,
+                  transSourceLang,
+                );
+                if (transMode === 'replace_in_place') {
+                  return <span className="text-text-primary">{sampleTrans}</span>;
+                }
+                if (transMode === 'duplicate_new_track') {
+                  return (
+                    <span className="text-[#fef08a] font-semibold">
+                      [Track 2] {sampleTrans}
+                    </span>
+                  );
+                }
+                return (
+                  <div className="flex flex-col">
+                    <span className="text-text-primary">
+                      {transBilingualLayout === 'reverse_stacked' ? sampleTrans : sampleText}
+                    </span>
+                    <span className="text-accent-ai text-[10px]">
+                      {transBilingualLayout === 'brackets'
+                        ? `(${sampleTrans})`
+                        : transBilingualLayout === 'reverse_stacked'
+                        ? sampleText
+                        : sampleTrans}
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Progress / Apply Translation Button */}
+          {isTranslating ? (
+            <div className="flex flex-col gap-1.5 rounded-lg border border-accent-ai/40 bg-accent-ai/10 p-2.5">
+              <div className="flex items-center justify-between text-xs text-accent-ai font-medium">
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm animate-spin">sync</span>
+                  Translating cues to {TRANSLATION_LANGUAGES[transTargetLang].name}...
+                </span>
+                <span className="font-mono">{translateProgressPct}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-canvas">
+                <div
+                  className="h-full bg-accent-ai transition-all duration-300"
+                  style={{ width: `${translateProgressPct}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleApplyTranslation}
+              className="w-full justify-center"
+              disabled={subtitleClips.length === 0}
+            >
+              <span className="material-symbols-outlined text-sm">translate</span>
+              Apply Translation ({subtitleClips.length} cues)
             </Button>
           )}
         </div>

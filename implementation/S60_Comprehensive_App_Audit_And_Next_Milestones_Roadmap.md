@@ -96,6 +96,7 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
 | **S78** | **CapCut-Grade Closed Captions Inspector, Effects & Animation** | Full CapCut PC parity: 3-subtab inspector, text stroke/glow/shadows, word-by-word karaoke highlighting, kinetic animations, and 1-click Apply to All. | **Completed** |
 | **S79** | **Text-to-Speech (TTS) Voiceover Generator & Text Motion Tracking Engine** | 6 curated voice personas, speech duration estimation, 48 kHz PCM WAV synthesis, Web Speech auditioning, and keyframed text motion tracking pin. | **Completed** |
 | **S80** | **AI Auto-Captions (STT) & Audio Cadence Alignment Engine** | Voice Activity Detection (VAD) audio segmenter, word-level timestamps, multi-language speech transcription, and cadence pacing presets. | **Completed** |
+| **S81** | **Multi-Language Subtitle Translation & Dual Bilingual Subtitles Engine** | 12 languages phrase translation, dual bilingual stacked formatting, in-place replacement, and multi-track cloning. | **Completed** |
 
 ---
 
@@ -314,5 +315,17 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Added expandable **Auto Captions AI Drawer** with source audio track picker, spoken language selector, cadence pacing cards, typography style chips, and "clear existing subtitles" option.
     - Built animated multi-step progress stepper (Waveforms -> VAD -> STT -> Cadence Alignment) with instant commit to sequence store.
   - 100% test pass rate: 873/873 tests passing across 70 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 08:44]** Step S81 successfully completed:
+  - Built pure multi-language translation and bilingual subtitle engine `src/shared/utils/timeline/subtitle-translation-ops.ts`:
+    - 12 major languages dictionary (`TRANSLATION_LANGUAGES`: English, Spanish, French, German, Italian, Portuguese, Japanese, Chinese, Korean, Vietnamese, Arabic, Russian) with flags and native names.
+    - `translateSubtitleText`: Phrase-level and lexical translation with sentence casing and punctuation preservation.
+    - `formatBilingualSubtitleText` & `splitBilingualSubtitleText`: Dual bilingual stacked (`primary\nsecondary`), bracketed (`primary (secondary)`), and inverted layouts.
+    - `translateSubtitleClips`: Batch processing across all 3 translation modes: `dual_bilingual`, `replace_in_place`, and `duplicate_new_track`.
+  - Added unit test suite `src/shared/utils/timeline/__tests__/subtitle-translation-ops.test.ts` (16 tests passing).
+  - Upgraded `SubtitlesPane.tsx`:
+    - Added `translate` action button in the Subtitles header toolbar.
+    - Added expandable **Translate & Dual Bilingual Subtitles Drawer** with source/target language pickers, 3 workflow modes, bilingual layout options, live before/after preview card, and progress stepper.
+  - 100% test pass rate: 889/889 tests passing across 71 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+
 
 
