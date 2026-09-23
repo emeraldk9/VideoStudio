@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-import type { RenderEncoderInfo, TextContent } from '@shared';
+import { buildFfmpegDrawTextOptions, type RenderEncoderInfo, type TextContent } from '@shared';
 
 import { videoEncodeArgs } from './render-encoder';
 
@@ -136,6 +136,26 @@ export function buildDrawtextFilter(options: TextSegmentOptions): string {
     `x=${xExpr}`,
     `y=${yExpr}`,
   ];
+
+  const drawTextOpts = buildFfmpegDrawTextOptions(content);
+  if (drawTextOpts.borderw && drawTextOpts.bordercolor) {
+    parts.push(
+      `borderw=${Math.max(1, Math.round(drawTextOpts.borderw * scale))}`,
+      `bordercolor=${ffmpegColor(drawTextOpts.bordercolor)}`,
+    );
+  }
+  if (
+    drawTextOpts.shadowx !== undefined &&
+    drawTextOpts.shadowy !== undefined &&
+    (drawTextOpts.shadowx !== 0 || drawTextOpts.shadowy !== 0)
+  ) {
+    parts.push(
+      `shadowx=${Math.round(drawTextOpts.shadowx * scale)}`,
+      `shadowy=${Math.round(drawTextOpts.shadowy * scale)}`,
+      `shadowcolor=${ffmpegColor(drawTextOpts.shadowcolor ?? '#000000')}`,
+    );
+  }
+
   if (content.box) {
     parts.push(
       'box=1',

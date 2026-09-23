@@ -38,6 +38,7 @@ import {
   type FontWeight,
   type TextStrokeSettings,
   type TextShadowSettings,
+  type TextGlowSettings,
   type TextGradientSettings,
   type TextAnimationSettings,
 } from './typography-ops';
@@ -134,25 +135,34 @@ export interface TextContent {
    */
   anchor?: 'top' | 'middle' | 'bottom';
   /** A backing box behind the text — the caption look. */
-  box?: { colorHex: string; opacity: number; paddingPx: number };
+  box?: {
+    colorHex: string;
+    opacity: number;
+    paddingPx: number;
+    borderRadiusPx?: number;
+  };
   preset: 'title' | 'lower_third' | 'caption';
-  /** S40 — Rich Typography & Kinetic Motion Extensions */
+  /** S40 / S78 — Rich Typography, Art Effects & Motion Extensions */
   fontFamily?: FontFamily;
   fontWeight?: FontWeight;
+  italic?: boolean;
+  underline?: boolean;
   letterSpacingPx?: number;
   lineHeight?: number;
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
   stroke?: TextStrokeSettings;
   shadow?: TextShadowSettings;
+  glow?: TextGlowSettings;
   gradient?: TextGradientSettings;
   animation?: TextAnimationSettings;
 }
 
-/** S160 — what the inspector's box toggle stamps on first enable. */
+/** S160 / S78 — what the inspector's box toggle stamps on first enable. */
 export const DEFAULT_TEXT_BOX: NonNullable<TextContent['box']> = {
   colorHex: '#000000',
   opacity: 0.5,
   paddingPx: 12,
+  borderRadiusPx: 6,
 };
 
 export const TEXT_PRESETS: Record<TextContent['preset'], Omit<TextContent, 'text'>> = {
@@ -474,6 +484,7 @@ export const clipEffectsSchema = z
             colorHex: hexColorSchema,
             opacity: boundedNumber(0, 1),
             paddingPx: boundedNumber(0, 100),
+            borderRadiusPx: boundedNumber(0, 50).optional(),
           })
           .optional(),
         preset: z.enum(['title', 'lower_third', 'caption']),
@@ -490,6 +501,8 @@ export const clipEffectsSchema = z
           ])
           .optional(),
         fontWeight: z.enum(['400', '600', '700', '900']).optional(),
+        italic: z.boolean().optional(),
+        underline: z.boolean().optional(),
         letterSpacingPx: boundedNumber(-5, 50).optional(),
         lineHeight: boundedNumber(0.5, 3).optional(),
         textTransform: z.enum(['none', 'uppercase', 'lowercase', 'capitalize']).optional(),
@@ -510,6 +523,14 @@ export const clipEffectsSchema = z
           })
           .strict()
           .optional(),
+        glow: z
+          .object({
+            colorHex: hexColorSchema,
+            radiusPx: boundedNumber(0, 50),
+            intensity: boundedNumber(0, 1),
+          })
+          .strict()
+          .optional(),
         gradient: z
           .object({
             enabled: z.boolean(),
@@ -527,9 +548,21 @@ export const clipEffectsSchema = z
               'fade_in',
               'slide_up',
               'slide_down',
+              'slide_left',
+              'slide_right',
               'pop_scale',
-              'glow_pulse',
               'bounce',
+              'zoom_in',
+              'glitch',
+              'fade_out',
+              'slide_down_out',
+              'zoom_out',
+              'dissolve',
+              'karaoke_highlight',
+              'glow_pulse',
+              'wave',
+              'shimmer',
+              'bounce_loop',
             ]),
             durationFrames: z.number().int().min(0).max(300),
           })

@@ -267,6 +267,23 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Character-per-line (CPL) warning indicators (>37 chars).
     - Typography style preset cards (`Modern Pill`, `Cinema Gold`, `TikTok Box`, `High Contrast`, `Retro Teletext`, `Minimalist`).
     - File import (`.srt`, `.vtt`, `.ass`, `.txt`) and multi-format export dropdown (`.srt`, `.vtt`, `.ass`, plain text transcript, clipboard copy).
-  - Extended unit tests in `src/shared/utils/timeline/__tests__/subtitle-ops.test.ts` (38 tests).
-  - 100% test pass rate: 843/843 tests passing across 68 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 08:25]** Step S78 successfully completed:
+  - Extended text schemas and interfaces (`effects.ts` & `typography-ops.ts`):
+    - Added `italic`, `underline`, `glow` (`TextGlowSettings`), and `box.borderRadiusPx` (for rounded capsule/pill subtitle cards).
+    - Added new animation types for Entrance (`slide_left`, `slide_right`, `zoom_in`, `glitch`), Exit (`fade_out`, `slide_down_out`, `zoom_out`, `dissolve`), and Loop/Karaoke (`karaoke_highlight`, `wave`, `shimmer`, `bounce_loop`).
+    - Added `calculateKaraokeHighlight` for word-by-word active spoken highlight tokenization with progress matching.
+    - Added `applyTypographyStyleToClips` for 1-click batch styling across sequence subtitle cues.
+    - Added `CAPCUT_CAPTION_PRESETS` (`tiktok_viral_pill`, `karaoke_party`, `cyber_glow`, `cinema_subtitles`, `comic_pop`, `bold_shadow`).
+  - Upgraded FFmpeg export filter generator in `src/main/media/text-segment.ts`:
+    - Connected `buildFfmpegDrawTextOptions` to `buildDrawtextFilter` (`borderw`, `bordercolor`, `shadowx`, `shadowy`, `shadowcolor`, and box padding).
+  - Upgraded `TimelinePreview.tsx` (`renderText`):
+    - Full CSS text stroke (`-webkit-text-stroke`), combined drop shadow and neon glow (`textShadow`), gradient fills, italic, underline, text-transform, and capsule pill corner radius.
+    - Real-time tokenized karaoke word-by-word active highlight rendering with golden radiance.
+  - Re-architected `TextInspectorTab.tsx` into CapCut PC 3-subtab layout (`[ Basic ] [ Effects & Art ] [ Animation ]`):
+    - "Apply to All Captions" 1-click transaction button with feedback pill.
+    - Quick preset carousel cards.
+    - Full typographic, formatting, stroke, glow, shadow, gradient, and animation controls.
+  - Contextualized `SingleClipInspector.tsx` tab label to "Captions" with icon `closed_caption` when inspecting subtitle cues.
+  - Unit tests in `src/shared/utils/timeline/__tests__/typography-ops.test.ts` (31 tests passing).
+  - 100% test pass rate: 856/856 tests passing across 68 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
 

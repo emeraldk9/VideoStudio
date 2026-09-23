@@ -61,6 +61,7 @@ import {
   FONT_FAMILIES,
   calculateTypewriterSlice,
   calculateTextMotionTransform,
+  calculateKaraokeHighlight,
   buildCssGridStyle,
   buildCssLensStyle,
   buildCssFilmEmulationStyle,
@@ -685,7 +686,12 @@ export function TimelinePreview() {
     return { x, y, snapped };
   };
 
-  const renderText = (clipId: string, effectsText: TextContent | undefined, startFrames = 0) => {
+  const renderText = (
+    clipId: string,
+    effectsText: TextContent | undefined,
+    startFrames = 0,
+    durationFrames = 30
+  ) => {
     if (!effectsText || !document) return null;
     const textScale = boxHeight > 0 ? boxHeight / document.sequence.height : 0;
     if (textScale === 0) return null;
@@ -706,6 +712,50 @@ export function TimelinePreview() {
     const fontDef = effectsText.fontFamily
       ? FONT_FAMILIES.find((f) => f.family === effectsText.fontFamily)
       : undefined;
+
+    const strokeStyle =
+      effectsText.stroke && effectsText.stroke.widthPx > 0
+        ? `${Math.max(1, Math.round(effectsText.stroke.widthPx * textScale))}px ${effectsText.stroke.colorHex}`
+        : undefined;
+
+    const shadowParts: string[] = [];
+    if (motionState.textShadow) {
+      shadowParts.push(motionState.textShadow);
+    }
+    if (effectsText.shadow && (effectsText.shadow.blurPx > 0 || effectsText.shadow.opacity > 0)) {
+      const sx = Math.round(effectsText.shadow.offsetX * textScale);
+      const sy = Math.round(effectsText.shadow.offsetY * textScale);
+      const sb = Math.round(effectsText.shadow.blurPx * textScale);
+      const hex = effectsText.shadow.colorHex;
+      const alpha = effectsText.shadow.opacity;
+      const r = parseInt(hex.slice(1, 3), 16) || 0;
+      const g = parseInt(hex.slice(3, 5), 16) || 0;
+      const b = parseInt(hex.slice(5, 7), 16) || 0;
+      shadowParts.push(`${sx}px ${sy}px ${sb}px rgba(${r}, ${g}, ${b}, ${alpha})`);
+    }
+    if (effectsText.glow && effectsText.glow.radiusPx > 0 && effectsText.glow.intensity > 0) {
+      const gb = Math.round(effectsText.glow.radiusPx * textScale);
+      const hex = effectsText.glow.colorHex;
+      const alpha = effectsText.glow.intensity;
+      const r = parseInt(hex.slice(1, 3), 16) || 0;
+      const g = parseInt(hex.slice(3, 5), 16) || 0;
+      const b = parseInt(hex.slice(5, 7), 16) || 0;
+      shadowParts.push(`0 0 ${gb}px rgba(${r}, ${g}, ${b}, ${alpha})`);
+      shadowParts.push(
+        `0 0 ${Math.round(gb * 1.5)}px rgba(${r}, ${g}, ${b}, ${(alpha * 0.6).toFixed(2)})`
+      );
+    }
+    const textShadow = shadowParts.length > 0 ? shadowParts.join(', ') : undefined;
+
+    const isGradient = Boolean(effectsText.gradient?.enabled);
+    const gradientBg = isGradient
+      ? `linear-gradient(${effectsText.gradient?.angleDeg ?? 90}deg, ${effectsText.gradient?.fromHex}, ${effectsText.gradient?.toHex})`
+      : undefined;
+
+    const karaokeState =
+      effectsText.animation?.type === 'karaoke_highlight'
+        ? calculateKaraokeHighlight(displayedText, frameInClip, durationFrames)
+        : null;
 
     return (
       <div
@@ -728,19 +778,30 @@ export function TimelinePreview() {
             .filter(Boolean)
             .join(' '),
           fontSize: `${effectsText.fontSizePx * textScale}px`,
-          color: effectsText.colorHex,
+          color: isGradient ? undefined : effectsText.colorHex,
           fontFamily: fontDef ? fontDef.cssFont : "'Inter', sans-serif",
           fontWeight: effectsText.fontWeight ? parseInt(effectsText.fontWeight, 10) : 700,
+          fontStyle: effectsText.italic ? 'italic' : 'normal',
+          textDecoration: effectsText.underline ? 'underline' : 'none',
           letterSpacing: effectsText.letterSpacingPx ? `${effectsText.letterSpacingPx}px` : undefined,
           lineHeight: effectsText.lineHeight ?? 1.2,
           textAlign: effectsText.align,
+          textTransform: effectsText.textTransform ?? 'none',
+          WebkitTextStroke: strokeStyle,
+          textShadow,
           opacity: motionState.opacity ?? 1,
+          backgroundImage: gradientBg,
+          WebkitBackgroundClip: isGradient ? 'text' : undefined,
+          WebkitTextFillColor: isGradient ? 'transparent' : undefined,
           backgroundColor: effectsText.box
             ? `${effectsText.box.colorHex}${Math.round(effectsText.box.opacity * 255)
                 .toString(16)
                 .padStart(2, '0')}`
             : undefined,
           padding: effectsText.box ? `${effectsText.box.paddingPx * textScale}px` : undefined,
+          borderRadius: effectsText.box?.borderRadiusPx
+            ? `${effectsText.box.borderRadiusPx * textScale}px`
+            : undefined,
         }}
         onPointerDown={
           draggable
@@ -805,7 +866,31 @@ export function TimelinePreview() {
             : undefined
         }
       >
-        {displayedText}
+        {karaokeState ? (
+          karaokeState.tokens.map((token, idx) => (
+            <span
+              key={idx}
+              style={{
+                color: token.isActive
+                  ? '#FFD700'
+                  : token.isPast
+                    ? effectsText.colorHex
+                    : 'rgba(255, 255, 255, 0.45)',
+                textShadow: token.isActive
+                  ? '0 0 14px rgba(255, 215, 0, 0.9), 0 0 24px rgba(255, 215, 0, 0.6)'
+                  : undefined,
+                fontWeight: token.isActive ? 900 : undefined,
+                transform: token.isActive ? 'scale(1.08)' : undefined,
+                display: 'inline-block',
+                transition: 'color 0.08s ease, transform 0.08s ease',
+              }}
+            >
+              {token.word}
+            </span>
+          ))
+        ) : (
+          displayedText
+        )}
       </div>
     );
   };
@@ -1455,13 +1540,23 @@ export function TimelinePreview() {
         {current?.clip.sourceKind === 'text' ? (
           <>
             <div className="absolute inset-0 bg-media-scrim-strong" />
-            {renderText(current.clip.id, current.clip.effects?.text, current.startFrames)}
+            {renderText(
+              current.clip.id,
+              current.clip.effects?.text,
+              current.startFrames,
+              current.clip.durationFrames,
+            )}
           </>
         ) : null}
 
         {overlayStack.map((placed) =>
           placed.clip.sourceKind === 'text' ? (
-            renderText(placed.clip.id, placed.clip.effects?.text, placed.startFrames)
+            renderText(
+              placed.clip.id,
+              placed.clip.effects?.text,
+              placed.startFrames,
+              placed.clip.durationFrames,
+            )
           ) : placed.clip.sourceKind === 'video' ? (
             <video
               key={placed.clip.id}

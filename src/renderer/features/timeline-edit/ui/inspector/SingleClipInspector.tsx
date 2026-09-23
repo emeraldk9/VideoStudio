@@ -157,8 +157,13 @@ export const SingleClipInspector = React.memo(function SingleClipInspector({
       ];
     }
     if (clip.sourceKind === 'text') {
+      const isCaption = clip.effects?.text?.preset === 'caption';
       return [
-        { id: 'text', label: 'Text', icon: 'title' },
+        {
+          id: 'text',
+          label: isCaption ? 'Captions' : 'Text',
+          icon: isCaption ? 'closed_caption' : 'title',
+        },
         { id: 'basic', label: 'Transform', icon: 'crop_free' },
       ];
     }

@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   FONT_FAMILIES,
   STUDIO_TEXT_PRESETS,
+  CAPCUT_CAPTION_PRESETS,
   calculateTypewriterSlice,
   calculateTextMotionTransform,
+  calculateKaraokeHighlight,
+  applyTypographyStyleToClips,
   buildFfmpegDrawTextOptions,
 } from '../typography-ops';
 
@@ -144,6 +147,205 @@ describe('typography-ops', () => {
 
       const frame15 = calculateTextMotionTransform({ type: 'glow_pulse', durationFrames: 30 }, 15, 30);
       expect(frame15.textShadow).toContain('rgba(0, 240, 255,');
+    });
+    it('calculates slide_left translation from +48px to 0px', () => {
+      const start = calculateTextMotionTransform({ type: 'slide_left', durationFrames: 20 }, 0, 30);
+      expect(start.transform).toBe('translateX(48.0px)');
+      expect(start.opacity).toBe(0);
+
+      const end = calculateTextMotionTransform({ type: 'slide_left', durationFrames: 20 }, 20, 30);
+      expect(end.transform).toBe('translateX(0.0px)');
+      expect(end.opacity).toBe(1);
+    });
+
+    it('calculates slide_right translation from -48px to 0px', () => {
+      const start = calculateTextMotionTransform({ type: 'slide_right', durationFrames: 20 }, 0, 30);
+      expect(start.transform).toBe('translateX(-48.0px)');
+      expect(start.opacity).toBe(0);
+
+      const end = calculateTextMotionTransform({ type: 'slide_right', durationFrames: 20 }, 20, 30);
+      expect(end.transform).toBe('translateX(0.0px)');
+      expect(end.opacity).toBe(1);
+    });
+
+    it('calculates zoom_in scale and opacity', () => {
+      const start = calculateTextMotionTransform({ type: 'zoom_in', durationFrames: 20 }, 0, 30);
+      expect(start.transform).toContain('scale(0.400)');
+      expect(start.opacity).toBe(0);
+
+      const end = calculateTextMotionTransform({ type: 'zoom_in', durationFrames: 20 }, 20, 30);
+      expect(end.transform).toContain('scale(1.000)');
+      expect(end.opacity).toBe(1);
+    });
+
+    it('calculates exit animations (fade_out, zoom_out, dissolve)', () => {
+      const fadeOut = calculateTextMotionTransform({ type: 'fade_out', durationFrames: 20 }, 20, 30);
+      expect(fadeOut.opacity).toBe(0);
+
+      const zoomOut = calculateTextMotionTransform({ type: 'zoom_out', durationFrames: 20 }, 20, 30);
+      expect(zoomOut.opacity).toBe(0);
+      expect(zoomOut.transform).toContain('scale(0.400)');
+
+      const dissolve = calculateTextMotionTransform({ type: 'dissolve', durationFrames: 20 }, 20, 30);
+      expect(dissolve.opacity).toBe(0);
+    });
+
+    it('calculates loop animations (wave, shimmer, bounce_loop)', () => {
+      const wave = calculateTextMotionTransform({ type: 'wave', durationFrames: 30 }, 15, 30);
+      expect(wave.transform).toContain('translateY(');
+
+      const shimmer = calculateTextMotionTransform({ type: 'shimmer', durationFrames: 30 }, 15, 30);
+      expect(shimmer.opacity).toBeGreaterThanOrEqual(0.5);
+
+      const bounceLoop = calculateTextMotionTransform({ type: 'bounce_loop', durationFrames: 30 }, 15, 30);
+      expect(bounceLoop.transform).toContain('translateY(');
+    });
+  });
+
+  describe('calculateKaraokeHighlight', () => {
+    const lyric = 'Never gonna give you up';
+
+    it('tokenizes words and whitespace correctly', () => {
+      const result = calculateKaraokeHighlight(lyric, 0, 100);
+      expect(result.tokens.length).toBeGreaterThan(5);
+      const reconstructed = result.tokens.map((t) => t.word).join('');
+      expect(reconstructed).toBe(lyric);
+    });
+
+    it('highlights first word at beginning of clip', () => {
+      const result = calculateKaraokeHighlight(lyric, 0, 100);
+      expect(result.activeWordIndex).toBe(0);
+      const activeToken = result.tokens.find((t) => t.isActive);
+      expect(activeToken?.word).toBe('Never');
+    });
+
+    it('progressively advances active word as playhead progresses', () => {
+      // 5 words: 'Never' (0), 'gonna' (1), 'give' (2), 'you' (3), 'up' (4)
+      const mid = calculateKaraokeHighlight(lyric, 50, 100);
+      expect(mid.activeWordIndex).toBe(2);
+      const activeToken = mid.tokens.find((t) => t.isActive);
+      expect(activeToken?.word).toBe('give');
+
+      // Tokens before 'give' should have isPast = true
+      const pastTokens = mid.tokens.filter((t) => t.isPast && t.word.trim().length > 0);
+      expect(pastTokens.map((t) => t.word)).toEqual(['Never', 'gonna']);
+    });
+
+    it('reaches final word at end of duration', () => {
+      const end = calculateKaraokeHighlight(lyric, 100, 100);
+      expect(end.activeWordIndex).toBe(4);
+      const activeToken = end.tokens.find((t) => t.isActive);
+      expect(activeToken?.word).toBe('up');
+    });
+
+    it('safely handles empty strings', () => {
+      const result = calculateKaraokeHighlight('', 10, 100);
+      expect(result.tokens).toEqual([{ word: '', isActive: false, isPast: false, startIndex: 0, endIndex: 0 }]);
+      expect(result.activeWordIndex).toBe(-1);
+    });
+  });
+
+  describe('applyTypographyStyleToClips', () => {
+    const mockClips = [
+      {
+        id: 'clip-1',
+        sequenceId: 'seq-1',
+        trackId: 'track-subtitles',
+        orderIndex: 0,
+        sourceKind: 'text' as const,
+        filePath: null,
+        startFrames: 0,
+        durationFrames: 30,
+        transitionIn: 'cut' as const,
+        transitionFrames: 0,
+        motionPreset: 'none' as const,
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'First subtitle cue',
+        overrides: [],
+        effects: {
+          text: {
+            text: 'First subtitle cue',
+            fontSizePx: 36,
+            colorHex: '#FFFFFF',
+            align: 'center' as const,
+            positionPct: { x: 0.5, y: 0.85 },
+            preset: 'caption' as const,
+          },
+        },
+      },
+      {
+        id: 'clip-2',
+        sequenceId: 'seq-1',
+        trackId: 'track-subtitles',
+        orderIndex: 1,
+        sourceKind: 'text' as const,
+        filePath: null,
+        startFrames: 35,
+        durationFrames: 40,
+        transitionIn: 'cut' as const,
+        transitionFrames: 0,
+        motionPreset: 'none' as const,
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'Second subtitle cue',
+        overrides: [],
+        effects: {
+          text: {
+            text: 'Second subtitle cue',
+            fontSizePx: 36,
+            colorHex: '#FFFFFF',
+            align: 'center' as const,
+            positionPct: { x: 0.5, y: 0.85 },
+            preset: 'caption' as const,
+          },
+        },
+      },
+    ];
+
+    it('batch applies typography patch while preserving original cue text', () => {
+      const patch = {
+        fontFamily: 'Montserrat',
+        fontSizePx: 48,
+        colorHex: '#FFD700',
+        stroke: { colorHex: '#000000', widthPx: 3 },
+      };
+
+      const result = applyTypographyStyleToClips(mockClips, patch, 'track-subtitles');
+      expect(result.updatedCount).toBe(2);
+      expect(result.clips[0].effects?.text?.fontFamily).toBe('Montserrat');
+      expect(result.clips[0].effects?.text?.fontSizePx).toBe(48);
+      expect(result.clips[0].effects?.text?.colorHex).toBe('#FFD700');
+      // Preserves original text
+      expect(result.clips[0].effects?.text?.text).toBe('First subtitle cue');
+      expect(result.clips[1].effects?.text?.text).toBe('Second subtitle cue');
+    });
+
+    it('filters by trackId when provided', () => {
+      const result = applyTypographyStyleToClips(mockClips, { colorHex: '#FF0000' }, 'other-track');
+      expect(result.updatedCount).toBe(0);
+    });
+  });
+
+  describe('CAPCUT_CAPTION_PRESETS', () => {
+    it('defines all signature CapCut caption presets with valid attributes', () => {
+      expect(Object.keys(CAPCUT_CAPTION_PRESETS)).toEqual([
+        'tiktok_viral_pill',
+        'karaoke_party',
+        'cyber_glow',
+        'cinema_subtitles',
+        'comic_pop',
+        'bold_shadow',
+      ]);
+
+      const pill = CAPCUT_CAPTION_PRESETS.tiktok_viral_pill;
+      expect(pill.name).toBe('TikTok Viral Pill');
+      expect((pill.effects.box as { borderRadiusPx: number }).borderRadiusPx).toBe(20);
+
+      const karaoke = CAPCUT_CAPTION_PRESETS.karaoke_party;
+      expect((karaoke.effects.animation as { type: string }).type).toBe('karaoke_highlight');
     });
   });
 
