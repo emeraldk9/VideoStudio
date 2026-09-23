@@ -248,19 +248,25 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Border width, color picker, corner radius, inter-cell gap, and drop shadow toggles.
   - Comprehensive unit test coverage in `src/shared/utils/timeline/__tests__/pip-grid-ops.test.ts` (18 tests) and `src/main/media/__tests__/render-filter-synthesis.test.ts` (24 tests).
   - 100% test pass rate: 805/805 tests passing across 65 test suites, 0 TypeScript compilation errors (`tsc --noEmit`).
-- **[2026-09-22 21:38]** Step S76 successfully completed:
-  - Extended sequence types (`src/shared/types/sequence.ts`): Added `linkedClipId` and `syncOffsetFrames` to `SequenceClip`, and exported helper predicates `isClipLinked` and `getLinkedClip`.
-  - Implemented pure audio sync operations in `src/shared/utils/timeline/audio-sync-ops.ts`:
-    - `calculateAudioWaveformSync`: Pearson cross-correlation of peak envelopes across search window for lag detection with confidence scoring.
-    - `applyDualSystemAudioSync`: Aligns external audio start time, mutably links clips, and disables camera scratch audio (`sourceAudioEnabled: false`).
-    - `linkClips` & `unlinkClips`: Bidirectional link management.
-    - `propagateLinkedClipMove`: Propagates movement deltas to linked clips on free tracks.
-  - Exported in `src/shared/index.ts`.
-  - Upgraded `TimelinePanel.tsx`:
-    - Moving a linked clip on a free track shifts its linked sibling by the exact same frame delta.
-    - Added context menu actions: "Link Clips" (`Ctrl+L`), "Unlink Clips" (`Ctrl+Shift+L`), and "Auto-Sync Audio by Waveform...".
-  - Upgraded `TimelineClip.tsx`: Rendered visual link badge icon (`link`) in clip header with hover sync offset readout.
-  - Upgraded `AudioInspectorTab.tsx`: Added dedicated "Dual-System Sound & Link" card displaying linked clip details, sync offset in frames/ms, scratch audio mute status, and one-click "Unlink" button.
-  - Created unit test suite `src/shared/utils/timeline/__tests__/audio-sync-ops.test.ts` (12 tests passing).
-  - 100% test pass rate: 817/817 tests passing across 66 test suites, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 08:05]** Step S77 successfully completed:
+  - Added dedicated `Subtitles` rail workspace to `src/renderer/features/timeline-media/ui/MediaPanel.tsx` alongside `Text` and `Transitions`.
+  - Added `'subtitles'` category to `src/renderer/features/timeline-media/lib/mediaPanelStore.ts`.
+  - Implemented pure subtitle operations in `src/shared/utils/timeline/subtitle-ops.ts`:
+    - `splitSubtitleClip`: Split cue card at playhead with proportional text distribution.
+    - `mergeSubtitleClips`: Merge adjacent cue cards into a single spanning clip.
+    - `autoBreakSubtitleLines`: Automatically break long lines to conform to 37 CPL broadcast/social standard.
+    - `searchAndReplaceSubtitles`: Batch search and replace with case sensitivity toggle across all timeline subtitles.
+    - `applyStylePresetToClips`: Global 1-click restyling preserving subtitle text.
+    - `exportTranscriptText`: Plain text transcript export with optional timecode stamps.
+  - Built `src/renderer/features/timeline-media/ui/SubtitlesPane.tsx`:
+    - Real-time playhead sync via `transportClock` with auto-scrolling active cue highlighting.
+    - 1-click seeking to any subtitle cue on timeline click.
+    - Direct in-place editing textarea per cue card.
+    - Quick actions: Add caption at playhead, split cue, delete cue, duplicate cue.
+    - Search & Replace bar with live match count.
+    - Character-per-line (CPL) warning indicators (>37 chars).
+    - Typography style preset cards (`Modern Pill`, `Cinema Gold`, `TikTok Box`, `High Contrast`, `Retro Teletext`, `Minimalist`).
+    - File import (`.srt`, `.vtt`, `.ass`, `.txt`) and multi-format export dropdown (`.srt`, `.vtt`, `.ass`, plain text transcript, clipboard copy).
+  - Extended unit tests in `src/shared/utils/timeline/__tests__/subtitle-ops.test.ts` (38 tests).
+  - 100% test pass rate: 843/843 tests passing across 68 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
 

@@ -632,3 +632,247 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return script;
 }
 
+/**
+ * Splits a subtitle clip into two contiguous clips at a specified timeline frame.
+ * The original text is split across the two parts based on natural word boundaries or midpoint.
+ */
+export function splitSubtitleClip(
+  clip: SequenceClip,
+  splitFrame: number,
+  mintId: () => string = () => crypto.randomUUID(),
+): [SequenceClip, SequenceClip] | null {
+  const start = clip.startFrames ?? 0;
+  const duration = clip.durationFrames;
+  const end = start + duration;
+
+  if (splitFrame <= start || splitFrame >= end) {
+    return null;
+  }
+
+  const firstDuration = splitFrame - start;
+  const secondDuration = end - splitFrame;
+
+  const rawText = clip.effects?.text?.text ?? clip.label;
+  const words = rawText.trim().split(/\s+/);
+
+  let text1 = rawText;
+  let text2 = rawText;
+
+  if (words.length > 1) {
+    const ratio = firstDuration / duration;
+    const splitIndex = Math.max(1, Math.min(words.length - 1, Math.round(words.length * ratio)));
+    text1 = words.slice(0, splitIndex).join(' ');
+    text2 = words.slice(splitIndex).join(' ');
+  }
+
+  const clip1: SequenceClip = {
+    ...clip,
+    durationFrames: firstDuration,
+    label: text1.length > 36 ? `${text1.slice(0, 36)}…` : text1,
+    effects: clip.effects
+      ? {
+          ...clip.effects,
+          text: clip.effects.text ? { ...clip.effects.text, text: text1 } : undefined,
+        }
+      : undefined,
+  };
+
+  const clip2: SequenceClip = {
+    ...clip,
+    id: mintId(),
+    startFrames: splitFrame,
+    durationFrames: secondDuration,
+    label: text2.length > 36 ? `${text2.slice(0, 36)}…` : text2,
+    effects: clip.effects
+      ? {
+          ...clip.effects,
+          text: clip.effects.text ? { ...clip.effects.text, text: text2 } : undefined,
+        }
+      : undefined,
+  };
+
+  return [clip1, clip2];
+}
+
+/**
+ * Merges two adjacent subtitle clips on the same track into a single continuous clip.
+ */
+export function mergeSubtitleClips(
+  clipA: SequenceClip,
+  clipB: SequenceClip,
+): SequenceClip | null {
+  if (clipA.trackId !== clipB.trackId) return null;
+
+  const startA = clipA.startFrames ?? 0;
+  const startB = clipB.startFrames ?? 0;
+  const endA = startA + clipA.durationFrames;
+  const endB = startB + clipB.durationFrames;
+
+  const earliestStart = Math.min(startA, startB);
+  const latestEnd = Math.max(endA, endB);
+
+  const textA = clipA.effects?.text?.text ?? clipA.label;
+  const textB = clipB.effects?.text?.text ?? clipB.label;
+
+  const mergedText = startA <= startB ? `${textA} ${textB}`.trim() : `${textB} ${textA}`.trim();
+
+  return {
+    ...clipA,
+    startFrames: earliestStart,
+    durationFrames: Math.max(1, latestEnd - earliestStart),
+    label: mergedText.length > 36 ? `${mergedText.slice(0, 36)}…` : mergedText,
+    effects: clipA.effects
+      ? {
+          ...clipA.effects,
+          text: clipA.effects.text ? { ...clipA.effects.text, text: mergedText } : undefined,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * Automatically breaks text into balanced lines conforming to maximum characters per line (CPL).
+ * Industry standard: 37 for broadcast / 20 for mobile 9:16 vertical video.
+ */
+export function autoBreakSubtitleLines(text: string, maxCharsPerLine = 37): string {
+  if (!text || text.length <= maxCharsPerLine) return text;
+
+  const words = text.trim().split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    if (!currentLine) {
+      currentLine = word;
+    } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
+      currentLine += ` ${word}`;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Performs search and replace across all subtitle/text clips.
+ */
+export function searchAndReplaceSubtitles(
+  clips: readonly SequenceClip[],
+  searchTerm: string,
+  replaceTerm: string,
+  options?: {
+    matchCase?: boolean;
+    trackId?: string;
+  },
+): { clips: SequenceClip[]; matchCount: number } {
+  if (!searchTerm) {
+    return { clips: [...clips], matchCount: 0 };
+  }
+
+  const matchCase = options?.matchCase ?? false;
+  const regex = new RegExp(
+    searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    matchCase ? 'g' : 'gi',
+  );
+
+  let matchCount = 0;
+  const updatedClips = clips.map((clip) => {
+    if (clip.sourceKind !== 'text') return clip;
+    if (options?.trackId && clip.trackId !== options.trackId) return clip;
+
+    const originalText = clip.effects?.text?.text ?? clip.label ?? '';
+    const occurrences = (originalText.match(regex) || []).length;
+    if (occurrences === 0) return clip;
+
+    matchCount += occurrences;
+    const newText = originalText.replace(regex, replaceTerm);
+
+    return {
+      ...clip,
+      label: newText.length > 36 ? `${newText.slice(0, 36)}…` : newText,
+      effects: clip.effects
+        ? {
+            ...clip.effects,
+            text: clip.effects.text ? { ...clip.effects.text, text: newText } : undefined,
+          }
+        : undefined,
+    };
+  });
+
+  return { clips: updatedClips, matchCount };
+}
+
+/**
+ * Applies a visual caption style preset to all target text clips while preserving individual cue text.
+ */
+export function applyStylePresetToClips(
+  clips: readonly SequenceClip[],
+  presetId: CaptionPresetId,
+  trackId?: string,
+): SequenceClip[] {
+  const preset = CAPTION_STYLE_PRESETS[presetId] ?? CAPTION_STYLE_PRESETS.modern;
+
+  return clips.map((clip) => {
+    if (clip.sourceKind !== 'text') return clip;
+    if (trackId && clip.trackId !== trackId) return clip;
+
+    const existingText = clip.effects?.text?.text ?? clip.label;
+
+    return {
+      ...clip,
+      effects: {
+        ...clip.effects,
+        text: {
+          ...preset.effects,
+          text: existingText,
+        },
+      },
+    };
+  });
+}
+
+/**
+ * Exports clean plain text transcript from timeline subtitle clips.
+ */
+export function exportTranscriptText(
+  clips: readonly SequenceClip[],
+  fps: number,
+  options?: {
+    includeTimestamps?: boolean;
+    trackId?: string;
+  },
+): string {
+  const includeTimestamps = options?.includeTimestamps ?? true;
+  const textClips = clips
+    .filter(
+      (clip) =>
+        clip.sourceKind === 'text' &&
+        (!options?.trackId || clip.trackId === options?.trackId) &&
+        clip.startFrames !== null &&
+        clip.startFrames !== undefined &&
+        Boolean(clip.effects?.text?.text?.trim()),
+    )
+    .sort((a, b) => (a.startFrames ?? 0) - (b.startFrames ?? 0));
+
+  if (textClips.length === 0) return '';
+
+  return textClips
+    .map((clip) => {
+      const text = (clip.effects?.text?.text?.trim() ?? clip.label).replace(/\r?\n/g, ' ');
+      if (!includeTimestamps) return text;
+      const startSec = framesToSeconds(clip.startFrames ?? 0, fps);
+      const endSec = framesToSeconds((clip.startFrames ?? 0) + clip.durationFrames, fps);
+      const startTs = formatSecondsToSRTTimestamp(startSec).slice(0, 8);
+      const endTs = formatSecondsToSRTTimestamp(endSec).slice(0, 8);
+      return `[${startTs} - ${endTs}] ${text}`;
+    })
+    .join('\n\n');
+}
+
+

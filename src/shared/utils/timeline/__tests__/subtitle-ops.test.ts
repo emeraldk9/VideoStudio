@@ -3,13 +3,19 @@ import { describe, expect, it } from 'vitest';
 import type { SequenceClip } from '../../../types/sequence';
 import {
   applySubtitleCasing,
+  applyStylePresetToClips,
+  autoBreakSubtitleLines,
   CAPTION_STYLE_PRESETS,
   cuesToSequenceClips,
+  exportTranscriptText,
   formatSecondsToSRTTimestamp,
   formatSecondsToVTTTimestamp,
   formatSecondsToASSTimestamp,
+  mergeSubtitleClips,
   parseSubtitleContent,
   parseTimestampToSeconds,
+  searchAndReplaceSubtitles,
+  splitSubtitleClip,
   stripSubtitleMarkup,
   timelineClipsToSRT,
   timelineClipsToWebVTT,
@@ -380,6 +386,310 @@ Second WebVTT subtitle cue.`;
         expect(ass).toContain('Second subtitle line');
         expect(ass).not.toContain('Other track caption');
       });
+    });
+  });
+
+  describe('splitSubtitleClip', () => {
+    const mockClip: SequenceClip = {
+      id: 'sub-split-1',
+      sequenceId: 'seq-1',
+      trackId: 'track-text-1',
+      orderIndex: 0,
+      sourceKind: 'text',
+      filePath: null,
+      startFrames: 100,
+      durationFrames: 60,
+      transitionIn: 'cut',
+      transitionFrames: 0,
+      motionPreset: 'none',
+      gainDb: 0,
+      fadeInFrames: 0,
+      fadeOutFrames: 0,
+      label: 'The quick brown fox jumps over the dog',
+      overrides: [],
+      effects: {
+        text: {
+          ...CAPTION_STYLE_PRESETS.modern.effects,
+          text: 'The quick brown fox jumps over the dog',
+        },
+      },
+    };
+
+    it('splits a clip into two contiguous parts with words distributed proportionally', () => {
+      const split = splitSubtitleClip(mockClip, 130, () => 'new-sub-id');
+      expect(split).not.toBeNull();
+      if (!split) return;
+
+      const [c1, c2] = split;
+      expect(c1.id).toBe('sub-split-1');
+      expect(c1.startFrames).toBe(100);
+      expect(c1.durationFrames).toBe(30);
+
+      expect(c2.id).toBe('new-sub-id');
+      expect(c2.startFrames).toBe(130);
+      expect(c2.durationFrames).toBe(30);
+
+      expect(c1.effects?.text?.text).toBeDefined();
+      expect(c2.effects?.text?.text).toBeDefined();
+      expect(`${c1.effects?.text?.text} ${c2.effects?.text?.text}`).toBe(
+        'The quick brown fox jumps over the dog',
+      );
+    });
+
+    it('returns null if split frame is out of bounds', () => {
+      expect(splitSubtitleClip(mockClip, 100)).toBeNull();
+      expect(splitSubtitleClip(mockClip, 90)).toBeNull();
+      expect(splitSubtitleClip(mockClip, 160)).toBeNull();
+      expect(splitSubtitleClip(mockClip, 200)).toBeNull();
+    });
+  });
+
+  describe('mergeSubtitleClips', () => {
+    const clipA: SequenceClip = {
+      id: 'sub-a',
+      sequenceId: 'seq-1',
+      trackId: 'track-text-1',
+      orderIndex: 0,
+      sourceKind: 'text',
+      filePath: null,
+      startFrames: 0,
+      durationFrames: 30,
+      transitionIn: 'cut',
+      transitionFrames: 0,
+      motionPreset: 'none',
+      gainDb: 0,
+      fadeInFrames: 0,
+      fadeOutFrames: 0,
+      label: 'Hello',
+      overrides: [],
+      effects: {
+        text: {
+          ...CAPTION_STYLE_PRESETS.modern.effects,
+          text: 'Hello',
+        },
+      },
+    };
+
+    const clipB: SequenceClip = {
+      id: 'sub-b',
+      sequenceId: 'seq-1',
+      trackId: 'track-text-1',
+      orderIndex: 1,
+      sourceKind: 'text',
+      filePath: null,
+      startFrames: 35,
+      durationFrames: 25,
+      transitionIn: 'cut',
+      transitionFrames: 0,
+      motionPreset: 'none',
+      gainDb: 0,
+      fadeInFrames: 0,
+      fadeOutFrames: 0,
+      label: 'World',
+      overrides: [],
+      effects: {
+        text: {
+          ...CAPTION_STYLE_PRESETS.modern.effects,
+          text: 'World',
+        },
+      },
+    };
+
+    it('merges two clips into a single continuous clip spanning both', () => {
+      const merged = mergeSubtitleClips(clipA, clipB);
+      expect(merged).not.toBeNull();
+      if (!merged) return;
+
+      expect(merged.startFrames).toBe(0);
+      expect(merged.durationFrames).toBe(60); // 35 + 25 = 60
+      expect(merged.effects?.text?.text).toBe('Hello World');
+    });
+
+    it('returns null if clips are on different tracks', () => {
+      const diffTrackClip: SequenceClip = { ...clipB, trackId: 'track-other' };
+      expect(mergeSubtitleClips(clipA, diffTrackClip)).toBeNull();
+    });
+  });
+
+  describe('autoBreakSubtitleLines', () => {
+    it('returns short text unchanged', () => {
+      const short = 'Hello world';
+      expect(autoBreakSubtitleLines(short, 37)).toBe(short);
+    });
+
+    it('breaks long line at natural word boundaries conforming to max chars', () => {
+      const longText =
+        'This is a rather long subtitle cue that definitely exceeds standard broadcast character limit';
+      const broken = autoBreakSubtitleLines(longText, 37);
+      const lines = broken.split('\n');
+
+      expect(lines.length).toBeGreaterThan(1);
+      for (const line of lines) {
+        expect(line.length).toBeLessThanOrEqual(37);
+      }
+      expect(lines.join(' ')).toBe(longText);
+    });
+  });
+
+  describe('searchAndReplaceSubtitles', () => {
+    const clips: SequenceClip[] = [
+      {
+        id: 'clip-1',
+        sequenceId: 'seq-1',
+        trackId: 'track-1',
+        orderIndex: 0,
+        sourceKind: 'text',
+        filePath: null,
+        startFrames: 0,
+        durationFrames: 30,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'Welcome to Google AI',
+        overrides: [],
+        effects: {
+          text: {
+            ...CAPTION_STYLE_PRESETS.modern.effects,
+            text: 'Welcome to Google AI studio',
+          },
+        },
+      },
+      {
+        id: 'clip-2',
+        sequenceId: 'seq-1',
+        trackId: 'track-1',
+        orderIndex: 1,
+        sourceKind: 'text',
+        filePath: null,
+        startFrames: 30,
+        durationFrames: 30,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'Google makes great models',
+        overrides: [],
+        effects: {
+          text: {
+            ...CAPTION_STYLE_PRESETS.modern.effects,
+            text: 'Google makes great models',
+          },
+        },
+      },
+    ];
+
+    it('replaces all occurrences across clips', () => {
+      const result = searchAndReplaceSubtitles(clips, 'Google', 'DeepMind');
+      expect(result.matchCount).toBe(2);
+      expect(result.clips[0].effects?.text?.text).toBe('Welcome to DeepMind AI studio');
+      expect(result.clips[1].effects?.text?.text).toBe('DeepMind makes great models');
+    });
+
+    it('honors case sensitivity option', () => {
+      const result = searchAndReplaceSubtitles(clips, 'google', 'DeepMind', { matchCase: true });
+      expect(result.matchCount).toBe(0);
+    });
+  });
+
+  describe('applyStylePresetToClips', () => {
+    const mockClip: SequenceClip = {
+      id: 'clip-style-1',
+      sequenceId: 'seq-1',
+      trackId: 'track-1',
+      orderIndex: 0,
+      sourceKind: 'text',
+      filePath: null,
+      startFrames: 0,
+      durationFrames: 30,
+      transitionIn: 'cut',
+      transitionFrames: 0,
+      motionPreset: 'none',
+      gainDb: 0,
+      fadeInFrames: 0,
+      fadeOutFrames: 0,
+      label: 'Cinema dialog',
+      overrides: [],
+      effects: {
+        text: {
+          ...CAPTION_STYLE_PRESETS.modern.effects,
+          text: 'Cinema dialog',
+        },
+      },
+    };
+
+    it('applies cinema preset styling while preserving existing text', () => {
+      const styled = applyStylePresetToClips([mockClip], 'cinema');
+      expect(styled[0].effects?.text?.colorHex).toBe('#fef08a');
+      expect(styled[0].effects?.text?.text).toBe('Cinema dialog');
+    });
+  });
+
+  describe('exportTranscriptText', () => {
+    const clips: SequenceClip[] = [
+      {
+        id: 'clip-tr-1',
+        sequenceId: 'seq-1',
+        trackId: 'track-1',
+        orderIndex: 0,
+        sourceKind: 'text',
+        filePath: null,
+        startFrames: 0,
+        durationFrames: 48,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'Hello world',
+        overrides: [],
+        effects: {
+          text: {
+            ...CAPTION_STYLE_PRESETS.modern.effects,
+            text: 'Hello world',
+          },
+        },
+      },
+      {
+        id: 'clip-tr-2',
+        sequenceId: 'seq-1',
+        trackId: 'track-1',
+        orderIndex: 1,
+        sourceKind: 'text',
+        filePath: null,
+        startFrames: 48,
+        durationFrames: 48,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'Second sentence',
+        overrides: [],
+        effects: {
+          text: {
+            ...CAPTION_STYLE_PRESETS.modern.effects,
+            text: 'Second sentence',
+          },
+        },
+      },
+    ];
+
+    it('exports clean transcript text with timecodes', () => {
+      const transcript = exportTranscriptText(clips, 24, { includeTimestamps: true });
+      expect(transcript).toContain('[00:00:00 - 00:00:02] Hello world');
+      expect(transcript).toContain('[00:00:02 - 00:00:04] Second sentence');
+    });
+
+    it('exports text-only transcript without timestamps', () => {
+      const transcript = exportTranscriptText(clips, 24, { includeTimestamps: false });
+      expect(transcript).toBe('Hello world\n\nSecond sentence');
     });
   });
 });

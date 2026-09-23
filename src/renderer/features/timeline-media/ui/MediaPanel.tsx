@@ -4,6 +4,7 @@ import { EffectsPane } from './EffectsPane';
 import { FilesPane } from './FilesPane';
 import { FiltersPane } from './FiltersPane';
 import { SketchPane } from './SketchPane';
+import { SubtitlesPane } from './SubtitlesPane';
 import { TextPane } from './TextPane';
 import { TransitionsPane } from './TransitionsPane';
 
@@ -11,8 +12,9 @@ import { useMediaPanelStore, type MediaPanelCategory } from '../lib/mediaPanelSt
 
 const RAIL: { id: MediaPanelCategory; icon: string; label: string }[] = [
   { id: 'media', icon: 'perm_media', label: 'Media' },
-  { id: 'transitions', icon: 'auto_awesome_motion', label: 'Transitions' },
   { id: 'text', icon: 'title', label: 'Text' },
+  { id: 'subtitles', icon: 'closed_caption', label: 'Subtitles' },
+  { id: 'transitions', icon: 'auto_awesome_motion', label: 'Transitions' },
   { id: 'effects', icon: 'auto_fix_high', label: 'Effects' },
   { id: 'filters', icon: 'photo_filter', label: 'Filters' },
   { id: 'sketch', icon: 'draw', label: 'Sketch' },
@@ -69,8 +71,9 @@ export function MediaPanel({ exportPanel }: MediaPanelProps = {}) {
       {/* Module Content Pane */}
       <div className="flex min-h-0 flex-1 overflow-hidden bg-bg-canvas">
         {category === 'media' && <FilesPane />}
-        {category === 'transitions' && <TransitionsPane />}
         {category === 'text' && <TextPane />}
+        {category === 'subtitles' && <SubtitlesPane />}
+        {category === 'transitions' && <TransitionsPane />}
         {category === 'effects' && <EffectsPane />}
         {category === 'filters' && <FiltersPane />}
         {category === 'sketch' && <SketchPane />}
