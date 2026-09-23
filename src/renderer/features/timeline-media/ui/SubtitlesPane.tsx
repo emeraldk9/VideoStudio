@@ -31,6 +31,10 @@ import {
   type SubtitleCasing,
   type TranslationLanguageCode,
   type TranslationMode,
+  applySmartJumpCutsToSequence,
+  scanSequenceForSmartCuts,
+  DEFAULT_FILLER_WORDS,
+  type CutInterval,
 } from '@shared';
 
 import {
@@ -88,6 +92,18 @@ export function SubtitlesPane() {
   const [transBilingualLayout, setTransBilingualLayout] = useState<BilingualLayout>('stacked');
   const [isTranslating, setIsTranslating] = useState(false);
   const [translateProgressPct, setTranslateProgressPct] = useState<number | null>(null);
+
+  // AI Smart Cut (Silences & Fillers) state
+  const [isSmartCutOpen, setIsSmartCutOpen] = useState(false);
+  const [minSilenceSec, setMinSilenceSec] = useState(0.4);
+  const [silencePaddingSec, setSilencePaddingSec] = useState(0.08);
+  const [enableSilenceCut, setEnableSilenceCut] = useState(true);
+  const [enableFillerCut, setEnableFillerCut] = useState(true);
+  const [selectedFillerWords, setSelectedFillerWords] = useState<string[]>([
+    'um', 'uh', 'like', 'you know', 'ah', 'er',
+  ]);
+  const [duplicateSequenceFirst, setDuplicateSequenceFirst] = useState(true);
+  const [isExecutingCut, setIsExecutingCut] = useState(false);
 
   // Hidden file input for SRT/VTT import
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -648,6 +664,111 @@ export function SubtitlesPane() {
     }, 250);
   };
 
+  // AI Smart Cut scan and metrics
+  const detectedCuts = useMemo((): CutInterval[] => {
+    if (!document || !isSmartCutOpen) return [];
+    return scanSequenceForSmartCuts(document, {
+      fps,
+      minSilenceDurationSec: minSilenceSec,
+      silencePaddingSec,
+      enableSilenceRemoval: enableSilenceCut,
+      enableFillerRemoval: enableFillerCut,
+      selectedFillerWords,
+    });
+  }, [
+    document,
+    isSmartCutOpen,
+    fps,
+    minSilenceSec,
+    silencePaddingSec,
+    enableSilenceCut,
+    enableFillerCut,
+    selectedFillerWords,
+  ]);
+
+  const silenceCutCount = useMemo(
+    () => detectedCuts.filter((c) => c.type === 'silence').length,
+    [detectedCuts],
+  );
+  const fillerCutCount = useMemo(
+    () => detectedCuts.filter((c) => c.type === 'filler').length,
+    [detectedCuts],
+  );
+  const totalSavedSec = useMemo(
+    () =>
+      Number(
+        (detectedCuts.reduce((acc, c) => acc + c.durationFrames, 0) / fps).toFixed(2),
+      ),
+    [detectedCuts, fps],
+  );
+
+  const handleApplySmartCut = async () => {
+    const doc = useSequenceStore.getState().document;
+    if (!doc) return;
+    if (detectedCuts.length === 0) {
+      pushToast({ variant: 'warning', message: 'No silences or filler words detected.' });
+      return;
+    }
+
+    setIsExecutingCut(true);
+    try {
+      const result = applySmartJumpCutsToSequence(doc, detectedCuts, {
+        fps,
+        duplicateSequence: duplicateSequenceFirst,
+        microFadeFrames: 3,
+      });
+
+      if (duplicateSequenceFirst) {
+        const newName = `${doc.sequence.name} [Smart Cut]`;
+        if (!window.api?.sequence?.create) {
+          throw new Error('Sequence creation API unavailable.');
+        }
+        const backendDoc = await window.api.sequence.create({
+          projectId: doc.sequence.projectId,
+          name: newName,
+        });
+        if (backendDoc) {
+          const remappedTracks = doc.tracks.map((t) => ({
+            ...t,
+            sequenceId: backendDoc.sequence.id,
+          }));
+          const remappedClips = result.document.clips.map((c) => ({
+            ...c,
+            sequenceId: backendDoc.sequence.id,
+          }));
+          if (window.api?.sequence?.replaceDocument) {
+            await window.api.sequence.replaceDocument({
+              sequenceId: backendDoc.sequence.id,
+              tracks: remappedTracks,
+              clips: remappedClips,
+              spineTrackId: doc.sequence.spineTrackId ?? null,
+            });
+          }
+          await useSequenceStore.getState().openSequence(backendDoc.sequence.id);
+          await useSequenceStore.getState().loadSequences(doc.sequence.projectId);
+          pushToast({
+            variant: 'success',
+            message: `Created tightened sequence "${newName}" (${result.cutCount} cuts, saved ${result.savedDurationSec}s)!`,
+          });
+        }
+      } else {
+        useSequenceStore.getState().commitClips(result.document.clips);
+        pushToast({
+          variant: 'success',
+          message: `Tightened timeline: removed ${result.silencesRemovedCount} pauses and ${result.fillersRemovedCount} fillers (saved ${result.savedDurationSec}s)!`,
+        });
+      }
+      setIsSmartCutOpen(false);
+    } catch (err) {
+      pushToast({
+        variant: 'error',
+        message: `Smart Cut failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsExecutingCut(false);
+    }
+  };
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-bg-app text-text-primary text-xs">
       {/* Hidden File Input */}
@@ -706,6 +827,14 @@ export function SubtitlesPane() {
               emphasis={isTranslateOpen}
               aria-pressed={isTranslateOpen}
               onClick={() => setIsTranslateOpen((prev) => !prev)}
+            />
+            <IconButton
+              icon="content_cut"
+              size="sm"
+              label="AI Smart Cut (Silences & Fillers)"
+              emphasis={isSmartCutOpen}
+              aria-pressed={isSmartCutOpen}
+              onClick={() => setIsSmartCutOpen((prev) => !prev)}
             />
             <div className="relative">
               <IconButton
@@ -1279,6 +1408,183 @@ export function SubtitlesPane() {
               Apply Translation ({subtitleClips.length} cues)
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Expandable AI Smart Cut (Silences & Fillers) Drawer */}
+      {isSmartCutOpen && (
+        <div className="flex shrink-0 flex-col gap-3 border-b border-hairline bg-bg-surface/90 p-3 shadow-inner">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+              <span className="material-symbols-outlined text-sm text-accent-ai">content_cut</span>
+              <span>AI Smart Cut & Pause Trimmer</span>
+            </div>
+            <span className="rounded bg-accent-ai/20 px-1.5 py-0.5 text-[10px] font-medium text-accent-ai">
+              {detectedCuts.length} Cuts Detected ({totalSavedSec}s saved)
+            </span>
+          </div>
+
+          {/* Silence Detection Settings */}
+          <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-bg-canvas/60 p-2.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-[11px] font-medium text-text-primary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableSilenceCut}
+                  onChange={(e) => setEnableSilenceCut(e.target.checked)}
+                  className="rounded border-hairline text-accent-ai focus:ring-0"
+                />
+                <span>Remove Dead-Air Silences</span>
+              </label>
+              <span className="text-[10px] font-mono text-emerald-400">
+                {silenceCutCount} pauses found
+              </span>
+            </div>
+
+            {enableSilenceCut && (
+              <div className="grid grid-cols-2 gap-2 text-[10px] text-text-secondary mt-1">
+                <div>
+                  <div className="flex justify-between mb-0.5">
+                    <span>Min Pause Duration:</span>
+                    <span className="font-mono text-text-primary">{minSilenceSec}s</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.2}
+                    max={1.5}
+                    step={0.05}
+                    value={minSilenceSec}
+                    onChange={(e) => setMinSilenceSec(parseFloat(e.target.value))}
+                    className="w-full h-1 bg-bg-hover rounded appearance-none cursor-pointer accent-accent-ai"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-0.5">
+                    <span>Breath Margin Padding:</span>
+                    <span className="font-mono text-text-primary">{silencePaddingSec}s</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.0}
+                    max={0.2}
+                    step={0.02}
+                    value={silencePaddingSec}
+                    onChange={(e) => setSilencePaddingSec(parseFloat(e.target.value))}
+                    className="w-full h-1 bg-bg-hover rounded appearance-none cursor-pointer accent-accent-ai"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Filler Word Removal Settings */}
+          <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-bg-canvas/60 p-2.5">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-[11px] font-medium text-text-primary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableFillerCut}
+                  onChange={(e) => setEnableFillerCut(e.target.checked)}
+                  className="rounded border-hairline text-accent-ai focus:ring-0"
+                />
+                <span>Remove Verbal Filler Words</span>
+              </label>
+              <span className="text-[10px] font-mono text-amber-400">
+                {fillerCutCount} fillers found
+              </span>
+            </div>
+
+            {enableFillerCut && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {['um', 'uh', 'like', 'you know', 'ah', 'er', 'hmm', 'actually', 'basically'].map((word) => {
+                  const isSelected = selectedFillerWords.includes(word);
+                  return (
+                    <button
+                      key={word}
+                      type="button"
+                      onClick={() => {
+                        setSelectedFillerWords((prev) =>
+                          isSelected ? prev.filter((w) => w !== word) : [...prev, word],
+                        );
+                      }}
+                      className={`rounded px-2 py-0.5 text-[10px] border transition-all ${
+                        isSelected
+                          ? 'border-accent-ai bg-accent-ai/20 text-accent-ai font-medium'
+                          : 'border-hairline bg-bg-surface text-text-muted hover:text-text-secondary'
+                      }`}
+                    >
+                      "{word}"
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Detected Cuts Preview Cards */}
+          {detectedCuts.length > 0 && (
+            <div className="flex flex-col gap-1.5 text-[10px]">
+              <span className="text-text-secondary font-medium">
+                Detected Jump-Cut Timeline Locations ({detectedCuts.length}):
+              </span>
+              <div className="flex gap-1.5 overflow-x-auto pb-1 max-h-20 flex-wrap">
+                {detectedCuts.slice(0, 8).map((cut) => (
+                  <button
+                    key={cut.id}
+                    type="button"
+                    onClick={() => useSequenceStore.getState().setPlayhead(cut.startFrame)}
+                    className="flex items-center gap-1 rounded bg-bg-canvas border border-hairline px-2 py-1 hover:border-accent-ai/50 text-[9px] text-text-primary transition-all shrink-0"
+                    title={`Click to seek playhead to frame ${cut.startFrame}`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        cut.type === 'silence' ? 'bg-emerald-400' : 'bg-amber-400'
+                      }`}
+                    />
+                    <span className="font-mono">{formatTimecode(cut.startFrame, fps)}</span>
+                    <span className="text-text-muted">({cut.durationSec}s)</span>
+                  </button>
+                ))}
+                {detectedCuts.length > 8 && (
+                  <span className="text-text-disabled self-center px-1 text-[9px]">
+                    +{detectedCuts.length - 8} more
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Sequence Destination Choice */}
+          <div className="flex items-center justify-between pt-1 text-[11px]">
+            <label className="flex items-center gap-1.5 text-text-secondary cursor-pointer">
+              <input
+                type="checkbox"
+                checked={duplicateSequenceFirst}
+                onChange={(e) => setDuplicateSequenceFirst(e.target.checked)}
+                className="rounded border-hairline text-accent-ai focus:ring-0"
+              />
+              <span>Duplicate sequence before cutting (Non-destructive)</span>
+            </label>
+          </div>
+
+          {/* Execute Cut Button */}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleApplySmartCut}
+            className="w-full justify-center"
+            disabled={isExecutingCut || detectedCuts.length === 0}
+          >
+            <span className="material-symbols-outlined text-sm">content_cut</span>
+            <span>
+              {isExecutingCut
+                ? 'Tightening timeline...'
+                : detectedCuts.length === 0
+                ? 'No pauses or fillers detected'
+                : `Apply Smart Cut (${detectedCuts.length} cuts • saves ${totalSavedSec}s)`}
+            </span>
+          </Button>
         </div>
       )}
 

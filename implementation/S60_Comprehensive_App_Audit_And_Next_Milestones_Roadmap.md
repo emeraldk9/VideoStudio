@@ -342,6 +342,23 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Reframing output modes: "Duplicate Sequence (Safe)" vs "In-Place Reframe".
   - Integrated launcher button in `TimelineToolbar.tsx` and modal mount in `TimelinePanel.tsx`.
   - 100% test pass rate: 902/902 tests passing across 72 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 09:39]** Step S83 successfully completed:
+  - Built pure AI Smart Silence & Filler Word Removal engine `src/shared/utils/timeline/smart-cut-ops.ts`:
+    - `detectTimelineSilences`: Identifies dead air / speech pauses (default ≥ 0.4s) with safety padding margin (0.08s) to prevent word clipping.
+    - `detectFillerWordsInClips`: Tokenizes subtitle cues to detect verbal crutches ("um", "uh", "like", "you know", "ah", "er", "hmm", "actually", "basically") across 6 languages with accurate start/end frame boundaries.
+    - `mergeCutIntervals`: Consolidates overlapping and adjacent cut segments into unified continuous spans.
+    - `applySmartJumpCutsToSequence`: Multi-track frame-accurate slicing and gap collapse (magnetic ripple) with automatic audio micro-fades (3-5 frames) on slice points to eliminate pops and clicks.
+  - Added unit test suite `src/shared/utils/timeline/__tests__/smart-cut-ops.test.ts` (7 tests passing).
+  - Upgraded `SubtitlesPane.tsx`:
+    - Added `content_cut` action button in the Subtitles header toolbar.
+    - Added expandable **AI Smart Cut Drawer**:
+      - Silence pause duration and safety breath margin sliders.
+      - Filler words toggle chips.
+      - Real-time cut scan summary (pause count, filler count, saved seconds).
+      - Interactive cut location preview pills with 1-click playhead seeking.
+      - "Duplicate sequence before cutting" non-destructive toggle.
+  - 100% test pass rate: 909/909 tests passing across 73 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+
 
 
 

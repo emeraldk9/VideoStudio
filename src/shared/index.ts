@@ -77,5 +77,6 @@ export * from './utils/timeline/tts-generator-ops';
 export * from './utils/timeline/auto-captions-ops';
 export * from './utils/timeline/subtitle-translation-ops';
 export * from './utils/timeline/auto-reframe-ops';
+export * from './utils/timeline/smart-cut-ops';
 export * from './ipc/ipc-channels';
 export * from './ipc/ipc-schemas';
