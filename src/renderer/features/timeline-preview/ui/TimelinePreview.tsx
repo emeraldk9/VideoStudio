@@ -699,9 +699,19 @@ export function TimelinePreview() {
     const live = textDragPct?.clipId === clipId ? textDragPct : null;
     const anchor = effectsText.anchor ?? 'middle';
     const translateY = anchor === 'top' ? '0' : anchor === 'bottom' ? '-100%' : '-50%';
-    const position = live ?? effectsText.positionPct;
-
     const frameInClip = playheadFrame - startFrames;
+
+    const targetClip = document.clips.find((c) => c.id === clipId);
+    const keyframeX = targetClip?.keyframes
+      ? valueAtFrame(targetClip.keyframes, 'x', frameInClip, effectsText.positionPct.x)
+      : undefined;
+    const keyframeY = targetClip?.keyframes
+      ? valueAtFrame(targetClip.keyframes, 'y', frameInClip, effectsText.positionPct.y)
+      : undefined;
+
+    const posX = live?.x ?? (keyframeX !== undefined ? keyframeX : effectsText.positionPct.x);
+    const posY = live?.y ?? (keyframeY !== undefined ? keyframeY : effectsText.positionPct.y);
+    const position = { x: posX, y: posY };
     const displayedText =
       effectsText.animation?.type === 'typewriter'
         ? calculateTypewriterSlice(effectsText.text, frameInClip, effectsText.animation.durationFrames)

@@ -2,14 +2,22 @@ import { useState } from 'react';
 import {
   DEFAULT_TEXT_BOX,
   FONT_FAMILIES,
-  STUDIO_TEXT_PRESETS,
   CAPCUT_CAPTION_PRESETS,
   applyTypographyStyleToClips,
+  simulateMotionTracking,
+  smoothTrajectory,
+  attachClipToTrajectory,
+  TTS_VOICE_PERSONAS,
+  estimateSpeechDurationSeconds,
+  createSpeechAudioClipForCaption,
   type FontFamily,
   type FontWeight,
+  type MotionSimulationType,
+  type MotionTrackingTrajectory,
   type SequenceClip,
   type TextAnimationType,
   type TextContent,
+  type TTSVoicePersonaId,
 } from '@shared';
 import { useSequenceStore } from '../../../../entities/sequence';
 import { Section } from '../../../../shared/ui/Section';
@@ -22,14 +30,28 @@ export interface TextInspectorTabProps {
   patchClip: (clipId: string, patch: Partial<SequenceClip>) => void;
 }
 
-type TextSubTab = 'basic' | 'effects' | 'animation';
+type TextSubTab = 'basic' | 'effects' | 'animation' | 'tracking' | 'tts';
 
 export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
   const [subTab, setSubTab] = useState<TextSubTab>('basic');
   const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
 
+  // Tracking state
+  const [trackingPreset, setTrackingPreset] = useState<MotionSimulationType>('wandering_subject');
+  const [trackingOffsetX, setTrackingOffsetX] = useState(0);
+  const [trackingOffsetY, setTrackingOffsetY] = useState(-0.12);
+  const [trackingSmoothing, setTrackingSmoothing] = useState(0.35);
+
+  // TTS state
+  const [selectedPersonaId, setSelectedPersonaId] = useState<TTSVoicePersonaId>('narrator_epic');
+  const [speechRate, setSpeechRate] = useState(1.0);
+  const [speechPitch, setSpeechPitch] = useState(0);
+  const [autoMatchDuration, setAutoMatchDuration] = useState(true);
+  const [ttsFeedback, setTtsFeedback] = useState<string | null>(null);
+
   const document = useSequenceStore((state) => state.document);
   const commitClips = useSequenceStore((state) => state.commitClips);
+  const fps = document?.sequence.fps ?? 30;
 
   if (clip.sourceKind !== 'text' || !clip.effects?.text) return null;
   const effectsText = clip.effects.text;
@@ -77,7 +99,88 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
     });
   };
 
+  // Handle Motion Tracking Attachment
+  const handleAttachTracking = () => {
+    const rawPoints = simulateMotionTracking(
+      { x: effectsText.positionPct.x, y: effectsText.positionPct.y },
+      trackingPreset,
+      clip.durationFrames,
+    );
+    const smoothedPoints = smoothTrajectory(rawPoints, trackingSmoothing);
+    const trajectory: MotionTrackingTrajectory = {
+      id: `track-${clip.id}`,
+      name: `Track for ${clip.id}`,
+      sourceClipId: clip.id,
+      startFrame: 0,
+      points: smoothedPoints,
+      smoothed: true,
+      averageConfidence: 0.95,
+    };
+
+    const pinnedClip = attachClipToTrajectory(clip, trajectory, {
+      x: trackingOffsetX,
+      y: trackingOffsetY,
+    });
+    patchClip(clip.id, { keyframes: pinnedClip.keyframes });
+    setApplyFeedback('Motion Track Attached');
+    setTimeout(() => setApplyFeedback(null), 2000);
+  };
+
+  const handleClearTracking = () => {
+    const nonPosKeys = (clip.keyframes ?? []).filter(
+      (k) => k.property !== 'x' && k.property !== 'y',
+    );
+    patchClip(clip.id, { keyframes: nonPosKeys.length > 0 ? nonPosKeys : undefined });
+    setApplyFeedback('Tracking Cleared');
+    setTimeout(() => setApplyFeedback(null), 2000);
+  };
+
+  // Handle Preview Audio Sample
+  const handlePreviewVoiceSample = (personaId: TTSVoicePersonaId) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const persona = TTS_VOICE_PERSONAS[personaId];
+    const textToSpeak = effectsText.text.trim() || persona.description;
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.rate = persona.defaultRate * speechRate;
+    utterance.pitch = Math.max(0.5, Math.min(2.0, Math.pow(2, (persona.defaultPitch + speechPitch) / 12)));
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Handle Generate Voiceover Audio Clip
+  const handleGenerateVoiceover = () => {
+    if (!document) return;
+    const persona = TTS_VOICE_PERSONAS[selectedPersonaId];
+    const estimatedSecs = estimateSpeechDurationSeconds(effectsText.text, persona.defaultRate * speechRate);
+    const speechFrames = Math.max(15, Math.round(estimatedSecs * fps));
+
+    const audioTrack = document.tracks.find((t) => t.kind === 'audio') ?? document.tracks[0];
+    const synthUri = `tts://${selectedPersonaId}/${encodeURIComponent(effectsText.text.slice(0, 30))}.wav`;
+
+    const speechClip = createSpeechAudioClipForCaption(
+      clip,
+      synthUri,
+      speechFrames,
+      audioTrack.id,
+      persona.name,
+    );
+
+    const updatedClips = document.clips.map((c) => {
+      if (c.id === clip.id && autoMatchDuration) {
+        return { ...c, durationFrames: speechFrames };
+      }
+      return c;
+    });
+
+    commitClips([...updatedClips, speechClip]);
+    setTtsFeedback(`Voiceover generated (${(speechFrames / fps).toFixed(1)}s)`);
+    setTimeout(() => setTtsFeedback(null), 3000);
+  };
+
   const isLongLine = effectsText.text.split('\n').some((line) => line.length > 37);
+  const positionKeyframesCount = (clip.keyframes ?? []).filter(
+    (k) => k.property === 'x' || k.property === 'y',
+  ).length;
 
   return (
     <div className="flex flex-col gap-3">
@@ -101,11 +204,11 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
       </div>
 
       {/* CapCut Sub-Tabs Navigation */}
-      <div className="flex items-center gap-1 border-b border-hairline/80 pb-1.5 select-none">
+      <div className="flex items-center gap-1 border-b border-hairline/80 pb-1.5 select-none overflow-x-auto no-scrollbar">
         <button
           type="button"
           onClick={() => setSubTab('basic')}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button py-1.5 text-xs font-medium transition-all ${
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button px-2 py-1.5 text-xs font-medium transition-all ${
             subTab === 'basic'
               ? 'bg-bg-selected text-text-primary font-semibold shadow-sm'
               : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
@@ -117,26 +220,50 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
         <button
           type="button"
           onClick={() => setSubTab('effects')}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button py-1.5 text-xs font-medium transition-all ${
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button px-2 py-1.5 text-xs font-medium transition-all ${
             subTab === 'effects'
               ? 'bg-bg-selected text-text-primary font-semibold shadow-sm'
               : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
           }`}
         >
           <span className="material-symbols-outlined text-[15px]">palette</span>
-          <span>Effects & Art</span>
+          <span>Effects</span>
         </button>
         <button
           type="button"
           onClick={() => setSubTab('animation')}
-          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button py-1.5 text-xs font-medium transition-all ${
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button px-2 py-1.5 text-xs font-medium transition-all ${
             subTab === 'animation'
               ? 'bg-bg-selected text-text-primary font-semibold shadow-sm'
               : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
           }`}
         >
           <span className="material-symbols-outlined text-[15px]">animation</span>
-          <span>Animation</span>
+          <span>Motion</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('tracking')}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button px-2 py-1.5 text-xs font-medium transition-all ${
+            subTab === 'tracking'
+              ? 'bg-bg-selected text-text-primary font-semibold shadow-sm'
+              : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[15px]">motion_mode</span>
+          <span>Tracking</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('tts')}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-button px-2 py-1.5 text-xs font-medium transition-all ${
+            subTab === 'tts'
+              ? 'bg-bg-selected text-text-primary font-semibold shadow-sm'
+              : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[15px]">record_voice_over</span>
+          <span>TTS Voice</span>
         </button>
       </div>
 
@@ -945,6 +1072,236 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
                 </span>
               </label>
             )}
+          </div>
+        </Section>
+      )}
+
+      {/* SUB-TAB 4: TRACKING (SUBJECT FOLLOWER & CAMERA DRIFT) */}
+      {subTab === 'tracking' && (
+        <Section title="Motion Tracking & Pinning">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1 text-xs text-text-secondary">
+              <span className="font-medium text-text-disabled">Tracking Motion Preset</span>
+              <Select
+                aria-label="Tracking motion preset"
+                value={trackingPreset}
+                onChange={(val) => setTrackingPreset(val as MotionSimulationType)}
+                options={[
+                  { value: 'wandering_subject', label: 'Wandering Subject (Natural Human Walk)' },
+                  { value: 'parabolic_arc', label: 'Parabolic Arc (Action / Jump Arc)' },
+                  { value: 'orbital_circle', label: 'Orbital Drift (Rotating Perspective)' },
+                  { value: 'linear_pan', label: 'Linear Pan (Steady Horizontal Sweep)' },
+                ]}
+              />
+            </div>
+
+            <label className="flex items-center gap-3 text-xs text-text-secondary">
+              <span className="w-16 shrink-0">Offset X</span>
+              <input
+                type="range"
+                min={-0.4}
+                max={0.4}
+                step={0.01}
+                value={trackingOffsetX}
+                aria-label="Offset X"
+                className="flex-1 accent-[var(--accent-ai)]"
+                onChange={(e) => setTrackingOffsetX(Number(e.target.value))}
+              />
+              <span className="w-12 shrink-0 text-right font-mono">
+                {Math.round(trackingOffsetX * 100)}%
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 text-xs text-text-secondary">
+              <span className="w-16 shrink-0">Offset Y</span>
+              <input
+                type="range"
+                min={-0.4}
+                max={0.4}
+                step={0.01}
+                value={trackingOffsetY}
+                aria-label="Offset Y"
+                className="flex-1 accent-[var(--accent-ai)]"
+                onChange={(e) => setTrackingOffsetY(Number(e.target.value))}
+              />
+              <span className="w-12 shrink-0 text-right font-mono">
+                {Math.round(trackingOffsetY * 100)}%
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 text-xs text-text-secondary">
+              <span className="w-16 shrink-0">Smoothing</span>
+              <input
+                type="range"
+                min={0.05}
+                max={0.95}
+                step={0.05}
+                value={trackingSmoothing}
+                aria-label="Smoothing alpha"
+                className="flex-1 accent-[var(--accent-ai)]"
+                onChange={(e) => setTrackingSmoothing(Number(e.target.value))}
+              />
+              <span className="w-12 shrink-0 text-right font-mono">
+                {Math.round((1 - trackingSmoothing) * 100)}%
+              </span>
+            </label>
+
+            <div className="flex items-center justify-between text-[11px] text-text-disabled">
+              <span>Status:</span>
+              <span className="font-mono text-accent-ai">
+                {positionKeyframesCount > 0
+                  ? `${positionKeyframesCount} active tracking keyframes`
+                  : 'Static (No tracking)'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                variant="primary"
+                size="sm"
+                className="flex-1"
+                onClick={handleAttachTracking}
+              >
+                <span className="material-symbols-outlined text-sm">motion_mode</span>
+                Pin to Motion Track
+              </Button>
+              {positionKeyframesCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearTracking}
+                  title="Remove motion tracking keyframes"
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* SUB-TAB 5: TEXT-TO-SPEECH (TTS AI VOICEOVER) */}
+      {subTab === 'tts' && (
+        <Section title="AI Voiceover Generator">
+          <div className="flex flex-col gap-3">
+            {/* Voice Personas Grid */}
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(TTS_VOICE_PERSONAS).map(([id, p]) => (
+                <div
+                  key={id}
+                  className={`flex flex-col gap-1 rounded-lg border p-2 text-left transition-all cursor-pointer ${
+                    selectedPersonaId === id
+                      ? 'border-accent-ai bg-accent-ai/10 shadow-sm'
+                      : 'border-hairline/80 bg-bg-app hover:border-hairline hover:bg-bg-hover'
+                  }`}
+                  onClick={() => setSelectedPersonaId(id as TTSVoicePersonaId)}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-text-primary">{p.name}</span>
+                    <button
+                      type="button"
+                      aria-label={`Preview sample of ${p.name}`}
+                      className="text-text-secondary hover:text-accent-ai"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePreviewVoiceSample(id as TTSVoicePersonaId);
+                      }}
+                      title="Play voice sample"
+                    >
+                      <span className="material-symbols-outlined text-base">volume_up</span>
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-text-disabled line-clamp-2">
+                    {p.description}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Rate & Pitch Controls */}
+            <label className="flex items-center gap-3 text-xs text-text-secondary">
+              <span className="w-16 shrink-0">Speed</span>
+              <input
+                type="range"
+                min={0.5}
+                max={2.0}
+                step={0.05}
+                value={speechRate}
+                aria-label="Speech speed"
+                className="flex-1 accent-[var(--accent-ai)]"
+                onChange={(e) => setSpeechRate(Number(e.target.value))}
+              />
+              <span className="w-12 shrink-0 text-right font-mono">
+                {speechRate.toFixed(2)}x
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 text-xs text-text-secondary">
+              <span className="w-16 shrink-0">Pitch</span>
+              <input
+                type="range"
+                min={-6}
+                max={6}
+                step={1}
+                value={speechPitch}
+                aria-label="Speech pitch"
+                className="flex-1 accent-[var(--accent-ai)]"
+                onChange={(e) => setSpeechPitch(Number(e.target.value))}
+              />
+              <span className="w-12 shrink-0 text-right font-mono">
+                {speechPitch > 0 ? `+${speechPitch}` : speechPitch} semitones
+              </span>
+            </label>
+
+            {/* Auto Match Duration Checkbox */}
+            <label className="flex items-center gap-2 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                checked={autoMatchDuration}
+                aria-label="Auto-match caption duration"
+                className="accent-[var(--accent-ai)]"
+                onChange={(e) => setAutoMatchDuration(e.target.checked)}
+              />
+              <span>Auto-match caption length to voiceover duration</span>
+            </label>
+
+            {/* Est Duration Info */}
+            <div className="flex items-center justify-between text-[11px] text-text-disabled">
+              <span>Estimated Voice Length:</span>
+              <span className="font-mono text-text-primary">
+                {estimateSpeechDurationSeconds(
+                  effectsText.text,
+                  TTS_VOICE_PERSONAS[selectedPersonaId].defaultRate * speechRate,
+                ).toFixed(1)}
+                s (~
+                {Math.round(
+                  estimateSpeechDurationSeconds(
+                    effectsText.text,
+                    TTS_VOICE_PERSONAS[selectedPersonaId].defaultRate * speechRate,
+                  ) * fps,
+                )}{' '}
+                frames)
+              </span>
+            </div>
+
+            {/* Generate Action Button */}
+            <div className="flex flex-col gap-1.5 pt-1">
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full"
+                onClick={handleGenerateVoiceover}
+              >
+                <span className="material-symbols-outlined text-sm">record_voice_over</span>
+                Generate Voiceover Audio
+              </Button>
+              {ttsFeedback && (
+                <div className="flex items-center justify-center gap-1 text-[11px] text-accent-success font-medium">
+                  <span className="material-symbols-outlined text-xs">check_circle</span>
+                  <span>{ttsFeedback}</span>
+                </div>
+              )}
+            </div>
           </div>
         </Section>
       )}

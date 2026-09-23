@@ -91,8 +91,10 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
 | **S72** | **Interactive Timeline Speed Ramping Bézier Gizmo & Optical Flow Retiming HUD** | Direct timeline clip speed ramping curve editor with keyframe inflection pins, freeze frame hold bars, and optical flow retiming controls. | **Completed** |
 | **S73** | **Dynamic Subtitle & Closed Caption Burn-In Exporter with Styling Teletext Engine** | SRT/VTT/ASS/608/708 subtitle engine, typography styling presets, live canvas preview, and burn-in during FFmpeg export. | **Completed** |
 | **S74** | **AI Shot-to-Shot Color Match & Cinematic Auto-Grading Engine** | Statistical color profile analysis (Luma, RGB, variance, skin-tone vectors), 3-way Lift/Gamma/Gain color transfer, and one-click auto-matching in inspector. | **Completed** |
-| **S75** | **Dynamic Split-Screen & Video Collage Layout Engine** | Multi-video collage grid layout geometries, 1-click auto-assemble multi-clip distribution, aspect-crop-cover synthesis, and FFmpeg export. | **Completed** |
 | **S76** | **Dual-System Audio Auto-Sync & A/V Clip Linking Engine** | Waveform cross-correlation audio auto-sync, A/V clip linking, camera scratch audio muting, timeline drag/trim propagation, and inspector sync card. | **Completed** |
+| **S77** | **Subtitles Left Rail Workspace & Batch Cue Editor** | Left navigation rail Subtitles pane, real-time playhead sync, in-place cue editing, CPL warnings, batch search/replace, and SRT/VTT/ASS/TXT import/export. | **Completed** |
+| **S78** | **CapCut-Grade Closed Captions Inspector, Effects & Animation** | Full CapCut PC parity: 3-subtab inspector, text stroke/glow/shadows, word-by-word karaoke highlighting, kinetic animations, and 1-click Apply to All. | **Completed** |
+| **S79** | **Text-to-Speech (TTS) Voiceover Generator & Text Motion Tracking Engine** | 6 curated voice personas, speech duration estimation, 48 kHz PCM WAV synthesis, Web Speech auditioning, and keyframed text motion tracking pin. | **Completed** |
 
 ---
 
@@ -286,4 +288,16 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
   - Contextualized `SingleClipInspector.tsx` tab label to "Captions" with icon `closed_caption` when inspecting subtitle cues.
   - Unit tests in `src/shared/utils/timeline/__tests__/typography-ops.test.ts` (31 tests passing).
   - 100% test pass rate: 856/856 tests passing across 68 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 08:31]** Step S79 successfully completed:
+  - Created pure TTS voiceover generation engine `src/shared/utils/timeline/tts-generator-ops.ts`:
+    - 6 voice personas: `narrator_epic`, `storyteller_female`, `cyber_robot`, `calm_educator`, `energetic_creator`, `news_anchor`.
+    - `estimateSpeechDurationSeconds`: Real-time speech length prediction based on syllables and rate.
+    - `generateSyntheticSpeechWav`: Pure 48 kHz 16-bit PCM mono WAV synthesis with zero external dependencies.
+    - `createSpeechAudioClipForCaption`: Generates linked `SequenceClip` with `linkedClipId: caption.id` and aligned `startFrames`.
+  - Added unit test suite `src/shared/utils/timeline/__tests__/tts-generator-ops.test.ts` (6 tests passing).
+  - Upgraded `TimelinePreview.tsx` (`renderText`): Evaluates keyframed `x` and `y` coordinates (`valueAtFrame`) so text clips dynamically follow motion-tracked trajectories during playback and scrubbing.
+  - Upgraded `TextInspectorTab.tsx`:
+    - Added **[ Tracking ]** sub-tab: Pin to kinetic motion presets (Wandering Subject, Parabolic Arc, Orbital Drift, Linear Pan) with X/Y offset and bidirectional EMA smoothing.
+    - Added **[ TTS Voice ]** sub-tab: Persona selection cards, live audio sample auditioning via Web Speech API, rate and pitch controls, auto-match duration toggle, and one-click voiceover generation.
+  - 100% test pass rate: 862/862 tests passing across 69 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
 
