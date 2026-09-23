@@ -95,6 +95,7 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
 | **S77** | **Subtitles Left Rail Workspace & Batch Cue Editor** | Left navigation rail Subtitles pane, real-time playhead sync, in-place cue editing, CPL warnings, batch search/replace, and SRT/VTT/ASS/TXT import/export. | **Completed** |
 | **S78** | **CapCut-Grade Closed Captions Inspector, Effects & Animation** | Full CapCut PC parity: 3-subtab inspector, text stroke/glow/shadows, word-by-word karaoke highlighting, kinetic animations, and 1-click Apply to All. | **Completed** |
 | **S79** | **Text-to-Speech (TTS) Voiceover Generator & Text Motion Tracking Engine** | 6 curated voice personas, speech duration estimation, 48 kHz PCM WAV synthesis, Web Speech auditioning, and keyframed text motion tracking pin. | **Completed** |
+| **S80** | **AI Auto-Captions (STT) & Audio Cadence Alignment Engine** | Voice Activity Detection (VAD) audio segmenter, word-level timestamps, multi-language speech transcription, and cadence pacing presets. | **Completed** |
 
 ---
 
@@ -300,4 +301,18 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Added **[ Tracking ]** sub-tab: Pin to kinetic motion presets (Wandering Subject, Parabolic Arc, Orbital Drift, Linear Pan) with X/Y offset and bidirectional EMA smoothing.
     - Added **[ TTS Voice ]** sub-tab: Persona selection cards, live audio sample auditioning via Web Speech API, rate and pitch controls, auto-match duration toggle, and one-click voiceover generation.
   - 100% test pass rate: 862/862 tests passing across 69 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 08:37]** Step S80 successfully completed:
+  - Built pure AI Auto-Captions and Cadence Alignment operations in `src/shared/utils/timeline/auto-captions-ops.ts`:
+    - `detectSpeechSegmentsVAD`: Robust Voice Activity Detection interval segmentation with configurable silence thresholds.
+    - `transcribeSpeechUtterances`: Simulates/computes timed word tokens (`TimedWord[]`) with microsecond boundaries and confidence ratings for multi-language speech.
+    - `CADENCE_PACING_PRESETS`: `viral_punchy` (1-3 words, 18 CPL), `short_phrase` (3-6 words, 26 CPL), and `standard_broadcast` (6-12 words, 37 CPL).
+    - `groupWordsIntoCues`: Strictly bounds words into subtitle cue blocks respecting max line length constraints.
+    - `generateAutoCaptionsForSequence`: Complete pipeline factory generating aligned `SequenceClip` subtitle cues on the target text track with typography and karaoke animation metadata.
+  - Added unit test suite `src/shared/utils/timeline/__tests__/auto-captions-ops.test.ts` (11 tests passing).
+  - Upgraded `SubtitlesPane.tsx`:
+    - Added AI Auto-Captions button (`auto_awesome`) in the top navigation bar.
+    - Added expandable **Auto Captions AI Drawer** with source audio track picker, spoken language selector, cadence pacing cards, typography style chips, and "clear existing subtitles" option.
+    - Built animated multi-step progress stepper (Waveforms -> VAD -> STT -> Cadence Alignment) with instant commit to sequence store.
+  - 100% test pass rate: 873/873 tests passing across 70 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+
 

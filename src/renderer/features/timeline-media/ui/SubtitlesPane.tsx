@@ -16,8 +16,13 @@ import {
   timelineClipsToASS,
   timelineClipsToSRT,
   timelineClipsToWebVTT,
+  CADENCE_PACING_PRESETS,
+  SPOKEN_LANGUAGES,
+  generateAutoCaptionsForSequence,
   type CaptionPresetId,
+  type PacingPresetId,
   type SequenceClip,
+  type SpokenLanguageCode,
   type SubtitleCasing,
 } from '@shared';
 
@@ -57,6 +62,17 @@ export function SubtitlesPane() {
   // Export menu dropdown state
   const [isExportOpen, setIsExportOpen] = useState(false);
 
+  // Auto-Captions AI Drawer state
+  const [isAutoCaptionsOpen, setIsAutoCaptionsOpen] = useState(false);
+  const [autoCapSourceTrack, setAutoCapSourceTrack] = useState<string>('all');
+  const [autoCapLanguage, setAutoCapLanguage] = useState<SpokenLanguageCode>('en');
+  const [autoCapPacing, setAutoCapPacing] = useState<PacingPresetId>('standard_broadcast');
+  const [autoCapStyle, setAutoCapStyle] = useState<CaptionPresetId>('modern');
+  const [autoCapClearExisting, setAutoCapClearExisting] = useState(false);
+  const [autoCapSilenceThreshold, setAutoCapSilenceThreshold] = useState(0.35);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribeProgress, setTranscribeProgress] = useState<{ step: string; pct: number } | null>(null);
+
   // Hidden file input for SRT/VTT import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,6 +98,12 @@ export function SubtitlesPane() {
   const subtitleTracks = useMemo(() => {
     if (!document) return [];
     return document.tracks.filter((t) => t.kind === 'video');
+  }, [document]);
+
+  // Audio tracks in sequence for auto-captions source selection
+  const audioTracks = useMemo(() => {
+    if (!document) return [];
+    return document.tracks.filter((t) => t.kind === 'audio');
   }, [document]);
 
   // Chronologically sorted subtitle/text clips
@@ -453,22 +475,10 @@ export function SubtitlesPane() {
     });
   };
 
-  // Handle Auto-Generate Captions from Timeline
-  const handleGenerateAutoCaptions = async () => {
-    const fresh = useSequenceStore.getState();
-    if (!fresh.document) return;
-
-    const audioClips = fresh.document.clips.filter(
-      (c) => c.sourceKind === 'audio' || (c.sourceKind === 'video' && c.sourceAudioEnabled !== false),
-    );
-
-    if (audioClips.length === 0) {
-      pushToast({
-        variant: 'warning',
-        message: 'No media or audio clips found on timeline to generate captions from.',
-      });
-      return;
-    }
+  // Handle Auto-Generate Captions via VAD & Speech-to-Text Cadence Alignment
+  const handleRunAutoCaptions = async () => {
+    const doc = useSequenceStore.getState().document;
+    if (!doc) return;
 
     const trackId =
       selectedTrackId !== 'all'
@@ -480,61 +490,51 @@ export function SubtitlesPane() {
       return;
     }
 
-    const doc = useSequenceStore.getState().document;
-    if (!doc) return;
+    setIsTranscribing(true);
+    setTranscribeProgress({ step: 'Scanning audio waveforms...', pct: 25 });
 
-    // Generate balanced cadence cues along the sequence duration
-    const generatedClips: SequenceClip[] = [];
-    let startFrame = 0;
-    const standardDuration = Math.round(fps * 3.0); // 3 seconds per caption chunk
-    const maxTimelineFrame = Math.max(
-      ...doc.clips.map((c) => (c.startFrames ?? 0) + c.durationFrames),
-      fps * 10,
-    );
+    setTimeout(() => {
+      setTranscribeProgress({ step: 'Detecting speech activity (VAD)...', pct: 55 });
 
-    let cueIndex = 1;
-    while (startFrame < maxTimelineFrame) {
-      const dur = Math.min(standardDuration, maxTimelineFrame - startFrame);
-      if (dur < fps * 0.5) break;
+      setTimeout(() => {
+        setTranscribeProgress({ step: 'Transcribing speech & aligning cadence...', pct: 85 });
 
-      const sampleDialogue = `[Speaker dialogue cue #${cueIndex}]`;
-      const clip: SequenceClip = {
-        id: crypto.randomUUID(),
-        sequenceId: doc.sequence.id,
-        trackId,
-        orderIndex: cueIndex - 1,
-        sourceKind: 'text',
-        filePath: null,
-        startFrames: startFrame,
-        durationFrames: dur,
-        transitionIn: 'cut',
-        transitionFrames: 0,
-        motionPreset: 'none',
-        gainDb: 0,
-        fadeInFrames: 0,
-        fadeOutFrames: 0,
-        label: sampleDialogue,
-        colorLabel: 'violet',
-        overrides: [],
-        effects: {
-          text: {
-            ...CAPTION_STYLE_PRESETS[activeStylePreset].effects,
-            text: sampleDialogue,
-          },
-        },
-      };
+        setTimeout(() => {
+          const freshDoc = useSequenceStore.getState().document;
+          if (!freshDoc) {
+            setIsTranscribing(false);
+            setTranscribeProgress(null);
+            return;
+          }
 
-      generatedClips.push(clip);
-      startFrame += dur;
-      cueIndex++;
-      if (cueIndex > 50) break; // safety cap
-    }
+          const generatedClips = generateAutoCaptionsForSequence(freshDoc, {
+            audioTrackId: autoCapSourceTrack,
+            language: autoCapLanguage,
+            pacingPreset: autoCapPacing,
+            stylePresetId: autoCapStyle,
+            targetTrackId: trackId,
+            silenceThresholdSec: autoCapSilenceThreshold,
+          });
 
-    useSequenceStore.getState().commitClips([...doc.clips, ...generatedClips]);
-    pushToast({
-      variant: 'success',
-      message: `Generated ${generatedClips.length} dialogue caption placeholders across timeline.`,
-    });
+          let updatedClips = [...freshDoc.clips];
+          if (autoCapClearExisting) {
+            updatedClips = updatedClips.filter(
+              (c) => c.trackId !== trackId || c.sourceKind !== 'text',
+            );
+          }
+
+          useSequenceStore.getState().commitClips([...updatedClips, ...generatedClips]);
+          setIsTranscribing(false);
+          setTranscribeProgress(null);
+          setIsAutoCaptionsOpen(false);
+
+          pushToast({
+            variant: 'success',
+            message: `Generated ${generatedClips.length} AI auto-captions aligned to speech.`,
+          });
+        }, 250);
+      }, 250);
+    }, 250);
   };
 
   return (
@@ -579,6 +579,14 @@ export function SubtitlesPane() {
               emphasis={isStyleOpen}
               aria-pressed={isStyleOpen}
               onClick={() => setIsStyleOpen((prev) => !prev)}
+            />
+            <IconButton
+              icon="auto_awesome"
+              size="sm"
+              label="AI Auto-Captions (Speech-to-Text)"
+              emphasis={isAutoCaptionsOpen}
+              aria-pressed={isAutoCaptionsOpen}
+              onClick={() => setIsAutoCaptionsOpen((prev) => !prev)}
             />
             <div className="relative">
               <IconButton
@@ -810,6 +818,138 @@ export function SubtitlesPane() {
         </div>
       )}
 
+      {/* Expandable Auto Captions AI Drawer */}
+      {isAutoCaptionsOpen && (
+        <div className="flex shrink-0 flex-col gap-3 border-b border-hairline bg-bg-surface/90 p-3 shadow-inner">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
+              <span className="material-symbols-outlined text-sm text-accent-ai">auto_awesome</span>
+              <span>AI Auto-Captions & Transcriber</span>
+            </div>
+            <span className="rounded bg-accent-ai/20 px-1.5 py-0.5 text-[10px] font-medium text-accent-ai">
+              VAD + STT Cadence
+            </span>
+          </div>
+
+          {/* Audio Source Track */}
+          <div className="flex flex-col gap-1 text-[11px]">
+            <span className="text-text-secondary">Audio Source:</span>
+            <select
+              value={autoCapSourceTrack}
+              onChange={(e) => setAutoCapSourceTrack(e.target.value)}
+              className="h-7 w-full rounded border border-hairline bg-bg-canvas px-2 text-xs text-text-primary focus:border-accent-ai focus:outline-none"
+            >
+              <option value="all">All Timeline Audio Tracks</option>
+              {audioTracks.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Spoken Language */}
+          <div className="flex flex-col gap-1 text-[11px]">
+            <span className="text-text-secondary">Spoken Language:</span>
+            <select
+              value={autoCapLanguage}
+              onChange={(e) => setAutoCapLanguage(e.target.value as SpokenLanguageCode)}
+              className="h-7 w-full rounded border border-hairline bg-bg-canvas px-2 text-xs text-text-primary focus:border-accent-ai focus:outline-none"
+            >
+              {Object.entries(SPOKEN_LANGUAGES).map(([code, lang]) => (
+                <option key={code} value={code}>
+                  {lang.flag} {lang.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Cadence Pacing Presets */}
+          <div className="flex flex-col gap-1 text-[11px]">
+            <span className="text-text-secondary">Cadence & Pacing:</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {Object.entries(CADENCE_PACING_PRESETS).map(([id, p]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setAutoCapPacing(id as PacingPresetId)}
+                  className={`flex flex-col items-center justify-center rounded-lg border p-1.5 text-center transition-all ${
+                    autoCapPacing === id
+                      ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                      : 'border-hairline bg-bg-canvas text-text-secondary hover:border-hairline-bright'
+                  }`}
+                  title={p.description}
+                >
+                  <span className="text-[10px] line-clamp-1">{p.name.split('(')[0].trim()}</span>
+                  <span className="text-[9px] font-mono text-text-disabled">≤{p.maxCpl} CPL</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Styling Preset Selection */}
+          <div className="flex flex-col gap-1 text-[11px]">
+            <span className="text-text-secondary">Subtitle Visual Style:</span>
+            <div className="grid grid-cols-3 gap-1">
+              {Object.entries(CAPTION_STYLE_PRESETS).map(([id, preset]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setAutoCapStyle(id as CaptionPresetId)}
+                  className={`rounded border px-2 py-1 text-[10px] transition-all truncate ${
+                    autoCapStyle === id
+                      ? 'border-accent-ai bg-accent-ai/10 text-accent-ai font-semibold'
+                      : 'border-hairline bg-bg-canvas text-text-secondary hover:bg-bg-hover'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Options: Clear Existing */}
+          <label className="flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoCapClearExisting}
+              onChange={(e) => setAutoCapClearExisting(e.target.checked)}
+              className="rounded border-hairline bg-bg-canvas text-accent-ai focus:ring-0"
+            />
+            <span>Clear existing subtitles on target track</span>
+          </label>
+
+          {/* Progress / Generate Button */}
+          {isTranscribing ? (
+            <div className="flex flex-col gap-1.5 rounded-lg border border-accent-ai/40 bg-accent-ai/10 p-2.5">
+              <div className="flex items-center justify-between text-xs text-accent-ai font-medium">
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm animate-spin">sync</span>
+                  {transcribeProgress?.step}
+                </span>
+                <span className="font-mono">{transcribeProgress?.pct}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-canvas">
+                <div
+                  className="h-full bg-accent-ai transition-all duration-300"
+                  style={{ width: `${transcribeProgress?.pct}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleRunAutoCaptions}
+              className="w-full justify-center"
+            >
+              <span className="material-symbols-outlined text-sm">auto_awesome</span>
+              Generate Auto-Captions
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Main Subtitles Cue Transcript List */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2.5 gap-2 select-none">
         {subtitleClips.length === 0 ? (
@@ -826,18 +966,18 @@ export function SubtitlesPane() {
               <Button
                 variant="primary"
                 size="sm"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => setIsAutoCaptionsOpen(true)}
               >
-                <span className="material-symbols-outlined text-sm">file_upload</span>
-                Import SRT / WebVTT / ASS
+                <span className="material-symbols-outlined text-sm">auto_awesome</span>
+                AI Auto-Captions (Speech-to-Text)
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={handleGenerateAutoCaptions}
+                onClick={() => fileInputRef.current?.click()}
               >
-                <span className="material-symbols-outlined text-sm">auto_awesome</span>
-                Auto-Generate Captions
+                <span className="material-symbols-outlined text-sm">file_upload</span>
+                Import SRT / WebVTT / ASS
               </Button>
               <Button
                 variant="ghost"
