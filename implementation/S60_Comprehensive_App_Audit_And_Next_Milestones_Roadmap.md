@@ -326,6 +326,22 @@ VideoStudio is an advanced desktop Non-Linear Video Editor (NLE) engineered with
     - Added `translate` action button in the Subtitles header toolbar.
     - Added expandable **Translate & Dual Bilingual Subtitles Drawer** with source/target language pickers, 3 workflow modes, bilingual layout options, live before/after preview card, and progress stepper.
   - 100% test pass rate: 889/889 tests passing across 71 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
+- **[2026-09-23 08:53]** Step S82 successfully completed:
+  - Built pure AI Auto-Reframe and dynamic aspect ratio engine `src/shared/utils/timeline/auto-reframe-ops.ts`:
+    - `ASPECT_RATIO_PRESETS`: 9:16 Shorts/Reels/TikTok (1080×1920), 1:1 Square (1080×1080), 4:5 Social (1080×1350), 16:9 Cinema (1920×1080), 21:9 Ultrawide (2560×1080).
+    - `calculateScaleToFill`: Mathematical aspect-fill scale factor guaranteeing zero black bars/pillarboxing.
+    - `calculatePanAndScanBounds`: Dynamic bounding box for camera pans based on aspect differential.
+    - `generateAutoReframeKeyframes`: Generates smooth Bézier pan-and-scan camera drift across slow, default, and fast tracking speeds.
+    - `applyAutoReframeToSequence`: Pure transformation pipeline updating sequence resolution, video transforms and pan keyframes, and safely clamping subtitle vertical margins (80% safe zone for vertical formats).
+  - Added unit test suite `src/shared/utils/timeline/__tests__/auto-reframe-ops.test.ts` (13 tests passing).
+  - Built `AutoReframeModal.tsx`:
+    - Interactive target aspect ratio selector cards with miniature aspect geometry diagrams.
+    - Live Reframing Geometry Preview diagram showing original video bounds vs target cropped viewport with safe margin guide.
+    - Subject tracking speed presets (Slow, Default, Fast) and keyframe interval controls.
+    - Safe-margin subtitle positioning protection toggle.
+    - Reframing output modes: "Duplicate Sequence (Safe)" vs "In-Place Reframe".
+  - Integrated launcher button in `TimelineToolbar.tsx` and modal mount in `TimelinePanel.tsx`.
+  - 100% test pass rate: 902/902 tests passing across 72 test files, 0 TypeScript compilation errors (`tsc --noEmit`).
 
 
 

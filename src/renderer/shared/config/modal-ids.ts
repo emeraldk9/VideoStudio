@@ -67,6 +67,8 @@ export const MODAL_IDS = {
   QUALITY_UPGRADE: 'quality-upgrade',
   /** S26 — Subtitle & Caption Import (.SRT / .VTT) and Export Engine */
   SUBTITLES: 'subtitles',
+  /** S82 — AI Auto-Reframe & Dynamic Aspect Ratio Engine */
+  AUTO_REFRAME: 'auto-reframe',
 } as const;
 
 export type ModalId = (typeof MODAL_IDS)[keyof typeof MODAL_IDS];

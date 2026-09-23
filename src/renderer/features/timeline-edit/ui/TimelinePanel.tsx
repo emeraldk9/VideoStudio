@@ -83,6 +83,7 @@ import { MarkerModal } from './MarkerModal';
 import { SpeedModal } from './SpeedModal';
 import { AudioGainModal } from './AudioGainModal';
 import { SubtitleModal } from './SubtitleModal';
+import { AutoReframeModal } from './AutoReframeModal';
 import { LANE_LABEL_WIDTH_PX, TimelineTrackRow } from './TimelineLane';
 import { SketchKeyframeLane } from './SketchKeyframeLane';
 import { TIMELINE_RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler';
@@ -953,6 +954,7 @@ export function TimelinePanel() {
   const isSpeedModalOpen = useModalStore((state) => state.activeModal === 'speed');
   const isAudioGainModalOpen = useModalStore((state) => state.activeModal === 'audio-gain');
   const isSubtitleModalOpen = useModalStore((state) => state.activeModal === MODAL_IDS.SUBTITLES);
+  const isAutoReframeModalOpen = useModalStore((state) => state.activeModal === MODAL_IDS.AUTO_REFRAME);
   const closeModal = useModalStore((state) => state.closeModal);
   const selectedClip = useSequenceStore(selectSelectedClip);
   const [speedModalClip, setSpeedModalClip] = useState<SequenceClip | null>(null);
@@ -2659,6 +2661,16 @@ export function TimelinePanel() {
             setSubtitleModalTrackId(null);
             closeModal();
           }}
+        />
+      )}
+
+      {/* S82 — AI Auto-Reframe & Dynamic Aspect Ratio Modal */}
+      {isAutoReframeModalOpen && (
+        <AutoReframeModal
+          open={isAutoReframeModalOpen}
+          document={document}
+          fps={fps}
+          onClose={closeModal}
         />
       )}
     </section>

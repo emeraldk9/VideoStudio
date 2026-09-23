@@ -683,6 +683,14 @@ export function TimelineToolbar() {
         onClick={() => useModalStore.getState().openModal(MODAL_IDS.SUBTITLES)}
       />
 
+      {/* S82 — AI Auto-Reframe & Dynamic Aspect Ratio Engine Modal */}
+      <IconButton
+        icon="aspect_ratio"
+        label="Auto-Reframe & Aspect Ratio (9:16 / 1:1 / 4:5)..."
+        size="sm"
+        onClick={() => useModalStore.getState().openModal(MODAL_IDS.AUTO_REFRAME)}
+      />
+
       {/* Magnet snapping */}
       <IconButton
         icon={<MagnetIcon />}
