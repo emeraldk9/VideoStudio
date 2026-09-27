@@ -19,6 +19,40 @@ export interface ColorWheelValue {
   luma: number;
 }
 
+/** S164 — 2D Normalized Spline Control Point [x, y] in range [0, 1] */
+export type CurvePoint = [number, number];
+
+/** S164 — 4-Channel RGB Spline Curves Settings */
+export interface RgbCurvesSettings {
+  /** Master Luma curve points: default [[0, 0], [1, 1]] */
+  all?: CurvePoint[];
+  /** Red channel curve points: default [[0, 0], [1, 1]] */
+  r?: CurvePoint[];
+  /** Green channel curve points: default [[0, 0], [1, 1]] */
+  g?: CurvePoint[];
+  /** Blue channel curve points: default [[0, 0], [1, 1]] */
+  b?: CurvePoint[];
+}
+
+export const DEFAULT_RGB_CURVES: RgbCurvesSettings = {
+  all: [
+    [0, 0],
+    [1, 1],
+  ],
+  r: [
+    [0, 0],
+    [1, 1],
+  ],
+  g: [
+    [0, 0],
+    [1, 1],
+  ],
+  b: [
+    [0, 0],
+    [1, 1],
+  ],
+};
+
 export interface ColorGradingSettings {
   /** Shadows color balance & luminance (-1.0 to +1.0) */
   lift: ColorWheelValue;
@@ -38,6 +72,8 @@ export interface ColorGradingSettings {
   saturation: number;
   /** Vibrance: smart saturation protecting skin tones (-100 to +100) */
   vibrance: number;
+  /** S164 — 4-Channel RGB Spline Curves */
+  curves?: RgbCurvesSettings;
 }
 
 export const DEFAULT_COLOR_WHEEL_VALUE: ColorWheelValue = {
@@ -124,6 +160,214 @@ function isWheelNeutral(w: ColorWheelValue | undefined): boolean {
 }
 
 /**
+ * Evaluates whether a set of curve control points is neutral / identity (y = x).
+ */
+export function isCurveNeutral(points: CurvePoint[] | undefined): boolean {
+  if (!points || points.length === 0) return true;
+  if (points.length === 2) {
+    const [p0, p1] = points;
+    return (
+      Math.abs(p0[0] - 0) < 0.005 &&
+      Math.abs(p0[1] - 0) < 0.005 &&
+      Math.abs(p1[0] - 1) < 0.005 &&
+      Math.abs(p1[1] - 1) < 0.005
+    );
+  }
+  return points.every(([x, y]) => Math.abs(x - y) < 0.005);
+}
+
+/**
+ * Checks if all channels in an RGB curves set are neutral.
+ */
+export function isNeutralCurves(curves: RgbCurvesSettings | undefined): boolean {
+  if (!curves) return true;
+  return (
+    isCurveNeutral(curves.all) &&
+    isCurveNeutral(curves.r) &&
+    isCurveNeutral(curves.g) &&
+    isCurveNeutral(curves.b)
+  );
+}
+
+/**
+ * S164 — Evaluates a smooth monotone cubic spline (Fritsch-Carlson) through the given
+ * control points at position x in [0, 1]. Guarantees monotonicity without overshoot.
+ */
+export function evaluateMonotoneCubicSpline(points: CurvePoint[], x: number): number {
+  if (points.length === 0) return x;
+  if (points.length === 1) return points[0][1];
+
+  const sorted = points.slice().sort((a, b) => a[0] - b[0]);
+  const n = sorted.length;
+
+  if (x <= sorted[0][0]) return sorted[0][1];
+  if (x >= sorted[n - 1][0]) return sorted[n - 1][1];
+
+  const deltas: number[] = [];
+  const h: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = sorted[i + 1][0] - sorted[i][0];
+    h.push(dx);
+    deltas.push(dx > 0 ? (sorted[i + 1][1] - sorted[i][1]) / dx : 0);
+  }
+
+  const m: number[] = new Array(n).fill(0);
+  m[0] = deltas[0];
+  m[n - 1] = deltas[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    m[i] = (deltas[i - 1] + deltas[i]) / 2;
+  }
+
+  for (let i = 0; i < n - 1; i++) {
+    if (Math.abs(deltas[i]) < 1e-9) {
+      m[i] = 0;
+      m[i + 1] = 0;
+    } else {
+      const alpha = m[i] / deltas[i];
+      const beta = m[i + 1] / deltas[i];
+      const dist = alpha * alpha + beta * beta;
+      if (dist > 9) {
+        const tau = 3 / Math.sqrt(dist);
+        m[i] = tau * alpha * deltas[i];
+        m[i + 1] = tau * beta * deltas[i];
+      }
+    }
+  }
+
+  let k = 0;
+  for (let i = 0; i < n - 1; i++) {
+    if (x >= sorted[i][0] && x <= sorted[i + 1][0]) {
+      k = i;
+      break;
+    }
+  }
+
+  const dx = h[k];
+  if (dx <= 0) return sorted[k][1];
+
+  const t = (x - sorted[k][0]) / dx;
+  const t2 = t * t;
+  const t3 = t2 * t;
+
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+
+  const y =
+    h00 * sorted[k][1] +
+    h10 * dx * m[k] +
+    h01 * sorted[k + 1][1] +
+    h11 * dx * m[k + 1];
+
+  return Math.min(1, Math.max(0, y));
+}
+
+/**
+ * S164 — Converts spline control points into an SVG path `d` string
+ * using exact Hermite-to-Bézier conversion.
+ */
+export function generateCurveSvgPath(
+  points: CurvePoint[],
+  width = 240,
+  height = 240,
+): string {
+  if (points.length === 0) return '';
+  const sorted = points.slice().sort((a, b) => a[0] - b[0]);
+  if (sorted.length === 1) {
+    const y = (1 - sorted[0][1]) * height;
+    return `M 0 ${y} L ${width} ${y}`;
+  }
+
+  const n = sorted.length;
+  const deltas: number[] = [];
+  const h: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = sorted[i + 1][0] - sorted[i][0];
+    h.push(dx);
+    deltas.push(dx > 0 ? (sorted[i + 1][1] - sorted[i][1]) / dx : 0);
+  }
+
+  const m: number[] = new Array(n).fill(0);
+  m[0] = deltas[0];
+  m[n - 1] = deltas[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    m[i] = (deltas[i - 1] + deltas[i]) / 2;
+  }
+
+  for (let i = 0; i < n - 1; i++) {
+    if (Math.abs(deltas[i]) < 1e-9) {
+      m[i] = 0;
+      m[i + 1] = 0;
+    } else {
+      const alpha = m[i] / deltas[i];
+      const beta = m[i + 1] / deltas[i];
+      const dist = alpha * alpha + beta * beta;
+      if (dist > 9) {
+        const tau = 3 / Math.sqrt(dist);
+        m[i] = tau * alpha * deltas[i];
+        m[i + 1] = tau * beta * deltas[i];
+      }
+    }
+  }
+
+  const toSvgX = (x: number) => Number((x * width).toFixed(2));
+  const toSvgY = (y: number) => Number(((1 - y) * height).toFixed(2));
+
+  let path = `M ${toSvgX(sorted[0][0])} ${toSvgY(sorted[0][1])}`;
+
+  for (let i = 0; i < n - 1; i++) {
+    const dx = h[i];
+    const p0x = sorted[i][0];
+    const p0y = sorted[i][1];
+    const p3x = sorted[i + 1][0];
+    const p3y = sorted[i + 1][1];
+
+    const cp1x = p0x + dx / 3;
+    const cp1y = p0y + (dx * m[i]) / 3;
+    const cp2x = p3x - dx / 3;
+    const cp2y = p3y - (dx * m[i + 1]) / 3;
+
+    path += ` C ${toSvgX(cp1x)} ${toSvgY(cp1y)}, ${toSvgX(cp2x)} ${toSvgY(cp2y)}, ${toSvgX(p3x)} ${toSvgY(p3y)}`;
+  }
+
+  return path;
+}
+
+/**
+ * S164 — Translates RGB spline curves into FFmpeg `curves` filter string.
+ * Format: `curves=all='0/0 0.5/0.4 1/1':r='...'`
+ */
+export function buildFfmpegCurvesFilter(curves: RgbCurvesSettings | undefined): string {
+  if (!curves || isNeutralCurves(curves)) return '';
+
+  const formatPoints = (pts: CurvePoint[]) => {
+    return pts
+      .slice()
+      .sort((a, b) => a[0] - b[0])
+      .map(([x, y]) => `${clampRound(x, 0, 1)}/${clampRound(y, 0, 1)}`)
+      .join(' ');
+  };
+
+  const channelParams: string[] = [];
+  if (curves.all && !isCurveNeutral(curves.all)) {
+    channelParams.push(`all='${formatPoints(curves.all)}'`);
+  }
+  if (curves.r && !isCurveNeutral(curves.r)) {
+    channelParams.push(`r='${formatPoints(curves.r)}'`);
+  }
+  if (curves.g && !isCurveNeutral(curves.g)) {
+    channelParams.push(`g='${formatPoints(curves.g)}'`);
+  }
+  if (curves.b && !isCurveNeutral(curves.b)) {
+    channelParams.push(`b='${formatPoints(curves.b)}'`);
+  }
+
+  if (channelParams.length === 0) return '';
+  return `curves=${channelParams.join(':')}`;
+}
+
+/**
  * Returns true if all grading values are at identity/neutral state.
  */
 export function isNeutralColorGrading(settings: ColorGradingSettings | undefined): boolean {
@@ -137,7 +381,8 @@ export function isNeutralColorGrading(settings: ColorGradingSettings | undefined
     Math.abs(settings.exposure) < 0.01 &&
     Math.abs(settings.contrast - 1.0) < 0.001 &&
     Math.abs(settings.saturation - 1.0) < 0.001 &&
-    Math.abs(settings.vibrance) < 0.01
+    Math.abs(settings.vibrance) < 0.01 &&
+    isNeutralCurves(settings.curves)
   );
 }
 
@@ -152,7 +397,7 @@ function clampRound(val: number, min: number, max: number, decimals = 3): number
 /**
  * Builds the ffmpeg filter chain string for color grading:
  * Combines `colorbalance` (for 3-way Lift/Gamma/Gain wheels, Temperature, Tint)
- * and `eq` (for Exposure, Contrast, Saturation, Luma).
+ * and `eq` (for Exposure, Contrast, Saturation, Luma), and `curves` (RGB splines).
  */
 export function buildFfmpegColorBalanceFilter(
   settings: ColorGradingSettings | undefined,
@@ -221,8 +466,6 @@ export function buildFfmpegColorBalanceFilter(
   }
 
   // 3. Calculate tone and luminance adjustments for eq filter
-  // Exposure (-4..4) translates to brightness adjustment (-0.5..0.5)
-  // Lift luma adds directly to brightness baseline
   const exposureBrightness = settings.exposure * 0.125;
   const totalBrightness = clampRound(
     exposureBrightness + settings.lift.luma * 0.2 + settings.gain.luma * 0.2,
@@ -236,7 +479,6 @@ export function buildFfmpegColorBalanceFilter(
     3.0,
   );
 
-  // Vibrance compounds with saturation
   const vibranceSaturation = (settings.vibrance / 100) * 0.5;
   const totalSaturation = clampRound(
     Math.max(0, settings.saturation + vibranceSaturation),
@@ -244,8 +486,6 @@ export function buildFfmpegColorBalanceFilter(
     3.0,
   );
 
-  // Gamma luma maps to eq gamma (0.1 to 10.0, default 1.0)
-  // Positive gamma luma brightens midtones (lower gamma value in eq, or inverted exponent)
   const gammaExponent = clampRound(Math.pow(2, -settings.gamma.luma * 1.5), 0.2, 5.0);
 
   const eqParams: string[] = [];
@@ -256,6 +496,14 @@ export function buildFfmpegColorBalanceFilter(
 
   if (eqParams.length > 0) {
     parts.push(`eq=${eqParams.join(':')}`);
+  }
+
+  // 4. S164 — Append RGB Curves filter if defined
+  if (settings.curves && !isNeutralCurves(settings.curves)) {
+    const curvesFilter = buildFfmpegCurvesFilter(settings.curves);
+    if (curvesFilter) {
+      parts.push(curvesFilter);
+    }
   }
 
   return parts.join(',');
@@ -401,6 +649,64 @@ export const COLOR_GRADING_PRESETS: ColorGradingPreset[] = [
       contrast: 1.5,
       saturation: 0.6,
       vibrance: -30,
+    },
+  },
+  {
+    id: 'clean_commercial',
+    name: 'Clean Commercial',
+    description: 'Crisp broadcast pop with clean whites, vibrant skin tones, and rich midtones',
+    settings: {
+      lift: { r: -0.02, g: 0.0, b: 0.02, luma: -0.02 },
+      gamma: { r: 0.02, g: 0.01, b: -0.02, luma: 0.04 },
+      gain: { r: 0.05, g: 0.04, b: 0.02, luma: 0.05 },
+      temperature: 4,
+      tint: -2,
+      exposure: 0.15,
+      contrast: 1.18,
+      saturation: 1.12,
+      vibrance: 15,
+      curves: {
+        all: [
+          [0, 0],
+          [0.25, 0.22],
+          [0.75, 0.78],
+          [1, 1],
+        ],
+      },
+    },
+  },
+  {
+    id: 'cyberpunk_neon',
+    name: 'Cyberpunk Neon',
+    description: 'Vibrant futuristic palette: deep cyan shadows and electrified magenta-pink highlights',
+    settings: {
+      lift: { r: -0.2, g: 0.1, b: 0.25, luma: -0.08 },
+      gamma: { r: 0.1, g: -0.05, b: 0.12, luma: 0.02 },
+      gain: { r: 0.35, g: -0.15, b: 0.25, luma: 0.1 },
+      temperature: -10,
+      tint: 25,
+      exposure: 0.1,
+      contrast: 1.35,
+      saturation: 1.4,
+      vibrance: 35,
+      curves: {
+        all: [
+          [0, 0.04],
+          [0.45, 0.42],
+          [0.85, 0.92],
+          [1, 1],
+        ],
+        r: [
+          [0, 0],
+          [0.7, 0.85],
+          [1, 1],
+        ],
+        b: [
+          [0, 0.08],
+          [0.5, 0.55],
+          [1, 1],
+        ],
+      },
     },
   },
 ];

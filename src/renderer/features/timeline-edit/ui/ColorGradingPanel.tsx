@@ -17,15 +17,18 @@ import {
   generateSyntheticStatsFromGrade,
   type ColorMatchMode,
   type ColorStatistics,
+  type RgbCurvesSettings,
 } from '@shared';
 
 import { useSequenceStore } from '../../../entities/sequence';
 import { useToastStore } from '../../../shared/model/toastStore';
+import { useVideoScopesStore } from '../../timeline-preview/model/videoScopesStore';
 import { Button } from '../../../shared/ui/Button';
 import { Section } from '../../../shared/ui/Section';
 import { Select } from '../../../shared/ui/Select';
 import { Switch } from '../../../shared/ui/Switch';
 import { ColorWheel } from './ColorWheel';
+import { RgbCurvesEditor } from './RgbCurvesEditor';
 
 export interface ColorGradingPanelProps {
   clip: SequenceClip;
@@ -36,7 +39,7 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
   const document = useSequenceStore((state) => state.document);
   const pushToast = useToastStore((state) => state.pushToast);
 
-  const [activeSubTab, setActiveSubTab] = useState<'wheels' | 'tone' | 'presets' | 'lut' | 'match'>('wheels');
+  const [activeSubTab, setActiveSubTab] = useState<'wheels' | 'curves' | 'tone' | 'presets' | 'lut' | 'match'>('wheels');
 
   // S74 Shot Match State
   const [selectedRefClipId, setSelectedRefClipId] = useState<string>('');
@@ -90,6 +93,13 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
     updateGrade({
       ...grade,
       [param]: val,
+    });
+  };
+
+  const updateCurves = (curves: RgbCurvesSettings) => {
+    updateGrade({
+      ...grade,
+      curves,
     });
   };
 
@@ -147,17 +157,28 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
     <Section
       title="3-Way Color Wheels & Grading"
       action={
-        isGraded ? (
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            className="text-[11px] font-medium text-accent-ai hover:underline transition-all flex items-center gap-1"
-            onClick={handleResetAll}
-            title="Reset color grade to neutral"
+            className="text-[11px] font-medium text-text-secondary hover:text-accent-ai transition-all flex items-center gap-1"
+            onClick={() => useVideoScopesStore.getState().toggleIsOpen()}
+            title="Open real-time Vectorscope, RGB Parade & Waveform monitors"
           >
-            <span className="material-symbols-outlined text-[13px]">restart_alt</span>
-            <span>Reset Grade</span>
+            <span className="material-symbols-outlined text-[13px]">monitoring</span>
+            <span>Scopes</span>
           </button>
-        ) : undefined
+          {isGraded && (
+            <button
+              type="button"
+              className="text-[11px] font-medium text-accent-ai hover:underline transition-all flex items-center gap-1"
+              onClick={handleResetAll}
+              title="Reset color grade to neutral"
+            >
+              <span className="material-symbols-outlined text-[13px]">restart_alt</span>
+              <span>Reset</span>
+            </button>
+          )}
+        </div>
       }
     >
       {/* Navigation Sub-Tabs */}
@@ -172,7 +193,20 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
           }`}
         >
           <span className="material-symbols-outlined text-[13px]">palette</span>
-          <span>3-Way Wheels</span>
+          <span>Wheels</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('curves')}
+          className={`flex-1 flex items-center justify-center gap-1 rounded-button py-1 text-center text-[11px] font-medium transition-all ${
+            activeSubTab === 'curves'
+              ? 'bg-bg-selected text-text-primary font-semibold'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+          title="4-Channel RGB Spline Curves editor"
+        >
+          <span className="material-symbols-outlined text-[13px]">show_chart</span>
+          <span>RGB Curves</span>
         </button>
         <button
           type="button"
@@ -184,7 +218,7 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
           }`}
         >
           <span className="material-symbols-outlined text-[13px]">tune</span>
-          <span>Balance & Tone</span>
+          <span>Tone</span>
         </button>
         <button
           type="button"
@@ -196,7 +230,7 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
           }`}
         >
           <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
-          <span>Cinema Looks</span>
+          <span>Looks</span>
         </button>
         <button
           type="button"
@@ -208,7 +242,7 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
           }`}
         >
           <span className="material-symbols-outlined text-[13px]">filter</span>
-          <span>3D LUTs</span>
+          <span>LUTs</span>
         </button>
         <button
           type="button"
@@ -220,9 +254,17 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
           }`}
         >
           <span className="material-symbols-outlined text-[13px]">compare</span>
-          <span>Shot Match</span>
+          <span>Match</span>
         </button>
       </div>
+
+      {/* S164: RGB Spline Curves Tab */}
+      {activeSubTab === 'curves' && (
+        <RgbCurvesEditor
+          curves={grade.curves}
+          onChange={updateCurves}
+        />
+      )}
 
       {/* Tab 1: 3-Way Chromatic Wheels (Lift, Gamma, Gain) */}
       {activeSubTab === 'wheels' && (

@@ -3,10 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCssColorFilter,
   buildFfmpegColorBalanceFilter,
+  buildFfmpegCurvesFilter,
   COLOR_GRADING_PRESETS,
   colorWheelToRgb,
   DEFAULT_COLOR_GRADING,
+  evaluateMonotoneCubicSpline,
+  generateCurveSvgPath,
+  isCurveNeutral,
   isNeutralColorGrading,
+  isNeutralCurves,
   rgbToColorWheel,
   type ColorGradingSettings,
 } from '../color-grading-ops';
@@ -184,14 +189,141 @@ describe('Step S30 — Color Grading Operations & Filter Pipeline', () => {
   });
 
   describe('Preset Looks', () => {
-    it('has all 5 essential presets defined', () => {
-      expect(COLOR_GRADING_PRESETS.length).toBe(5);
+    it('has all 7 curated studio presets defined', () => {
+      expect(COLOR_GRADING_PRESETS.length).toBe(7);
       const ids = COLOR_GRADING_PRESETS.map((p) => p.id);
       expect(ids).toContain('neutral');
       expect(ids).toContain('teal_and_orange');
       expect(ids).toContain('warm_sunset');
       expect(ids).toContain('cool_noir');
       expect(ids).toContain('bleach_bypass');
+      expect(ids).toContain('clean_commercial');
+      expect(ids).toContain('cyberpunk_neon');
+    });
+  });
+
+  describe('S164 — RGB Spline Curves & Filter Synthesis', () => {
+    it('evaluates linear curve identity accurately', () => {
+      const linear: [number, number][] = [
+        [0, 0],
+        [1, 1],
+      ];
+      expect(evaluateMonotoneCubicSpline(linear, 0)).toBe(0);
+      expect(evaluateMonotoneCubicSpline(linear, 0.25)).toBeCloseTo(0.25, 2);
+      expect(evaluateMonotoneCubicSpline(linear, 0.5)).toBeCloseTo(0.5, 2);
+      expect(evaluateMonotoneCubicSpline(linear, 0.75)).toBeCloseTo(0.75, 2);
+      expect(evaluateMonotoneCubicSpline(linear, 1)).toBe(1);
+    });
+
+    it('clamps evaluation beyond boundary domains', () => {
+      const curve: [number, number][] = [
+        [0, 0.1],
+        [1, 0.9],
+      ];
+      expect(evaluateMonotoneCubicSpline(curve, -0.5)).toBe(0.1);
+      expect(evaluateMonotoneCubicSpline(curve, 1.5)).toBe(0.9);
+    });
+
+    it('evaluates smooth S-curve contrast without overshoot', () => {
+      const sCurve: [number, number][] = [
+        [0, 0],
+        [0.25, 0.18],
+        [0.75, 0.82],
+        [1, 1],
+      ];
+      const yMid = evaluateMonotoneCubicSpline(sCurve, 0.5);
+      expect(yMid).toBeCloseTo(0.5, 2);
+      expect(evaluateMonotoneCubicSpline(sCurve, 0.25)).toBe(0.18);
+      expect(evaluateMonotoneCubicSpline(sCurve, 0.75)).toBe(0.82);
+
+      // Verify strict monotonicity
+      let prevY = 0;
+      for (let x = 0; x <= 1.0; x += 0.05) {
+        const y = evaluateMonotoneCubicSpline(sCurve, x);
+        expect(y).toBeGreaterThanOrEqual(prevY);
+        expect(y).toBeLessThanOrEqual(1.0);
+        prevY = y;
+      }
+    });
+
+    it('generates exact cubic Bézier SVG path from control points', () => {
+      const points: [number, number][] = [
+        [0, 0],
+        [0.5, 0.4],
+        [1, 1],
+      ];
+      const path = generateCurveSvgPath(points, 240, 240);
+      expect(path).toContain('M 0 240');
+      expect(path).toContain('C ');
+      expect(path).toContain('240 0');
+    });
+
+    it('detects neutral vs modified curves', () => {
+      expect(isCurveNeutral(undefined)).toBe(true);
+      expect(
+        isCurveNeutral([
+          [0, 0],
+          [1, 1],
+        ]),
+      ).toBe(true);
+      expect(
+        isCurveNeutral([
+          [0, 0],
+          [0.5, 0.4],
+          [1, 1],
+        ]),
+      ).toBe(false);
+
+      expect(isNeutralCurves(undefined)).toBe(true);
+      expect(
+        isNeutralCurves({
+          all: [
+            [0, 0],
+            [1, 1],
+          ],
+        }),
+      ).toBe(true);
+      expect(
+        isNeutralCurves({
+          all: [
+            [0, 0],
+            [0.5, 0.4],
+            [1, 1],
+          ],
+        }),
+      ).toBe(false);
+    });
+
+    it('synthesizes FFmpeg curves filter string with channel mappings', () => {
+      const curves = {
+        all: [
+          [0, 0],
+          [0.5, 0.45],
+          [1, 1],
+        ] as [number, number][],
+        r: [
+          [0, 0.05],
+          [1, 0.95],
+        ] as [number, number][],
+      };
+      const filter = buildFfmpegCurvesFilter(curves);
+      expect(filter).toBe("curves=all='0/0 0.5/0.45 1/1':r='0/0.05 1/0.95'");
+    });
+
+    it('incorporates RGB curves filter into buildFfmpegColorBalanceFilter', () => {
+      const settings: ColorGradingSettings = {
+        ...DEFAULT_COLOR_GRADING,
+        curves: {
+          all: [
+            [0, 0],
+            [0.25, 0.2],
+            [0.75, 0.8],
+            [1, 1],
+          ],
+        },
+      };
+      const filter = buildFfmpegColorBalanceFilter(settings);
+      expect(filter).toContain('curves=all=');
     });
   });
 });

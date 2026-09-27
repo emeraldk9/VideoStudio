@@ -388,6 +388,17 @@ export const colorWheelValueSchema = z
   })
   .strict();
 
+export const curvePointSchema = z.tuple([boundedNumber(0, 1), boundedNumber(0, 1)]);
+
+export const rgbCurvesSchema = z
+  .object({
+    all: z.array(curvePointSchema).min(2).optional(),
+    r: z.array(curvePointSchema).min(2).optional(),
+    g: z.array(curvePointSchema).min(2).optional(),
+    b: z.array(curvePointSchema).min(2).optional(),
+  })
+  .strict();
+
 export const colorGradingSchema = z
   .object({
     lift: colorWheelValueSchema.optional().default(() => ({ r: 0, g: 0, b: 0, luma: 0 })),
@@ -399,6 +410,7 @@ export const colorGradingSchema = z
     contrast: boundedNumber(0, 5).default(1.0),
     saturation: boundedNumber(0, 5).default(1.0),
     vibrance: boundedNumber(-100, 100).default(0),
+    curves: rgbCurvesSchema.optional(),
   })
   .strict();
 
