@@ -31,6 +31,8 @@ import {
   rippleDeleteTranscriptRange,
   type ParentSequenceBreadcrumb,
   syncCompoundClipMetadata,
+  applyMultiTrackMagneticRipple,
+  closeGapsSynchronized,
 } from '@shared';
 
 import { readLocalSetting, writeLocalSetting } from '../../../shared/lib/localSetting';
@@ -250,6 +252,14 @@ export interface SequenceState {
 
   /** S163 — Excises a time range across all synchronized tracks with multi-track ripple compaction */
   rippleDeleteRange: (startFrame: number, endFrame: number, microFadeFrames?: number) => void;
+  /** S169 — Multi-Track Magnetic Timeline Mode & Synchronized Gaps */
+  magneticTimelineEnabled: boolean;
+  toggleMagneticTimeline: () => void;
+  setMagneticTimelineEnabled: (enabled: boolean) => void;
+  applyMagneticRipple: (params: { rippleFrame: number; deltaFrames: number; primaryTrackId?: string }) => void;
+  closeAllGapsSync: () => void;
+  setTrackSyncLock: (trackId: string, syncLocked: boolean) => void;
+  toggleTrackSyncLock: (trackId: string) => void;
   /** Replaces the clip list, pushing the previous one onto the undo stack. */
   commitClips: (next: SequenceClip[]) => void;
   /** Same, without an undo entry — for a load or a re-sync the user already confirmed separately. */
@@ -984,6 +994,60 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
         ? state.soloTrackIds.filter((id) => id !== trackId)
         : [...state.soloTrackIds, trackId],
     })),
+
+  magneticTimelineEnabled: false,
+  toggleMagneticTimeline: () =>
+    set((state) => ({ magneticTimelineEnabled: !state.magneticTimelineEnabled })),
+  setMagneticTimelineEnabled: (enabled) => set({ magneticTimelineEnabled: enabled }),
+
+  applyMagneticRipple: ({ rippleFrame, deltaFrames, primaryTrackId }) => {
+    const { document } = get();
+    if (!document || deltaFrames === 0) return;
+    const result = applyMultiTrackMagneticRipple({
+      clips: document.clips,
+      tracks: document.tracks,
+      rippleFrame,
+      deltaFrames,
+      primaryTrackId,
+      respectSyncLock: true,
+    });
+    get().commitClips(result.updatedClips);
+  },
+
+  closeAllGapsSync: () => {
+    const { document } = get();
+    if (!document) return;
+    const result = closeGapsSynchronized({
+      clips: document.clips,
+      tracks: document.tracks,
+      respectSyncLock: true,
+    });
+    if (result.closedGapCount > 0) {
+      get().commitClips(result.updatedClips);
+    }
+  },
+
+  setTrackSyncLock: (trackId, syncLocked) => {
+    set((state) => ({
+      document: state.document
+        ? {
+            ...state.document,
+            tracks: state.document.tracks.map((t) =>
+              t.id === trackId ? { ...t, syncLocked } : t,
+            ),
+          }
+        : null,
+    }));
+  },
+
+  toggleTrackSyncLock: (trackId) => {
+    const { document } = get();
+    if (!document) return;
+    const target = document.tracks.find((t) => t.id === trackId);
+    if (!target) return;
+    const current = target.syncLocked !== false;
+    get().setTrackSyncLock(trackId, !current);
+  },
 
   setClips: (next) => {
     const document = get().document;

@@ -1,273 +1,427 @@
 import { describe, expect, it } from 'vitest';
 import type { SequenceClip, SequenceTrack } from '../../../types/sequence';
 import {
-  detectClipCollisions,
-  resolveCollisionBumping,
-  applyAutoRippleInsert,
-  applyRippleDelete,
-  calculateRippleShiftPreview,
+  applyMultiTrackMagneticRipple,
+  closeGapsSynchronized,
+  isTrackSyncLocked,
+  rippleTrimClipMultiTrack,
 } from '../magnetic-ripple-ops';
 
-function makeTrack(id: string, kind: 'video' | 'audio' = 'video', magnetic = false): SequenceTrack {
-  return {
-    id,
+describe('magnetic-ripple-ops', () => {
+  const videoTrack1: SequenceTrack = {
+    id: 'track-v1',
     sequenceId: 'seq-1',
-    name: id,
-    kind,
-    role: null,
+    kind: 'video',
+    name: 'V1 Main Video',
     orderIndex: 0,
-    muted: false,
+    magnetic: false,
     locked: false,
-    magnetic,
+    muted: false,
     videoEnabled: true,
     heightPx: 64,
+    role: null,
+    syncLocked: true,
   };
-}
 
-function makeClip(
-  id: string,
-  trackId: string,
-  startFrames: number | null,
-  durationFrames: number,
-  orderIndex = 0,
-): SequenceClip {
-  return {
-    id,
-    trackId,
-    startFrames,
-    durationFrames,
-    orderIndex,
-    sourceStartFrames: 0,
-    sourceDurationFrames: durationFrames,
+  const videoTrack2: SequenceTrack = {
+    id: 'track-v2',
+    sequenceId: 'seq-1',
+    kind: 'video',
+    name: 'V2 B-Roll Overlay',
+    orderIndex: 1,
+    magnetic: false,
+    locked: false,
+    muted: false,
+    videoEnabled: true,
+    heightPx: 64,
+    role: 'overlay',
+    syncLocked: true,
+  };
+
+  const audioTrackNarration: SequenceTrack = {
+    id: 'track-a1',
+    sequenceId: 'seq-1',
+    kind: 'audio',
+    name: 'A1 Dialogue',
+    orderIndex: 0,
+    magnetic: false,
+    locked: false,
+    muted: false,
+    videoEnabled: true,
+    heightPx: 36,
+    role: 'narration',
+    syncLocked: true,
+  };
+
+  const audioTrackMusic: SequenceTrack = {
+    id: 'track-a2',
+    sequenceId: 'seq-1',
+    kind: 'audio',
+    name: 'A2 Music Bed',
+    orderIndex: 1,
+    magnetic: false,
+    locked: false,
+    muted: false,
+    videoEnabled: true,
+    heightPx: 36,
+    role: 'music',
+    syncLocked: false, // User turned off sync-lock for music bed!
+  };
+
+  const lockedTrack: SequenceTrack = {
+    id: 'track-locked',
+    sequenceId: 'seq-1',
+    kind: 'video',
+    name: 'V3 Watermark (Locked)',
+    orderIndex: 2,
+    magnetic: false,
+    locked: true,
+    muted: false,
+    videoEnabled: true,
+    heightPx: 64,
+    role: null,
+    syncLocked: true,
+  };
+
+  const tracks: SequenceTrack[] = [
+    videoTrack1,
+    videoTrack2,
+    audioTrackNarration,
+    audioTrackMusic,
+    lockedTrack,
+  ];
+
+  const clipV1_A: SequenceClip = {
+    id: 'clip-v1-a',
+    sequenceId: 'seq-1',
+    trackId: 'track-v1',
+    orderIndex: 0,
     sourceKind: 'video',
-    name: id,
-    color: '#3b82f6',
-  } as unknown as SequenceClip;
-}
+    label: 'Intro Shot',
+    filePath: '/media/intro.mp4',
+    startFrames: 0,
+    durationFrames: 48,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    overrides: [],
+  };
 
-describe('magnetic-ripple-ops', () => {
-  const freeTrack = makeTrack('v1', 'video', false);
-  const magneticTrack = makeTrack('v1-mag', 'video', true);
+  const clipV1_B: SequenceClip = {
+    id: 'clip-v1-b',
+    sequenceId: 'seq-1',
+    trackId: 'track-v1',
+    orderIndex: 1,
+    sourceKind: 'video',
+    label: 'Main Interview',
+    filePath: '/media/interview.mp4',
+    startFrames: 48,
+    durationFrames: 96,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    overrides: [],
+  };
 
-  describe('detectClipCollisions', () => {
-    it('returns empty array on magnetic tracks', () => {
-      const clips = [makeClip('c1', magneticTrack.id, 0, 30)];
-      const collisions = detectClipCollisions(clips, magneticTrack, 'c2', 10, 20);
-      expect(collisions).toEqual([]);
+  const clipV2_Cutaway: SequenceClip = {
+    id: 'clip-v2-cutaway',
+    sequenceId: 'seq-1',
+    trackId: 'track-v2',
+    orderIndex: 0,
+    sourceKind: 'video',
+    label: 'B-Roll Cutaway',
+    filePath: '/media/broll.mp4',
+    startFrames: 60,
+    durationFrames: 36,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    overrides: [],
+  };
+
+  const clipA1_Voice: SequenceClip = {
+    id: 'clip-a1-voice',
+    sequenceId: 'seq-1',
+    trackId: 'track-a1',
+    orderIndex: 0,
+    sourceKind: 'audio',
+    label: 'Voiceover',
+    filePath: '/media/voice.wav',
+    startFrames: 48,
+    durationFrames: 96,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    overrides: [],
+  };
+
+  const clipA2_MusicBed: SequenceClip = {
+    id: 'clip-a2-music',
+    sequenceId: 'seq-1',
+    trackId: 'track-a2',
+    orderIndex: 0,
+    sourceKind: 'audio',
+    label: 'Background Score',
+    filePath: '/media/music.mp3',
+    startFrames: 0,
+    durationFrames: 300,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    overrides: [],
+  };
+
+  const clipLocked_Watermark: SequenceClip = {
+    id: 'clip-watermark',
+    sequenceId: 'seq-1',
+    trackId: 'track-locked',
+    orderIndex: 0,
+    sourceKind: 'video',
+    label: 'Bug Watermark',
+    filePath: '/media/watermark.png',
+    startFrames: 100,
+    durationFrames: 100,
+    transitionIn: 'cut',
+    transitionFrames: 0,
+    motionPreset: 'none',
+    gainDb: 0,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    overrides: [],
+  };
+
+  const sampleClips: SequenceClip[] = [
+    clipV1_A,
+    clipV1_B,
+    clipV2_Cutaway,
+    clipA1_Voice,
+    clipA2_MusicBed,
+    clipLocked_Watermark,
+  ];
+
+  describe('isTrackSyncLocked', () => {
+    it('returns true by default when syncLocked is undefined or true', () => {
+      expect(isTrackSyncLocked(videoTrack1)).toBe(true);
+      expect(isTrackSyncLocked({ syncLocked: undefined })).toBe(true);
+      expect(isTrackSyncLocked({ syncLocked: true })).toBe(true);
     });
 
-    it('detects overlap collision when intervals intersect', () => {
-      const clips = [
-        makeClip('c1', freeTrack.id, 10, 50), // [10, 60)
-        makeClip('c2', freeTrack.id, 100, 40), // [100, 140)
-      ];
-
-      // Proposed clip [40, 80) overlaps c1 in [40, 60)
-      const collisions = detectClipCollisions(clips, freeTrack, 'c3', 40, 40);
-      expect(collisions).toHaveLength(1);
-      expect(collisions[0].collidingClip.id).toBe('c1');
-      expect(collisions[0].overlapStart).toBe(40);
-      expect(collisions[0].overlapEnd).toBe(60);
-      expect(collisions[0].overlapDuration).toBe(20);
-    });
-
-    it('ignores clips on other tracks or moving clip itself', () => {
-      const clips = [
-        makeClip('c1', 'other-track', 10, 50),
-        makeClip('c2', freeTrack.id, 10, 50),
-      ];
-
-      // Moving c2 itself on freeTrack should not collide with itself
-      const collisionsSelf = detectClipCollisions(clips, freeTrack, 'c2', 20, 30);
-      expect(collisionsSelf).toEqual([]);
-
-      // Collision check on freeTrack should ignore other-track
-      const collisionsOther = detectClipCollisions(clips, freeTrack, 'c3', 20, 30);
-      expect(collisionsOther).toHaveLength(1);
-      expect(collisionsOther[0].collidingClip.id).toBe('c2');
-    });
-
-    it('does not report collision for abutting contiguous clips', () => {
-      const clips = [makeClip('c1', freeTrack.id, 0, 50)]; // [0, 50)
-      // Exactly abutting at frame 50: [50, 80)
-      const collisions = detectClipCollisions(clips, freeTrack, 'c2', 50, 30);
-      expect(collisions).toEqual([]);
+    it('returns false only when syncLocked is explicitly false', () => {
+      expect(isTrackSyncLocked(audioTrackMusic)).toBe(false);
+      expect(isTrackSyncLocked({ syncLocked: false })).toBe(false);
     });
   });
 
-  describe('resolveCollisionBumping', () => {
-    it('returns unbumped position on magnetic tracks or empty tracks', () => {
-      expect(resolveCollisionBumping([], freeTrack, 'c1', 50, 30)).toEqual({
-        snappedStart: 50,
-        bumped: false,
+  describe('applyMultiTrackMagneticRipple - Ripple Deletion (Negative Delta)', () => {
+    it('shifts downstream clips leftward on all sync-locked tracks', () => {
+      // Delete 24 frames from frame 48 (e.g. removing the head 24 frames of Interview)
+      const res = applyMultiTrackMagneticRipple({
+        clips: sampleClips,
+        tracks,
+        rippleFrame: 48,
+        deltaFrames: -24,
+        primaryTrackId: 'track-v1',
+        respectSyncLock: true,
       });
 
-      const clips = [makeClip('c1', magneticTrack.id, 0, 30)];
-      expect(resolveCollisionBumping(clips, magneticTrack, 'c2', 50, 30)).toEqual({
-        snappedStart: 50,
-        bumped: false,
+      // clipV1_A is before frame 48 -> unchanged
+      const v1A = res.updatedClips.find((c) => c.id === 'clip-v1-a');
+      expect(v1A?.startFrames).toBe(0);
+
+      // clipV2_Cutaway starts at 60 (>= 48 + 24 = 72? No, 60 is within window or straddles)
+      // Wait: window is [48, 72]. clipV2_Cutaway starts at 60 and ends at 96.
+      // Starts inside [48, 72] and ends at 96 (> 72).
+      // Head is trimmed by (72 - 60) = 12 frames, starts at 48, new duration = 36 - 12 = 24
+      const v2 = res.updatedClips.find((c) => c.id === 'clip-v2-cutaway');
+      expect(v2?.startFrames).toBe(48);
+      expect(v2?.durationFrames).toBe(24);
+
+      // clipA2_MusicBed has syncLocked: false -> stays completely untouched at 0
+      const music = res.updatedClips.find((c) => c.id === 'clip-a2-music');
+      expect(music?.startFrames).toBe(0);
+      expect(music?.durationFrames).toBe(300);
+
+      // locked track watermark is locked -> completely untouched
+      const watermark = res.updatedClips.find((c) => c.id === 'clip-watermark');
+      expect(watermark?.startFrames).toBe(100);
+    });
+
+    it('shifts clips cleanly when they start strictly after the ripple delete window', () => {
+      // Suppose we have a clip starting at frame 150
+      const downstreamClip: SequenceClip = {
+        id: 'clip-downstream',
+        sequenceId: 'seq-1',
+        trackId: 'track-v1',
+        orderIndex: 2,
+        sourceKind: 'video',
+        label: 'Outro',
+        filePath: '/media/outro.mp4',
+        startFrames: 150,
+        durationFrames: 50,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        overrides: [],
+      };
+
+      const res = applyMultiTrackMagneticRipple({
+        clips: [...sampleClips, downstreamClip],
+        tracks,
+        rippleFrame: 48,
+        deltaFrames: -20,
+        primaryTrackId: 'track-v1',
+        respectSyncLock: true,
       });
-    });
 
-    it('snaps to abut right edge of preceding clip when within bumper tolerance', () => {
-      const clips = [makeClip('c1', freeTrack.id, 0, 50)]; // [0, 50)
-      // Dropping at 55 (tolerance is 15 frames) -> within 5 frames of edge 50
-      const result = resolveCollisionBumping(clips, freeTrack, 'c2', 55, 30, 15);
-      expect(result.bumped).toBe(true);
-      expect(result.snappedStart).toBe(50);
-    });
-
-    it('snaps to abut left edge of succeeding clip when within bumper tolerance', () => {
-      const clips = [makeClip('c1', freeTrack.id, 100, 50)]; // [100, 150)
-      // Moving a 30-frame clip. To abut left edge, it must end at 100, so start = 70.
-      // Dropping at 75 -> within 5 frames of 70
-      const result = resolveCollisionBumping(clips, freeTrack, 'c2', 75, 30, 15);
-      expect(result.bumped).toBe(true);
-      expect(result.snappedStart).toBe(70);
-    });
-
-    it('snaps to track head (frame 0) when within bumper tolerance', () => {
-      const clips = [makeClip('c1', freeTrack.id, 100, 50)];
-      const result = resolveCollisionBumping(clips, freeTrack, 'c2', 8, 30, 15);
-      expect(result.bumped).toBe(true);
-      expect(result.snappedStart).toBe(0);
-    });
-
-    it('forces bump snapping to avoid collision when overlapping', () => {
-      const clips = [makeClip('c1', freeTrack.id, 50, 50)]; // [50, 100)
-      // Dropping a 20-frame clip directly on top at 60 (would span 60..80, colliding!)
-      // Nearest candidate: abut left (ends at 50 -> starts at 30, diff = 30) or abut right (starts at 100, diff = 40)
-      const result = resolveCollisionBumping(clips, freeTrack, 'c2', 60, 20, 15);
-      expect(result.bumped).toBe(true);
-      expect(result.snappedStart).toBe(30); // Cleanly abuts left of c1: [30, 50)
-    });
-
-    it('does not bump if far away from any boundary and non-colliding', () => {
-      const clips = [makeClip('c1', freeTrack.id, 0, 30)];
-      // Dropping at 120 (far from 30)
-      const result = resolveCollisionBumping(clips, freeTrack, 'c2', 120, 30, 15);
-      expect(result.bumped).toBe(false);
-      expect(result.snappedStart).toBe(120);
+      const outro = res.updatedClips.find((c) => c.id === 'clip-downstream');
+      expect(outro?.startFrames).toBe(130); // 150 - 20
     });
   });
 
-  describe('applyAutoRippleInsert', () => {
-    it('shifts downstream clips rightward on a free track', () => {
-      const clips = [
-        makeClip('c1', freeTrack.id, 0, 30),
-        makeClip('c2', freeTrack.id, 50, 40),
-        makeClip('c3', freeTrack.id, 120, 30),
-        makeClip('other', 'v2', 40, 50),
-        makeClip('c-new', 'v-temp', 0, 20),
-      ];
-
-      // Insert new clip 'c-new' at frame 40 with duration 20
-      const result = applyAutoRippleInsert(clips, freeTrack, 'c-new', 40, 20);
-
-      const cNew = result.find((c) => c.id === 'c-new');
-      const c1 = result.find((c) => c.id === 'c1');
-      const c2 = result.find((c) => c.id === 'c2');
-      const c3 = result.find((c) => c.id === 'c3');
-      const other = result.find((c) => c.id === 'other');
-
-      expect(cNew?.startFrames).toBe(40);
-      expect(c1?.startFrames).toBe(0); // Before insertStart (0 < 40), unchanged
-      expect(c2?.startFrames).toBe(70); // Shifted: 50 + 20 = 70
-      expect(c3?.startFrames).toBe(140); // Shifted: 120 + 20 = 140
-      expect(other?.startFrames).toBe(40); // Other track unaffected
-    });
-
-    it('inserts and re-indexes clips consecutively on a magnetic track', () => {
-      const clips = [
-        makeClip('c1', magneticTrack.id, null, 30, 0),
-        makeClip('c2', magneticTrack.id, null, 40, 1),
-        makeClip('c-new', 'v-temp', 0, 20, 0),
-      ];
-
-      // Insert at frame 15 (inside c1 which spans 0..30)
-      const result = applyAutoRippleInsert(clips, magneticTrack, 'c-new', 15, 20);
-      const magClips = result
-        .filter((c) => c.trackId === magneticTrack.id)
-        .sort((a, b) => a.orderIndex - b.orderIndex);
-
-      expect(magClips.map((c) => c.id)).toEqual(['c-new', 'c1', 'c2']);
-      expect(magClips.map((c) => c.orderIndex)).toEqual([0, 1, 2]);
-    });
-  });
-
-  describe('applyRippleDelete', () => {
-    it('returns identical copy if deletedClipIds is empty', () => {
-      const clips = [makeClip('c1', freeTrack.id, 0, 30)];
-      expect(applyRippleDelete(clips, [freeTrack], [])).toEqual(clips);
-    });
-
-    it('deletes clip and shifts downstream clips leftward on a free track', () => {
-      const clips = [
-        makeClip('c1', freeTrack.id, 0, 30),
-        makeClip('c2', freeTrack.id, 40, 20), // [40, 60) -> to delete
-        makeClip('c3', freeTrack.id, 80, 30), // [80, 110)
-        makeClip('c4', freeTrack.id, 150, 50), // [150, 200)
-      ];
-
-      const result = applyRippleDelete(clips, [freeTrack], ['c2']);
-
-      expect(result.find((c) => c.id === 'c2')).toBeUndefined();
-      expect(result.find((c) => c.id === 'c1')?.startFrames).toBe(0);
-      // c3 was at 80, shifted left by c2 duration (20) -> 60
-      expect(result.find((c) => c.id === 'c3')?.startFrames).toBe(60);
-      // c4 was at 150, shifted left by 20 -> 130
-      expect(result.find((c) => c.id === 'c4')?.startFrames).toBe(130);
-    });
-
-    it('merges contiguous/overlapping deleted clips on a free track', () => {
-      const clips = [
-        makeClip('c1', freeTrack.id, 10, 20), // [10, 30) -> delete
-        makeClip('c2', freeTrack.id, 30, 20), // [30, 50) -> delete (contiguous)
-        makeClip('c3', freeTrack.id, 80, 20), // [80, 100)
-      ];
-
-      // Combined deleted span is [10, 50) with duration 40
-      const result = applyRippleDelete(clips, [freeTrack], ['c1', 'c2']);
-      expect(result).toHaveLength(1);
-      // c3 shifts left by 40: 80 - 40 = 40
-      expect(result[0].id).toBe('c3');
-      expect(result[0].startFrames).toBe(40);
-    });
-
-    it('deletes and re-indexes on magnetic track', () => {
-      const clips = [
-        makeClip('c1', magneticTrack.id, null, 30, 0),
-        makeClip('c2', magneticTrack.id, null, 30, 1),
-        makeClip('c3', magneticTrack.id, null, 30, 2),
-      ];
-
-      const result = applyRippleDelete(clips, [magneticTrack], ['c2']);
-      expect(result.find((c) => c.id === 'c2')).toBeUndefined();
-      const remaining = result.sort((a, b) => a.orderIndex - b.orderIndex);
-      expect(remaining.map((c) => c.id)).toEqual(['c1', 'c3']);
-      expect(remaining.map((c) => c.orderIndex)).toEqual([0, 1]);
-    });
-  });
-
-  describe('calculateRippleShiftPreview', () => {
-    it('returns shift displacements for clips at or after dropFrame', () => {
-      const clips = [
-        makeClip('c1', freeTrack.id, 0, 30),
-        makeClip('c2', freeTrack.id, 50, 40),
-        makeClip('c3', freeTrack.id, 100, 30),
-      ];
-
-      // Drop at frame 40 with duration 25
-      const shifts = calculateRippleShiftPreview(clips, freeTrack, 'moving', 40, 25);
-      expect(shifts).toEqual({
-        c2: 25,
-        c3: 25,
+  describe('applyMultiTrackMagneticRipple - Insertion (Positive Delta)', () => {
+    it('pushes downstream clips rightward on sync-locked tracks while leaving sync-unlocked tracks fixed', () => {
+      // Insert 30 frames at frame 48
+      const res = applyMultiTrackMagneticRipple({
+        clips: sampleClips,
+        tracks,
+        rippleFrame: 48,
+        deltaFrames: 30,
+        primaryTrackId: 'track-v1',
+        respectSyncLock: true,
       });
+
+      // clipV1_A ends at 48 (<= 48) -> untouched at 0
+      const v1A = res.updatedClips.find((c) => c.id === 'clip-v1-a');
+      expect(v1A?.startFrames).toBe(0);
+
+      // clipV1_B starts at 48 (>= 48) -> pushed to 48 + 30 = 78
+      const v1B = res.updatedClips.find((c) => c.id === 'clip-v1-b');
+      expect(v1B?.startFrames).toBe(78);
+
+      // clipV2_Cutaway starts at 60 (>= 48) -> pushed to 60 + 30 = 90
+      const v2 = res.updatedClips.find((c) => c.id === 'clip-v2-cutaway');
+      expect(v2?.startFrames).toBe(90);
+
+      // clipA1_Voice starts at 48 (>= 48) -> pushed to 48 + 30 = 78
+      const a1 = res.updatedClips.find((c) => c.id === 'clip-a1-voice');
+      expect(a1?.startFrames).toBe(78);
+
+      // clipA2_MusicBed has syncLocked: false -> stays at start 0!
+      const music = res.updatedClips.find((c) => c.id === 'clip-a2-music');
+      expect(music?.startFrames).toBe(0);
+
+      expect(res.affectedClipCount).toBeGreaterThan(0);
+      expect(res.affectedTrackCount).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('rippleTrimClipMultiTrack', () => {
+    it('performs synchronized tail trim and shifts downstream clips on sync-locked tracks', () => {
+      // Shorten clipV1_A tail by 10 frames (from 48 to 38 frames)
+      const res = rippleTrimClipMultiTrack({
+        clips: sampleClips,
+        tracks,
+        clipId: 'clip-v1-a',
+        edge: 'tail',
+        deltaFrames: -10,
+        respectSyncLock: true,
+      });
+
+      const trimmedV1A = res.updatedClips.find((c) => c.id === 'clip-v1-a');
+      expect(trimmedV1A?.durationFrames).toBe(38);
+
+      // Downstream clipV1_B starts at 48 -> rippled to 38
+      const v1B = res.updatedClips.find((c) => c.id === 'clip-v1-b');
+      expect(v1B?.startFrames).toBe(38);
+
+      // Synced narration on A1 starts at 48 -> rippled to 38
+      const a1 = res.updatedClips.find((c) => c.id === 'clip-a1-voice');
+      expect(a1?.startFrames).toBe(38);
+
+      // Unlocked music bed stays fixed at 0
+      const music = res.updatedClips.find((c) => c.id === 'clip-a2-music');
+      expect(music?.startFrames).toBe(0);
     });
 
-    it('returns empty object if duration is <= 0', () => {
-      const clips = [makeClip('c1', freeTrack.id, 50, 30)];
-      expect(calculateRippleShiftPreview(clips, freeTrack, null, 40, 0)).toEqual({});
+    it('performs synchronized head trim and shifts downstream clips', () => {
+      // Trim 10 frames from head of clipV1_B (start moves from 48 to 58, duration from 96 to 86)
+      const res = rippleTrimClipMultiTrack({
+        clips: sampleClips,
+        tracks,
+        clipId: 'clip-v1-b',
+        edge: 'head',
+        deltaFrames: 10,
+        respectSyncLock: true,
+      });
+
+      const trimmedV1B = res.updatedClips.find((c) => c.id === 'clip-v1-b');
+      expect(trimmedV1B?.startFrames).toBe(48);
+      expect(trimmedV1B?.durationFrames).toBe(86);
+    });
+  });
+
+  describe('closeGapsSynchronized', () => {
+    it('closes gaps on primary track while preserving multi-track synchronization', () => {
+      // Create two clips with a 20-frame gap between them on V1
+      const clip1: SequenceClip = {
+        ...clipV1_A,
+        startFrames: 0,
+        durationFrames: 50,
+      };
+      const clip2: SequenceClip = {
+        ...clipV1_B,
+        startFrames: 70, // 20 frame gap between 50 and 70
+        durationFrames: 50,
+      };
+      const syncOverlay: SequenceClip = {
+        ...clipV2_Cutaway,
+        startFrames: 80,
+        durationFrames: 30,
+      };
+      const musicBed: SequenceClip = {
+        ...clipA2_MusicBed,
+        startFrames: 0,
+        durationFrames: 200,
+      };
+
+      const res = closeGapsSynchronized({
+        clips: [clip1, clip2, syncOverlay, musicBed],
+        tracks,
+        primaryTrackId: 'track-v1',
+        respectSyncLock: true,
+      });
+
+      expect(res.closedGapCount).toBe(1);
+
+      // clip2 should now be abutting clip1 at frame 50
+      const updatedClip2 = res.updatedClips.find((c) => c.id === clip2.id);
+      expect(updatedClip2?.startFrames).toBe(50);
+
+      // syncOverlay should be shifted left by 20 frames (from 80 to 60)
+      const updatedOverlay = res.updatedClips.find((c) => c.id === syncOverlay.id);
+      expect(updatedOverlay?.startFrames).toBe(60);
+
+      // music bed (syncLocked: false) remains fixed at 0
+      const updatedMusic = res.updatedClips.find((c) => c.id === musicBed.id);
+      expect(updatedMusic?.startFrames).toBe(0);
     });
   });
 });

@@ -368,6 +368,15 @@ export function TimelineTrackRow({
                 {kindGlyph(track, spineTrackId)}
               </span>
             </span>
+            {track.syncLocked === false && (
+              <IconButton
+                size="sm"
+                icon="link_off"
+                label={`Sync Lock is OFF for ${track.name} (Protected from ripples) — Click to re-enable`}
+                className="text-amber-400"
+                onClick={() => useSequenceStore.getState().setTrackSyncLock(track.id, true)}
+              />
+            )}
             <span className="min-w-1 flex-1" />
             {/* S181 — the eye and the speaker, split.
                 One icon used to mean both, because a video track had no audio
@@ -522,6 +531,29 @@ export function TimelineTrackRow({
                             </button>
                           ))
                         : null}
+                      {/* S169 — Track Sync Lock Toggle */}
+                      <span aria-hidden="true" className="my-0.5 h-px w-full bg-hairline" />
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={track.syncLocked !== false}
+                        className="flex w-full items-center justify-between rounded-[var(--radius-button)] px-2 py-1.5 text-left text-xs text-text-primary transition-colors duration-100 hover:bg-bg-hover"
+                        onClick={() => {
+                          setMenuPosition(null);
+                          useSequenceStore.getState().setTrackSyncLock(track.id, track.syncLocked === false ? true : false);
+                        }}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[14px]">
+                            {track.syncLocked !== false ? 'sync_lock' : 'link_off'}
+                          </span>
+                          <span>Sync Lock</span>
+                        </span>
+                        <span className={`text-[10px] uppercase font-mono px-1.5 py-0.5 rounded ${track.syncLocked !== false ? 'bg-accent-ai/20 text-accent-ai' : 'text-text-disabled'}`}>
+                          {track.syncLocked !== false ? 'On' : 'Off'}
+                        </span>
+                      </button>
+
                       {/* S16 — Track Height Presets */}
                       <span aria-hidden="true" className="my-0.5 h-px w-full bg-hairline" />
                       <span className="px-2 py-0.5 text-[10px] font-semibold text-text-disabled uppercase tracking-wider">

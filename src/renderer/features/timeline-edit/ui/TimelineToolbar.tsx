@@ -202,6 +202,8 @@ export function TimelineToolbar() {
   const setZoom = useSequenceStore((state) => state.setZoom);
   const snapEnabled = useSequenceStore((state) => state.snapEnabled);
   const setSnapEnabled = useSequenceStore((state) => state.setSnapEnabled);
+  const magneticTimelineEnabled = useSequenceStore((state) => state.magneticTimelineEnabled);
+  const toggleMagneticTimeline = useSequenceStore((state) => state.toggleMagneticTimeline);
   const requestFit = useSequenceStore((state) => state.requestFit);
   const undo = useSequenceStore((state) => state.undo);
   const redo = useSequenceStore((state) => state.redo);
@@ -592,6 +594,12 @@ export function TimelineToolbar() {
                 if (next !== state.document.clips) state.commitClips(next);
               },
             },
+            {
+              label: 'Close all gaps across sync-locked tracks (S169)',
+              onSelect: () => {
+                useSequenceStore.getState().closeAllGapsSync();
+              },
+            },
           ]}
         />
       </div>
@@ -744,6 +752,20 @@ export function TimelineToolbar() {
         aria-pressed={snapEnabled}
         size="sm"
         onClick={() => setSnapEnabled(!snapEnabled)}
+      />
+
+      {/* S169 — Multi-Track Magnetic Timeline Mode */}
+      <IconButton
+        icon="view_timeline"
+        label={
+          magneticTimelineEnabled
+            ? 'Magnetic Timeline Mode ON (Auto-ripples downstream clips on cuts & trims)'
+            : 'Magnetic Timeline Mode OFF (Click to enable magnetic auto-ripple)'
+        }
+        emphasis={magneticTimelineEnabled}
+        aria-pressed={magneticTimelineEnabled}
+        size="sm"
+        onClick={() => toggleMagneticTimeline()}
       />
 
       {/* Zoom controls */}

@@ -172,6 +172,12 @@ export interface SequenceTrack {
   role: TrackRole | null;
   /** S159 — ID of parent track folder if this track is grouped inside one. */
   folderId?: string | null;
+  /**
+   * S169 — Sync Lock (defaults to true if omitted/undefined).
+   * When true, multi-track magnetic ripple edits shift downstream clips on this track.
+   * When false, this track is immune to downstream rippling.
+   */
+  syncLocked?: boolean;
 }
 
 /**
