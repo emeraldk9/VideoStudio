@@ -40,18 +40,20 @@ describe('End-to-End FFmpeg Render Engine Full-Filter Synthesis (Milestone S66)'
     it('returns empty string when effects are undefined or neutral', () => {
       expect(buildAudioFilterChain(undefined)).toBe('');
       expect(buildAudioFilterChain({})).toBe('');
-      expect(buildAudioFilterChain({ equalizer: { enabled: false, low: { frequencyHz: 100, gainDb: 0 }, mid: { frequencyHz: 2500, gainDb: 0, q: 1 }, high: { frequencyHz: 8000, gainDb: 0 } } })).toBe('');
+      expect(buildAudioFilterChain({ equalizer: { enabled: false, low: { frequencyHz: 100, gainDb: 0 }, lowMid: { frequencyHz: 250, gainDb: 0 }, highMid: { frequencyHz: 2500, gainDb: 0, q: 1 }, high: { frequencyHz: 8000, gainDb: 0 } } })).toBe('');
     });
 
-    it('synthesizes 3-band parametric equalizer filter', () => {
+    it('synthesizes 4-band parametric equalizer filter', () => {
       const equalizer: AudioEqualizerSettings = {
         enabled: true,
         low: { frequencyHz: 120, gainDb: 4.5 },
-        mid: { frequencyHz: 2400, gainDb: -2.0, q: 1.2 },
+        lowMid: { frequencyHz: 350, gainDb: 1.5, q: 1.0 },
+        highMid: { frequencyHz: 2400, gainDb: -2.0, q: 1.2 },
         high: { frequencyHz: 9000, gainDb: 3.0 },
       };
       const chain = buildAudioFilterChain({ equalizer });
       expect(chain).toContain('equalizer=f=120:t=s:w=1:g=4.5');
+      expect(chain).toContain('equalizer=f=350:t=q:w=1.00:g=1.5');
       expect(chain).toContain('equalizer=f=2400:t=q:w=1.20:g=-2.0');
       expect(chain).toContain('equalizer=f=9000:t=s:w=1:g=3.0');
     });
@@ -178,7 +180,8 @@ describe('End-to-End FFmpeg Render Engine Full-Filter Synthesis (Milestone S66)'
         equalizer: {
           enabled: true,
           low: { frequencyHz: 100, gainDb: 2 },
-          mid: { frequencyHz: 2500, gainDb: 0, q: 1 },
+          lowMid: { frequencyHz: 250, gainDb: 0 },
+          highMid: { frequencyHz: 2500, gainDb: 0, q: 1 },
           high: { frequencyHz: 8000, gainDb: 4 },
         },
         compressor: {

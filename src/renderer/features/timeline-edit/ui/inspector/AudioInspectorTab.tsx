@@ -6,6 +6,8 @@ import {
   valueAtFrame,
   AUDIO_EQ_PRESETS,
   DEFAULT_AUDIO_EQ_SETTINGS,
+  resolveEqBands,
+  EQ_GAIN_MAX,
   sampleEqCurvePoints,
   type AudioEqPresetId,
   type AudioEqualizerSettings,
@@ -307,7 +309,9 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
       {currentTab === 'audio' && carriesSound ? (
         <Section title="Equalizer (EQ)">
           {(() => {
-            const eq = clip.effects?.equalizer ?? DEFAULT_AUDIO_EQ_SETTINGS;
+            const rawEq = clip.effects?.equalizer ?? DEFAULT_AUDIO_EQ_SETTINGS;
+            const resolved = resolveEqBands(rawEq);
+            const eq: AudioEqualizerSettings = { enabled: rawEq.enabled, ...resolved };
             const patchEq = (patch: Partial<AudioEqualizerSettings>) => {
               patchClip(clip.id, {
                 effects: {
@@ -402,15 +406,15 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
                   </svg>
                 </div>
 
-                {/* 3 Band Sliders */}
+                {/* 4 Band Sliders */}
                 <div className="flex flex-col gap-2 pt-1 font-mono text-xs">
                   {/* Low */}
                   <label className="flex items-center gap-2 text-text-secondary text-[11px]">
                     <span className="w-14 shrink-0 font-bold text-emerald-400">Low (Bass)</span>
                     <input
                       type="range"
-                      min={-15}
-                      max={15}
+                      min={-EQ_GAIN_MAX}
+                      max={EQ_GAIN_MAX}
                       step={0.5}
                       value={eq.low.gainDb}
                       disabled={!eq.enabled}
@@ -426,25 +430,47 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
                     </span>
                   </label>
 
-                  {/* Mid */}
+                  {/* Low-Mid */}
                   <label className="flex items-center gap-2 text-text-secondary text-[11px]">
-                    <span className="w-14 shrink-0 font-bold text-amber-400">Mid (Voice)</span>
+                    <span className="w-14 shrink-0 font-bold text-amber-400">Lo-Mid</span>
                     <input
                       type="range"
-                      min={-15}
-                      max={15}
+                      min={-EQ_GAIN_MAX}
+                      max={EQ_GAIN_MAX}
                       step={0.5}
-                      value={eq.mid.gainDb}
+                      value={eq.lowMid.gainDb}
                       disabled={!eq.enabled}
                       onChange={(e) =>
                         patchEq({
-                          mid: { ...eq.mid, gainDb: Number(e.target.value) },
+                          lowMid: { ...eq.lowMid, gainDb: Number(e.target.value) },
                         })
                       }
                       className="flex-1 accent-amber-400 h-1.5 cursor-pointer disabled:opacity-50"
                     />
                     <span className="w-12 text-right text-text-primary">
-                      {eq.mid.gainDb > 0 ? `+${eq.mid.gainDb.toFixed(1)}` : eq.mid.gainDb.toFixed(1)}dB
+                      {eq.lowMid.gainDb > 0 ? `+${eq.lowMid.gainDb.toFixed(1)}` : eq.lowMid.gainDb.toFixed(1)}dB
+                    </span>
+                  </label>
+
+                  {/* High-Mid */}
+                  <label className="flex items-center gap-2 text-text-secondary text-[11px]">
+                    <span className="w-14 shrink-0 font-bold text-rose-400">Hi-Mid</span>
+                    <input
+                      type="range"
+                      min={-EQ_GAIN_MAX}
+                      max={EQ_GAIN_MAX}
+                      step={0.5}
+                      value={eq.highMid.gainDb}
+                      disabled={!eq.enabled}
+                      onChange={(e) =>
+                        patchEq({
+                          highMid: { ...eq.highMid, gainDb: Number(e.target.value) },
+                        })
+                      }
+                      className="flex-1 accent-rose-400 h-1.5 cursor-pointer disabled:opacity-50"
+                    />
+                    <span className="w-12 text-right text-text-primary">
+                      {eq.highMid.gainDb > 0 ? `+${eq.highMid.gainDb.toFixed(1)}` : eq.highMid.gainDb.toFixed(1)}dB
                     </span>
                   </label>
 
@@ -453,8 +479,8 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
                     <span className="w-14 shrink-0 font-bold text-cyan-400">High (Air)</span>
                     <input
                       type="range"
-                      min={-15}
-                      max={15}
+                      min={-EQ_GAIN_MAX}
+                      max={EQ_GAIN_MAX}
                       step={0.5}
                       value={eq.high.gainDb}
                       disabled={!eq.enabled}

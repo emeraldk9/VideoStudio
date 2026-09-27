@@ -250,7 +250,7 @@ export interface ClipEffects {
   text?: TextContent;
   /** Overlay-track clips only — the spine is the base and has nowhere to move. */
   transform?: ClipTransform;
-  /** S35 — 3-Band Parametric Audio Equalizer (Bass, Mid, Treble) */
+  /** S35 / S166 — 4-Band Parametric Audio Equalizer */
   equalizer?: AudioEqualizerSettings;
   /** S36 — Dynamic Range Audio Compressor & Peak Limiter */
   compressor?: AudioCompressorSettings;
@@ -1470,25 +1470,40 @@ export const clipEffectsSchema = z
         enabled: z.boolean(),
         low: z
           .object({
-            gainDb: boundedNumber(-15, 15),
+            gainDb: boundedNumber(-18, 18),
             frequencyHz: boundedNumber(20, 20000),
             q: boundedNumber(0.1, 10).optional(),
           })
           .strict(),
-        mid: z
+        lowMid: z
           .object({
-            gainDb: boundedNumber(-15, 15),
+            gainDb: boundedNumber(-18, 18),
+            frequencyHz: boundedNumber(20, 20000),
+            q: boundedNumber(0.1, 10).optional(),
+          })
+          .strict(),
+        highMid: z
+          .object({
+            gainDb: boundedNumber(-18, 18),
             frequencyHz: boundedNumber(20, 20000),
             q: boundedNumber(0.1, 10).optional(),
           })
           .strict(),
         high: z
           .object({
-            gainDb: boundedNumber(-15, 15),
+            gainDb: boundedNumber(-18, 18),
             frequencyHz: boundedNumber(20, 20000),
             q: boundedNumber(0.1, 10).optional(),
           })
           .strict(),
+        mid: z
+          .object({
+            gainDb: boundedNumber(-18, 18),
+            frequencyHz: boundedNumber(20, 20000),
+            q: boundedNumber(0.1, 10).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

@@ -8,7 +8,9 @@ import {
   updatePeakHold,
   AUDIO_EQ_PRESETS,
   DEFAULT_AUDIO_EQ_SETTINGS,
-  sampleEqCurvePoints,
+  resolveEqBands,
+  isNeutralEq,
+  EQ_GAIN_MAX,
   COMPRESSOR_PRESETS,
   DEFAULT_COMPRESSOR_SETTINGS,
   sampleCompressorCurvePoints,
@@ -33,6 +35,7 @@ import { Button } from '../../../shared/ui/Button';
 import { Switch } from '../../../shared/ui/Switch';
 import { useAudioMixerStore } from '../model/audioMixerStore';
 import { LoudnessRadarModal } from './LoudnessRadarModal';
+import { ParametricEqEditor } from './ParametricEqEditor';
 
 export function AudioMixerDock() {
   const isOpen = useAudioMixerStore((state) => state.isOpen);
@@ -129,15 +132,20 @@ function AudioMixerDockContent() {
     [activeBusEqId],
   );
   const currentEq: AudioEqualizerSettings = useMemo(() => {
-    if (activeTrack) return trackEq[activeTrack.id] ?? DEFAULT_AUDIO_EQ_SETTINGS;
-    if (activeBusForEq) return submixBuses[activeBusForEq.id]?.eq ?? { ...DEFAULT_AUDIO_EQ_SETTINGS, enabled: false };
-    return DEFAULT_AUDIO_EQ_SETTINGS;
+    const raw = activeTrack
+      ? (trackEq[activeTrack.id] ?? DEFAULT_AUDIO_EQ_SETTINGS)
+      : activeBusForEq
+      ? (submixBuses[activeBusForEq.id]?.eq ?? { ...DEFAULT_AUDIO_EQ_SETTINGS, enabled: false })
+      : DEFAULT_AUDIO_EQ_SETTINGS;
+    const resolved = resolveEqBands(raw);
+    return {
+      enabled: raw.enabled,
+      low: resolved.low,
+      lowMid: resolved.lowMid,
+      highMid: resolved.highMid,
+      high: resolved.high,
+    };
   }, [activeTrack, trackEq, activeBusForEq, submixBuses]);
-
-  const eqCurve = useMemo(
-    () => sampleEqCurvePoints(currentEq, 340, 80, 64, 18),
-    [currentEq],
-  );
 
   // S36 & S63 — Active Track, Submix Bus, or Master Dynamics
   const activeDynTrack = useMemo(
@@ -549,73 +557,31 @@ function AudioMixerDockContent() {
             </div>
           </div>
 
-          {/* EQ Body: SVG Frequency Response Curve + 3 Band Sliders */}
-          <div className="flex items-center gap-4">
-            {/* Live Frequency Response Curve */}
-            <div className="relative flex flex-col items-center">
-              <svg
-                width="340"
-                height="80"
-                viewBox="0 0 340 80"
-                className="rounded border border-hairline bg-black/80 overflow-hidden"
-              >
-                <defs>
-                  <linearGradient id="eqCurveGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--accent-ai, #6366f1)" stopOpacity="0.4" />
-                    <stop offset="100%" stopColor="var(--accent-ai, #6366f1)" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
+          {/* EQ Body: Interactive Parametric EQ Visualizer + 4-Band Sliders */}
+          <div className="flex flex-col gap-3">
+            {/* S166 — Interactive 4-Band Parametric EQ Visualizer */}
+            <ParametricEqEditor
+              settings={currentEq}
+              onChange={(patch) => {
+                if (activeTrack) setTrackEq(activeTrack.id, patch);
+                else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
+              }}
+            />
 
-                {/* Grid Lines */}
-                {/* 0 dB Center line */}
-                <line x1="0" y1="40" x2="340" y2="40" stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" />
-                {/* +6 dB line */}
-                <line x1="0" y1="24" x2="340" y2="24" stroke="rgba(255,255,255,0.08)" />
-                {/* -6 dB line */}
-                <line x1="0" y1="56" x2="340" y2="56" stroke="rgba(255,255,255,0.08)" />
-
-                {/* Frequency Grid Lines (100Hz, 1kHz, 10kHz) */}
-                <line x1="79" y1="0" x2="79" y2="80" stroke="rgba(255,255,255,0.08)" />
-                <line x1="193" y1="0" x2="193" y2="80" stroke="rgba(255,255,255,0.08)" />
-                <line x1="306" y1="0" x2="306" y2="80" stroke="rgba(255,255,255,0.08)" />
-
-                <text x="79" y="76" fill="#64748b" fontSize="8" fontFamily="monospace" textAnchor="middle">100Hz</text>
-                <text x="193" y="76" fill="#64748b" fontSize="8" fontFamily="monospace" textAnchor="middle">1kHz</text>
-                <text x="306" y="76" fill="#64748b" fontSize="8" fontFamily="monospace" textAnchor="middle">10kHz</text>
-
-                {/* Area under curve */}
-                {currentEq.enabled && (
-                  <path
-                    d={`${eqCurve.pathData} L 340 80 L 0 80 Z`}
-                    fill="url(#eqCurveGrad)"
-                  />
-                )}
-
-                {/* Main Curve */}
-                <path
-                  d={eqCurve.pathData}
-                  fill="none"
-                  stroke={currentEq.enabled ? 'var(--accent-ai, #6366f1)' : '#64748b'}
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-
-            {/* 3-Band Control Sliders */}
-            <div className="flex items-center gap-3 flex-1 font-mono text-[11px]">
-              {/* Low Shelf (Bass) */}
+            {/* 4-Band Control Sliders */}
+            <div className="flex items-center gap-2 font-mono text-[11px]">
+              {/* Low Shelf */}
               <div className="flex flex-col gap-1 p-1.5 rounded bg-bg-app border border-hairline flex-1">
                 <div className="flex items-center justify-between text-[10px]">
-                  <span className="font-bold text-emerald-400">LOW (Bass)</span>
+                  <span className="font-bold text-emerald-400">LOW</span>
                   <span className="text-text-primary font-bold">
-                    {currentEq.low.gainDb > 0 ? `+${currentEq.low.gainDb.toFixed(1)}` : currentEq.low.gainDb.toFixed(1)} dB
+                    {currentEq.low.gainDb > 0 ? `+${currentEq.low.gainDb.toFixed(1)}` : currentEq.low.gainDb.toFixed(1)}
                   </span>
                 </div>
                 <input
                   type="range"
-                  min={-15}
-                  max={15}
+                  min={-EQ_GAIN_MAX}
+                  max={EQ_GAIN_MAX}
                   step={0.5}
                   value={currentEq.low.gainDb}
                   onChange={(e) => {
@@ -623,7 +589,7 @@ function AudioMixerDockContent() {
                     if (activeTrack) setTrackEq(activeTrack.id, patch);
                     else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
                   }}
-                  className="w-full accent-emerald-400 h-1.5 cursor-pointer"
+                  className="w-full accent-emerald-400 h-1 cursor-pointer"
                   title="Low shelf gain — double-click to reset"
                   onDoubleClick={() => {
                     const patch = { low: { ...currentEq.low, gainDb: 0 } };
@@ -637,51 +603,84 @@ function AudioMixerDockContent() {
                 </div>
               </div>
 
-              {/* Mid Bell */}
+              {/* Low-Mid Bell */}
               <div className="flex flex-col gap-1 p-1.5 rounded bg-bg-app border border-hairline flex-1">
                 <div className="flex items-center justify-between text-[10px]">
-                  <span className="font-bold text-amber-400">MID (Voice)</span>
+                  <span className="font-bold text-amber-400">LO-MID</span>
                   <span className="text-text-primary font-bold">
-                    {currentEq.mid.gainDb > 0 ? `+${currentEq.mid.gainDb.toFixed(1)}` : currentEq.mid.gainDb.toFixed(1)} dB
+                    {currentEq.lowMid.gainDb > 0 ? `+${currentEq.lowMid.gainDb.toFixed(1)}` : currentEq.lowMid.gainDb.toFixed(1)}
                   </span>
                 </div>
                 <input
                   type="range"
-                  min={-15}
-                  max={15}
+                  min={-EQ_GAIN_MAX}
+                  max={EQ_GAIN_MAX}
                   step={0.5}
-                  value={currentEq.mid.gainDb}
+                  value={currentEq.lowMid.gainDb}
                   onChange={(e) => {
-                    const patch = { mid: { ...currentEq.mid, gainDb: Number(e.target.value) } };
+                    const patch = { lowMid: { ...currentEq.lowMid, gainDb: Number(e.target.value) } };
                     if (activeTrack) setTrackEq(activeTrack.id, patch);
                     else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
                   }}
-                  className="w-full accent-amber-400 h-1.5 cursor-pointer"
-                  title="Mid peaking gain — double-click to reset"
+                  className="w-full accent-amber-400 h-1 cursor-pointer"
+                  title="Low-mid peaking gain — double-click to reset"
                   onDoubleClick={() => {
-                    const patch = { mid: { ...currentEq.mid, gainDb: 0 } };
+                    const patch = { lowMid: { ...currentEq.lowMid, gainDb: 0 } };
                     if (activeTrack) setTrackEq(activeTrack.id, patch);
                     else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
                   }}
                 />
                 <div className="flex items-center justify-between text-[9px] text-text-disabled">
-                  <span>Q {currentEq.mid.q?.toFixed(1) ?? '1.0'}</span>
-                  <span>{currentEq.mid.frequencyHz} Hz</span>
+                  <span>Q {currentEq.lowMid.q?.toFixed(1) ?? '1.0'}</span>
+                  <span>{currentEq.lowMid.frequencyHz} Hz</span>
                 </div>
               </div>
 
-              {/* High Shelf (Treble) */}
+              {/* High-Mid Bell */}
               <div className="flex flex-col gap-1 p-1.5 rounded bg-bg-app border border-hairline flex-1">
                 <div className="flex items-center justify-between text-[10px]">
-                  <span className="font-bold text-cyan-400">HIGH (Air)</span>
+                  <span className="font-bold text-rose-400">HI-MID</span>
                   <span className="text-text-primary font-bold">
-                    {currentEq.high.gainDb > 0 ? `+${currentEq.high.gainDb.toFixed(1)}` : currentEq.high.gainDb.toFixed(1)} dB
+                    {currentEq.highMid.gainDb > 0 ? `+${currentEq.highMid.gainDb.toFixed(1)}` : currentEq.highMid.gainDb.toFixed(1)}
                   </span>
                 </div>
                 <input
                   type="range"
-                  min={-15}
-                  max={15}
+                  min={-EQ_GAIN_MAX}
+                  max={EQ_GAIN_MAX}
+                  step={0.5}
+                  value={currentEq.highMid.gainDb}
+                  onChange={(e) => {
+                    const patch = { highMid: { ...currentEq.highMid, gainDb: Number(e.target.value) } };
+                    if (activeTrack) setTrackEq(activeTrack.id, patch);
+                    else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
+                  }}
+                  className="w-full accent-rose-400 h-1 cursor-pointer"
+                  title="High-mid peaking gain — double-click to reset"
+                  onDoubleClick={() => {
+                    const patch = { highMid: { ...currentEq.highMid, gainDb: 0 } };
+                    if (activeTrack) setTrackEq(activeTrack.id, patch);
+                    else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
+                  }}
+                />
+                <div className="flex items-center justify-between text-[9px] text-text-disabled">
+                  <span>Q {currentEq.highMid.q?.toFixed(1) ?? '1.0'}</span>
+                  <span>{currentEq.highMid.frequencyHz >= 1000 ? `${(currentEq.highMid.frequencyHz / 1000).toFixed(1)}k` : currentEq.highMid.frequencyHz} Hz</span>
+                </div>
+              </div>
+
+              {/* High Shelf */}
+              <div className="flex flex-col gap-1 p-1.5 rounded bg-bg-app border border-hairline flex-1">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="font-bold text-cyan-400">HIGH</span>
+                  <span className="text-text-primary font-bold">
+                    {currentEq.high.gainDb > 0 ? `+${currentEq.high.gainDb.toFixed(1)}` : currentEq.high.gainDb.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-EQ_GAIN_MAX}
+                  max={EQ_GAIN_MAX}
                   step={0.5}
                   value={currentEq.high.gainDb}
                   onChange={(e) => {
@@ -689,7 +688,7 @@ function AudioMixerDockContent() {
                     if (activeTrack) setTrackEq(activeTrack.id, patch);
                     else if (activeBusForEq) setBusEq(activeBusForEq.id, patch);
                   }}
-                  className="w-full accent-cyan-400 h-1.5 cursor-pointer"
+                  className="w-full accent-cyan-400 h-1 cursor-pointer"
                   title="High shelf gain — double-click to reset"
                   onDoubleClick={() => {
                     const patch = { high: { ...currentEq.high, gainDb: 0 } };
@@ -1217,14 +1216,11 @@ function AudioMixerDockContent() {
                   className={`rounded py-0.5 text-center font-mono text-[9px] font-bold transition-all ${
                     activeEqTrackId === track.id
                       ? 'bg-accent-ai text-text-on-accent shadow-xs'
-                      : trackEq[track.id]?.enabled &&
-                          (trackEq[track.id].low.gainDb !== 0 ||
-                            trackEq[track.id].mid.gainDb !== 0 ||
-                            trackEq[track.id].high.gainDb !== 0)
+                      : trackEq[track.id]?.enabled && !isNeutralEq(trackEq[track.id])
                         ? 'border border-accent-ai/50 bg-accent-ai/10 text-accent-ai'
                         : 'border border-hairline bg-bg-app text-text-disabled hover:text-text-primary'
                   }`}
-                  title="Open 3-Band Parametric Equalizer"
+                  title="Open 4-Band Parametric Equalizer"
                 >
                   EQ
                 </button>

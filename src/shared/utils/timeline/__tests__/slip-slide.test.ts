@@ -214,9 +214,9 @@ describe('S19 Clip Slip & Slide Editorial Trimming', () => {
       const slipMeta = TIMELINE_ACTIONS.find((a: any) => a.id === 'tool_slip');
       const slideMeta = TIMELINE_ACTIONS.find((a: any) => a.id === 'tool_slide');
       expect(slipMeta).toBeDefined();
-      expect(slipMeta.category).toBe('tools');
+      expect(slipMeta!.category).toBe('tools');
       expect(slideMeta).toBeDefined();
-      expect(slideMeta.category).toBe('tools');
+      expect(slideMeta!.category).toBe('tools');
 
       // VideoStudio default
       expect(ALL_NLE_PROFILES.videostudio.bindings.tool_slip).toEqual([{ key: 'y' }]);
