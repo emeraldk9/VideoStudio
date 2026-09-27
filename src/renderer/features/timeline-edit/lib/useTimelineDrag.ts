@@ -74,6 +74,8 @@ export interface TimelineDragOptions {
    * states.
    */
   snapEnabled?: boolean;
+  /** S170 — smart beat snapping mode: prioritizes musical downbeats and rhythmic transients */
+  snapToBeats?: boolean;
   onCommit: (state: DragState) => void;
   onScrub?: (frame: number) => void;
   /**
@@ -151,7 +153,9 @@ export function useTimelineDrag(options: TimelineDragOptions) {
         frame: number,
       ): { frame: number; target: number | null; label?: string } => {
         if (options.metaTargets && options.metaTargets.length > 0) {
-          const metaRes = snapFrameWithMeta(frame, options.metaTargets, tolerance);
+          const metaRes = snapFrameWithMeta(frame, options.metaTargets, tolerance, {
+            snapToBeats: options.snapToBeats,
+          });
           if (metaRes.didSnap && metaRes.target) {
             return {
               frame: metaRes.snappedFrame,

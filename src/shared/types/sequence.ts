@@ -100,6 +100,10 @@ export const DEFAULT_CHIP_TRACK_HEIGHT_PX = 28;
 export const MARKER_COLORS = ['ai', 'success', 'warning', 'info'] as const;
 export type MarkerColor = (typeof MARKER_COLORS)[number];
 
+/** S170 — semantic categories of timeline markers */
+export const MARKER_KINDS = ['standard', 'beat', 'downbeat', 'scene_cut'] as const;
+export type MarkerKind = (typeof MARKER_KINDS)[number];
+
 /**
  * Beta S160 — a named moment in the cut (`M` in every NLE). Sequence-scoped,
  * deliberately not clip-scoped: a note about *time* must not move when a clip
@@ -119,6 +123,8 @@ export interface SequenceMarker {
   locked: boolean;
   /** Commentary, review feedback, or editorial cues attached to this frame marker. */
   notes?: string;
+  /** S170 — semantic kind: standard edit cue, musical beat, downbeat (bar 1), or visual scene cut. */
+  markerKind?: MarkerKind;
 }
 
 /** S233 — half-width of a locked marker's guarded window, in frames. The cue sheet's ±8f rule. */

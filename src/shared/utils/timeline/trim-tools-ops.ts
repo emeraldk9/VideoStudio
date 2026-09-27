@@ -11,6 +11,9 @@ export type SnapTargetType =
   | 'clip_tail'
   | 'playhead'
   | 'marker'
+  | 'beat'
+  | 'downbeat'
+  | 'scene_cut'
   | 'in_point'
   | 'out_point'
   | 'sequence_end';
@@ -71,10 +74,34 @@ export function buildSnapTargetsWithMeta(input: {
     }
   }
 
-  // 2. Timeline Markers
+  // 2. Timeline Markers (Standard, Beats, Downbeats, Scene Cuts)
   for (const marker of markers) {
-    const name = marker.name ? `Marker: ${marker.name}` : 'Marker';
-    addEntry(marker.frame, 'marker', name);
+    let type: SnapTargetType = 'marker';
+    let label = marker.name ? `Marker: ${marker.name}` : 'Marker';
+
+    if (
+      marker.markerKind === 'downbeat' ||
+      marker.name.toLowerCase().startsWith('downbeat') ||
+      marker.name.toLowerCase().includes('.1')
+    ) {
+      type = 'downbeat';
+      label = marker.name.toLowerCase().startsWith('downbeat') ? marker.name : `Downbeat: ${marker.name}`;
+    } else if (
+      marker.markerKind === 'beat' ||
+      marker.name.toLowerCase().startsWith('beat')
+    ) {
+      type = 'beat';
+      label = marker.name.toLowerCase().startsWith('beat') ? marker.name : `Beat: ${marker.name}`;
+    } else if (
+      marker.markerKind === 'scene_cut' ||
+      marker.name.toLowerCase().startsWith('cut') ||
+      marker.name.toLowerCase().startsWith('scene cut')
+    ) {
+      type = 'scene_cut';
+      label = marker.name.toLowerCase().startsWith('scene cut') ? marker.name : `Scene Cut: ${marker.name}`;
+    }
+
+    addEntry(marker.frame, type, label);
   }
 
   // 3. Work Area In and Out points
@@ -100,14 +127,36 @@ export function buildSnapTargetsWithMeta(input: {
 
 /**
  * Snaps a target frame to the nearest snap target entry within tolerance, returning metadata.
+ * Supports smart snapToBeats prioritization.
  */
 export function snapFrameWithMeta(
   frame: number,
   targets: readonly SnapTargetEntry[],
   toleranceFrames: number,
+  options?: { snapToBeats?: boolean },
 ): SnapMetaResult {
   let bestTarget: SnapTargetEntry | undefined = undefined;
   let bestDistance = toleranceFrames;
+
+  // S170: If snapToBeats is enabled, prioritize downbeats and rhythmic beats
+  if (options?.snapToBeats) {
+    for (const target of targets) {
+      if (target.type === 'downbeat' || target.type === 'beat') {
+        const distance = Math.abs(target.frame - frame);
+        if (distance <= bestDistance) {
+          bestTarget = target;
+          bestDistance = distance;
+        }
+      }
+    }
+    if (bestTarget) {
+      return {
+        snappedFrame: bestTarget.frame,
+        didSnap: true,
+        target: bestTarget,
+      };
+    }
+  }
 
   for (const target of targets) {
     const distance = Math.abs(target.frame - frame);

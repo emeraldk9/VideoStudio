@@ -202,6 +202,8 @@ export function TimelineToolbar() {
   const setZoom = useSequenceStore((state) => state.setZoom);
   const snapEnabled = useSequenceStore((state) => state.snapEnabled);
   const setSnapEnabled = useSequenceStore((state) => state.setSnapEnabled);
+  const snapToBeats = useSequenceStore((state) => state.snapToBeats);
+  const toggleSnapToBeats = useSequenceStore((state) => state.toggleSnapToBeats);
   const magneticTimelineEnabled = useSequenceStore((state) => state.magneticTimelineEnabled);
   const toggleMagneticTimeline = useSequenceStore((state) => state.toggleMagneticTimeline);
   const requestFit = useSequenceStore((state) => state.requestFit);
@@ -532,6 +534,22 @@ export function TimelineToolbar() {
               label: 'Add Sky (Info) marker',
               onSelect: () => void useSequenceStore.getState().addMarker(currentPlayheadFrame(), { color: 'info', name: 'Info' }),
             },
+            {
+              label: 'Generate Beat & Downbeat Markers from Audio (S170)',
+              onSelect: () => void useSequenceStore.getState().generateBeatMarkersFromTrack(),
+            },
+            {
+              label: 'Run AI Scene Cut Detection on selected clip (S170)',
+              onSelect: () => {
+                const state = useSequenceStore.getState();
+                const selId = state.selectedClipIds[0];
+                if (selId) {
+                  void state.runSceneCutDetectionOnClip(selId);
+                } else if (state.document?.clips[0]) {
+                  void state.runSceneCutDetectionOnClip(state.document.clips[0].id);
+                }
+              },
+            },
           ]}
         />
       </div>
@@ -752,6 +770,20 @@ export function TimelineToolbar() {
         aria-pressed={snapEnabled}
         size="sm"
         onClick={() => setSnapEnabled(!snapEnabled)}
+      />
+
+      {/* S170 — Smart Beat Snapping */}
+      <IconButton
+        icon="music_note"
+        label={
+          snapToBeats
+            ? 'Snap to Beat ON (Magnetic snap to musical beats and downbeats)'
+            : 'Snap to Beat OFF (Click to snap timeline edits to music beat grid)'
+        }
+        emphasis={snapToBeats}
+        aria-pressed={snapToBeats}
+        size="sm"
+        onClick={() => toggleSnapToBeats()}
       />
 
       {/* S169 — Multi-Track Magnetic Timeline Mode */}

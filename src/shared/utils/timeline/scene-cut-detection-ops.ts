@@ -1,3 +1,6 @@
+import type { SequenceClip, SequenceMarker } from '../../types/sequence';
+import { autoCutClipsOnBeats } from './beat-detection-ops';
+
 export type SceneCutAction = 'split_clips' | 'create_markers' | 'both';
 
 export interface SceneCutDetectionSettings {
@@ -152,4 +155,77 @@ export function buildFfmpegSceneDetectionCommand(
 ): string {
   const safeThreshold = Math.max(0.05, Math.min(0.95, threshold)).toFixed(2);
   return `ffmpeg -i "${inputPath}" -filter:v "select='gt(scene,${safeThreshold})',showinfo" -f null -`;
+}
+
+/**
+ * Generates an array of timeline SequenceMarkers from detected scene cut points.
+ */
+export function generateSceneCutMarkers(
+  sequenceId: string,
+  cuts: readonly DetectedCutPoint[],
+  clipStartFrame = 0,
+): SequenceMarker[] {
+  return cuts.map((cut, index) => {
+    const frame = clipStartFrame + cut.frame;
+    const typeLabel = cut.type === 'hard_cut' ? 'Hard' : 'Dissolve';
+    return {
+      id: `marker_scenecut_${frame}_${index}`,
+      sequenceId,
+      frame,
+      name: `Scene Cut ${index + 1} (${typeLabel})`,
+      color: 'ai',
+      markerKind: 'scene_cut',
+      locked: false,
+      notes: `AI Scene Cut #${index + 1}: ${typeLabel} detected with ${(cut.confidence * 100).toFixed(0)}% confidence at frame ${frame}`,
+    };
+  });
+}
+
+/**
+ * Applies scene cut detection to a clip, returning split sub-clips and/or scene cut markers.
+ */
+export function applySceneCutDetectionToClip(params: {
+  clips: readonly SequenceClip[];
+  targetClipId: string;
+  frameDeltas?: number[];
+  settings?: SceneCutDetectionSettings;
+}): {
+  updatedClips: SequenceClip[];
+  cuts: DetectedCutPoint[];
+  markers: SequenceMarker[];
+} {
+  const {
+    clips,
+    targetClipId,
+    frameDeltas = [],
+    settings = DEFAULT_SCENE_CUT_DETECTION_SETTINGS,
+  } = params;
+
+  const targetClip = clips.find((c) => c.id === targetClipId);
+  if (!targetClip) {
+    return { updatedClips: [...clips], cuts: [], markers: [] };
+  }
+
+  const cuts = detectSceneCuts(frameDeltas, settings);
+  if (cuts.length === 0) {
+    return { updatedClips: [...clips], cuts: [], markers: [] };
+  }
+
+  const clipStart = targetClip.startFrames ?? 0;
+  const markers = generateSceneCutMarkers(targetClip.sequenceId, cuts, clipStart);
+
+  if (settings.action === 'create_markers') {
+    return { updatedClips: [...clips], cuts, markers };
+  }
+
+  // Splitting clips at detected cut points
+  const cutFrames = cuts.map((c) => clipStart + c.frame);
+  const updatedClips = autoCutClipsOnBeats(
+    clips,
+    cutFrames,
+    targetClip.trackId,
+    Math.max(1, settings.minShotDurationFrames),
+  );
+
+  return { updatedClips, cuts, markers };
 }

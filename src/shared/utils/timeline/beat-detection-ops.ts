@@ -47,6 +47,8 @@ export interface BpmEstimationResult {
 export interface BeatMarkerOptions {
   bpm?: number;
   color?: MarkerColor;
+  downbeatColor?: MarkerColor;
+  highlightDownbeats?: boolean;
   prefix?: string;
   startFrame?: number;
   beatsPerMeasure?: number;
@@ -255,12 +257,16 @@ export function generateBeatGridMarkers(
   options?: BeatMarkerOptions,
 ): SequenceMarker[] {
   const color: MarkerColor = options?.color ?? 'ai';
+  const downbeatColor: MarkerColor =
+    options?.downbeatColor ?? (options?.highlightDownbeats ? 'warning' : color);
   const prefix = options?.prefix ?? 'Beat';
   const beatsPerMeasure = Math.max(1, options?.beatsPerMeasure ?? 4);
 
   return onsetFrames.map((frame, index) => {
     const measure = Math.floor(index / beatsPerMeasure) + 1;
     const beatInMeasure = (index % beatsPerMeasure) + 1;
+    const isDownbeat = beatInMeasure === 1;
+    const markerColor = isDownbeat ? downbeatColor : color;
     const label = `${prefix} ${measure}.${beatInMeasure}`;
 
     return {
@@ -268,9 +274,12 @@ export function generateBeatGridMarkers(
       sequenceId,
       frame,
       name: label,
-      color,
+      color: markerColor,
       locked: false,
-      notes: `Rhythmic beat onset #${index + 1} at frame ${frame}`,
+      markerKind: isDownbeat ? 'downbeat' : 'beat',
+      notes: isDownbeat
+        ? `Musical downbeat (Measure ${measure}) at frame ${frame}`
+        : `Rhythmic beat onset #${index + 1} at frame ${frame}`,
     };
   });
 }

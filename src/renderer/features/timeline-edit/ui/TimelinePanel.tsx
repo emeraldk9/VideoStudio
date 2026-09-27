@@ -214,6 +214,7 @@ export function TimelinePanel() {
   const fps = document?.sequence.fps ?? 24;
   const soloTrackIds = useSequenceStore((state) => state.soloTrackIds);
   const snapEnabled = useSequenceStore((state) => state.snapEnabled);
+  const snapToBeats = useSequenceStore((state) => state.snapToBeats);
   const markersForTargets = useSequenceStore((state) => state.markers);
   const inPointFrame = useSequenceStore((state) => state.inPointFrame);
   const outPointFrame = useSequenceStore((state) => state.outPointFrame);
@@ -622,6 +623,7 @@ export function TimelinePanel() {
     scrubTargets: staticTargets,
     metaTargets: metaSnapTargets,
     snapEnabled,
+    snapToBeats,
     onCommit: applyDrag,
     onScrub: handleScrub,
     onDelta: handleDragDelta,
@@ -2386,7 +2388,15 @@ export function TimelinePanel() {
                       void removeMarker(marker.id);
                     }}
                   >
-                    {marker.locked ? 'lock' : 'bookmark'}
+                    {marker.locked
+                      ? 'lock'
+                      : marker.markerKind === 'downbeat'
+                        ? 'radio_button_checked'
+                        : marker.markerKind === 'beat'
+                          ? 'fiber_manual_record'
+                          : marker.markerKind === 'scene_cut'
+                            ? 'movie_filter'
+                            : 'bookmark'}
                     {marker.notes ? (
                       <span
                         className="absolute -top-1 -right-1 block h-2 w-2 rounded-full bg-text-primary ring-2 ring-bg-canvas"
