@@ -546,6 +546,34 @@ export function TimelinePanel() {
     [fps, pixelsPerSecond],
   );
 
+  const scrubRafRef = useRef<number | null>(null);
+  const pendingScrubFrameRef = useRef<number | null>(null);
+
+  const handleScrub = useCallback(
+    (frame: number) => {
+      // 1. Direct imperative write to --playhead-x moves the ruler cap and lane playhead needle instantly
+      sizerRef.current?.style.setProperty(
+        '--playhead-x',
+        `${frame * (pixelsPerSecond / fps)}px`,
+      );
+
+      // 2. Publish to transportClock for isolated HUD timecode updates
+      transportClock.publish(frame);
+
+      // 3. Coalesce store update to display refresh rate (rAF) to eliminate React render thrashing
+      pendingScrubFrameRef.current = frame;
+      if (scrubRafRef.current === null) {
+        scrubRafRef.current = requestAnimationFrame(() => {
+          scrubRafRef.current = null;
+          if (pendingScrubFrameRef.current !== null) {
+            setPlayhead(pendingScrubFrameRef.current);
+          }
+        });
+      }
+    },
+    [fps, pixelsPerSecond, setPlayhead],
+  );
+
   const { drag, begin, move, end } = useTimelineDrag({
     pixelsPerSecond,
     fps,
@@ -554,9 +582,21 @@ export function TimelinePanel() {
     metaTargets: metaSnapTargets,
     snapEnabled,
     onCommit: applyDrag,
-    onScrub: setPlayhead,
+    onScrub: handleScrub,
     onDelta: handleDragDelta,
   });
+
+  // Flush any pending scrub frame immediately upon drag release
+  useEffect(() => {
+    if (!drag && pendingScrubFrameRef.current !== null) {
+      if (scrubRafRef.current !== null) {
+        cancelAnimationFrame(scrubRafRef.current);
+        scrubRafRef.current = null;
+      }
+      setPlayhead(pendingScrubFrameRef.current);
+      pendingScrubFrameRef.current = null;
+    }
+  }, [drag, setPlayhead]);
 
   // Neither live channel may survive its gesture — the line hides and the
   // offset zeroes the moment the drag ends, however it ends.
