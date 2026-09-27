@@ -19,6 +19,8 @@ import {
   motionCssTransform,
   resolveClipMotion,
   resolveFilterValues,
+  isCompoundClip,
+  resolveActiveCompoundFrame,
   resolveWhiteboardDrawSeconds,
   resolveWhiteboardInSeconds,
   snapTargets,
@@ -802,10 +804,37 @@ export function TimelinePreview() {
     trackMixer,
   ]);
 
+  // S168 — Compound Clip frame & active children resolution
+  const activeCompoundFrame = useMemo(() => {
+    if (!current || !isCompoundClip(current.clip)) return null;
+    return resolveActiveCompoundFrame({
+      compoundClip: current.clip,
+      playheadFrame,
+      clipStartFrames: current.startFrames,
+    });
+  }, [current, playheadFrame]);
+
+  const compoundVisualClip = useMemo(() => {
+    if (!activeCompoundFrame || activeCompoundFrame.activeChildClips.length === 0) return null;
+    return (
+      activeCompoundFrame.activeChildClips.find(
+        (c) => (c.sourceKind === 'video' || c.sourceKind === 'still') && c.filePath,
+      ) ?? null
+    );
+  }, [activeCompoundFrame]);
+
   const stillUrl =
-    current?.clip.sourceKind === 'still' ? toMediaUrl(current.clip.filePath) : undefined;
+    current?.clip.sourceKind === 'still'
+      ? toMediaUrl(current.clip.filePath)
+      : compoundVisualClip?.sourceKind === 'still'
+      ? toMediaUrl(compoundVisualClip.filePath)
+      : undefined;
   const videoUrl =
-    current?.clip.sourceKind === 'video' ? toMediaUrl(current.clip.filePath) : undefined;
+    current?.clip.sourceKind === 'video'
+      ? toMediaUrl(current.clip.filePath)
+      : compoundVisualClip?.sourceKind === 'video'
+      ? toMediaUrl(compoundVisualClip.filePath)
+      : undefined;
 
   const [boxHeight, setBoxHeight] = useState(0);
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -1409,8 +1438,9 @@ export function TimelinePreview() {
       adjustments,
     });
 
+    const isCompVideo = compoundVisualClip?.sourceKind === 'video';
     const sourceB = elementFor(
-      current.clip.sourceKind === 'video' ? videoRef.current : stillImgRef.current,
+      current.clip.sourceKind === 'video' || isCompVideo ? videoRef.current : stillImgRef.current,
     );
     if (!compositor.draw(graph, { a: graph.transition ? sourceA : null, b: sourceB }, [0, 0, 0])) {
       setGlEnabled(false);
@@ -1865,6 +1895,30 @@ export function TimelinePreview() {
             )}
           </>
         ) : null}
+
+        {/* S168 — Render active text clips from compound containers */}
+        {activeCompoundFrame?.activeChildClips
+          ?.filter((c) => c.sourceKind === 'text' && c.effects?.text)
+          .map((textChild) =>
+            renderText(
+              textChild.id,
+              textChild.effects?.text,
+              current ? current.startFrames + (textChild.startFrames ?? 0) : 0,
+              textChild.durationFrames,
+            ),
+          )}
+
+        {/* S168 Compound Clip Active HUD Badge */}
+        {current && isCompoundClip(current.clip) && (
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/60 backdrop-blur-md border border-cyan-500/40 text-[11px] font-medium text-cyan-300 pointer-events-none z-20 shadow-lg">
+            <span className="material-symbols-outlined text-[13px]">auto_awesome_motion</span>
+            <span className="font-semibold">{current.clip.label || 'Compound Clip'}</span>
+            <span className="text-text-disabled">|</span>
+            <span className="font-mono text-cyan-200">
+              {activeCompoundFrame?.activeChildClips.length ?? 0} active
+            </span>
+          </div>
+        )}
 
         {overlayStack.map((placed) =>
           placed.clip.sourceKind === 'text' ? (

@@ -41,6 +41,7 @@ export function SequenceTabs() {
   const renameSequence = useSequenceStore((state) => state.renameSequence);
   const parentSequenceStack = useSequenceStore((state) => state.parentSequenceStack);
   const stepOutOfCompoundClip = useSequenceStore((state) => state.stepOutOfCompoundClip);
+  const stepToParentLevel = useSequenceStore((state) => state.stepToParentLevel);
 
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -54,7 +55,10 @@ export function SequenceTabs() {
   const activeId = document?.sequence.id ?? null;
 
   const activate = (sequenceId: string) => {
-    if (sequenceId !== activeId) void openSequence(sequenceId);
+    if (sequenceId !== activeId) {
+      useSequenceStore.setState({ parentSequenceStack: [] });
+      void openSequence(sequenceId);
+    }
     tabRefs.current.get(sequenceId)?.focus();
   };
 
@@ -112,15 +116,42 @@ export function SequenceTabs() {
       }}
     >
       {parentSequenceStack.length > 0 && (
-        <button
-          type="button"
-          onClick={() => void stepOutOfCompoundClip()}
-          title="Step out to parent sequence"
-          className="flex items-center gap-1 rounded bg-accent-ai/15 px-2 py-1 text-xs font-semibold text-accent-ai hover:bg-accent-ai/25 transition-colors border border-accent-ai/40 shrink-0"
+        <nav
+          aria-label="Sequence breadcrumb navigation"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-input)] bg-bg-surface border border-hairline text-xs shrink-0 shadow-sm"
         >
-          <span className="material-symbols-outlined text-[14px]">arrow_back</span>
-          <span>Back to Parent</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => void stepOutOfCompoundClip()}
+            title="Step out to immediate parent sequence"
+            className="flex items-center justify-center h-5 w-5 rounded text-text-secondary hover:text-accent-ai hover:bg-bg-hover transition-colors"
+          >
+            <span className="material-symbols-outlined text-[15px]">arrow_back</span>
+          </button>
+          <span className="h-3 w-px bg-hairline" />
+          {parentSequenceStack.map((crumb, idx) => (
+            <div key={crumb.id} className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void stepToParentLevel(idx)}
+                title={`Jump to ${crumb.name}`}
+                className="max-w-[140px] truncate font-medium text-text-secondary hover:text-text-primary transition-colors hover:underline underline-offset-2 flex items-center gap-1"
+              >
+                <span className="material-symbols-outlined text-[13px] text-text-disabled">
+                  {idx === 0 ? 'movie' : 'auto_awesome_motion'}
+                </span>
+                <span>{crumb.name}</span>
+              </button>
+              <span className="material-symbols-outlined text-[13px] text-text-disabled">
+                chevron_right
+              </span>
+            </div>
+          ))}
+          <div className="flex items-center gap-1 font-semibold text-accent-ai bg-accent-ai/10 px-1.5 py-0.5 rounded border border-accent-ai/20">
+            <span className="material-symbols-outlined text-[13px]">auto_awesome_motion</span>
+            <span className="max-w-[150px] truncate">{document?.sequence.name ?? 'Compound'}</span>
+          </div>
+        </nav>
       )}
       <div
         role="tablist"

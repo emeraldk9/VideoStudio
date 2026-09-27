@@ -7,7 +7,7 @@ import type {
   SequenceDocument,
   SequenceTrack,
 } from '../../types/sequence';
-import { layoutTrack } from './layout';
+import { layoutTrack, transportDurationFrames } from './layout';
 
 export const DEFAULT_COMPOUND_COLOR_LABEL: ClipColorLabel = 'cyan';
 
@@ -309,3 +309,80 @@ export function resolveActiveCompoundFrame(params: {
 
   return { nestedFrame, activeChildClips };
 }
+
+export interface ParentSequenceBreadcrumb {
+  id: string;
+  name: string;
+}
+
+export interface CompoundBreadcrumbItem {
+  id: string;
+  name: string;
+  depth: number;
+  isCurrent: boolean;
+}
+
+/**
+ * Synchronizes a parent compound clip's duration and nested metadata with the latest
+ * state of the nested sequence document after child clips have been edited.
+ */
+export function syncCompoundClipMetadata(
+  parentClip: SequenceClip,
+  nestedDocument: Pick<SequenceDocument, 'sequence' | 'tracks' | 'clips'>,
+): SequenceClip {
+  const currentMeta = getCompoundClipMetadata(parentClip);
+  const calculatedDuration = Math.max(
+    1,
+    transportDurationFrames(nestedDocument.tracks, nestedDocument.clips),
+  );
+
+  const updatedSettings: CompoundClipSettings = {
+    nestedSequenceId: nestedDocument.sequence.id,
+    nestedSequenceName: nestedDocument.sequence.name,
+    childClipCount: nestedDocument.clips.length,
+    childTrackCount: nestedDocument.tracks.length,
+    durationFrames: calculatedDuration,
+    nestedTracks: nestedDocument.tracks,
+    nestedClips: nestedDocument.clips,
+  };
+
+  const labelNeedsUpdate =
+    !parentClip.label ||
+    parentClip.label === 'Compound Clip' ||
+    parentClip.label === currentMeta?.nestedSequenceName;
+
+  return {
+    ...parentClip,
+    durationFrames: calculatedDuration,
+    label: labelNeedsUpdate ? nestedDocument.sequence.name : parentClip.label,
+    effects: {
+      ...parentClip.effects,
+      compound: updatedSettings,
+    },
+  };
+}
+
+/**
+ * Builds an ordered list of breadcrumbs from the root parent sequence down to the current active sequence.
+ */
+export function resolveCompoundBreadcrumbs(
+  stack: readonly ParentSequenceBreadcrumb[],
+  currentSequence: { id: string; name: string },
+): CompoundBreadcrumbItem[] {
+  const items: CompoundBreadcrumbItem[] = stack.map((crumb, idx) => ({
+    id: crumb.id,
+    name: crumb.name,
+    depth: idx,
+    isCurrent: false,
+  }));
+
+  items.push({
+    id: currentSequence.id,
+    name: currentSequence.name,
+    depth: stack.length,
+    isCurrent: true,
+  });
+
+  return items;
+}
+

@@ -7,6 +7,8 @@ import {
   packCompoundClip,
   unpackCompoundClip,
   resolveActiveCompoundFrame,
+  syncCompoundClipMetadata,
+  resolveCompoundBreadcrumbs,
 } from '../compound-clip-ops';
 
 describe('compound-clip-ops', () => {
@@ -264,4 +266,122 @@ describe('compound-clip-ops', () => {
       expect(res3.activeChildClips).toHaveLength(0);
     });
   });
+
+  describe('syncCompoundClipMetadata', () => {
+    it('synchronizes compound clip duration and child metadata when nested sequence is edited', () => {
+      const { compoundClip, nestedDocument } = packCompoundClip({
+        clips: [clipA, clipB],
+        tracks: mockTracks,
+        targetClipIds: ['clip-a', 'clip-b'],
+        sequenceId: 'seq-parent',
+        compoundName: 'Scene 1 Compound',
+      });
+
+      // Initial duration of compound was max(end) - min(start) = (48 + 60) - 24 = 84 frames
+      expect(compoundClip.durationFrames).toBe(84);
+
+      // Now simulate user editing inside the nested document:
+      // Extending clipB duration from 60 to 120 frames in the nested sequence
+      const editedNestedClips: SequenceClip[] = nestedDocument.clips.map((c) =>
+        c.label === 'Overlay B' ? { ...c, durationFrames: 120 } : c,
+      );
+
+      const editedNestedDocument = {
+        ...nestedDocument,
+        clips: editedNestedClips,
+      };
+
+      const synced = syncCompoundClipMetadata(compoundClip, editedNestedDocument);
+
+      // New duration should reflect the extended child clip:
+      // Overlay B starts at frame 24 in nested sequence (48 - 24) with duration 120 -> end at 144
+      expect(synced.durationFrames).toBe(144);
+      expect(synced.effects?.compound?.durationFrames).toBe(144);
+      expect(synced.effects?.compound?.childClipCount).toBe(2);
+      expect(synced.effects?.compound?.nestedSequenceName).toBe('Scene 1 Compound');
+    });
+
+    it('updates child clip count when clips are added or removed inside the compound sequence', () => {
+      const { compoundClip, nestedDocument } = packCompoundClip({
+        clips: [clipA, clipB],
+        tracks: mockTracks,
+        targetClipIds: ['clip-a', 'clip-b'],
+        sequenceId: 'seq-parent',
+      });
+
+      // Add a third clip into the nested sequence
+      const extraClip: SequenceClip = {
+        id: 'clip-c',
+        sequenceId: nestedDocument.sequence.id,
+        trackId: mockTracks[0].id,
+        orderIndex: 2,
+        sourceKind: 'text',
+        label: 'Lower Third',
+        filePath: null,
+        startFrames: 0,
+        durationFrames: 48,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        overrides: [],
+      };
+
+      const editedDoc = {
+        ...nestedDocument,
+        clips: [...nestedDocument.clips, extraClip],
+      };
+
+      const synced = syncCompoundClipMetadata(compoundClip, editedDoc);
+      expect(synced.effects?.compound?.childClipCount).toBe(3);
+    });
+  });
+
+  describe('resolveCompoundBreadcrumbs', () => {
+    it('builds an ordered hierarchy from ancestor sequence stack down to leaf sequence', () => {
+      const stack = [
+        { id: 'seq-main', name: 'Master Cut' },
+        { id: 'seq-scene2', name: 'Scene 2 Action' },
+      ];
+      const current = { id: 'seq-vfx', name: 'VFX Explosion' };
+
+      const breadcrumbs = resolveCompoundBreadcrumbs(stack, current);
+
+      expect(breadcrumbs).toHaveLength(3);
+      expect(breadcrumbs[0]).toEqual({
+        id: 'seq-main',
+        name: 'Master Cut',
+        depth: 0,
+        isCurrent: false,
+      });
+      expect(breadcrumbs[1]).toEqual({
+        id: 'seq-scene2',
+        name: 'Scene 2 Action',
+        depth: 1,
+        isCurrent: false,
+      });
+      expect(breadcrumbs[2]).toEqual({
+        id: 'seq-vfx',
+        name: 'VFX Explosion',
+        depth: 2,
+        isCurrent: true,
+      });
+    });
+
+    it('handles root sequence with empty parent stack', () => {
+      const current = { id: 'seq-root', name: 'My Project' };
+      const breadcrumbs = resolveCompoundBreadcrumbs([], current);
+
+      expect(breadcrumbs).toHaveLength(1);
+      expect(breadcrumbs[0]).toEqual({
+        id: 'seq-root',
+        name: 'My Project',
+        depth: 0,
+        isCurrent: true,
+      });
+    });
+  });
 });
+

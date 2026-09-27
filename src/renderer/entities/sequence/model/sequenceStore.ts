@@ -29,6 +29,8 @@ import {
   isCompoundClip,
   getCompoundClipMetadata,
   rippleDeleteTranscriptRange,
+  type ParentSequenceBreadcrumb,
+  syncCompoundClipMetadata,
 } from '@shared';
 
 import { readLocalSetting, writeLocalSetting } from '../../../shared/lib/localSetting';
@@ -282,12 +284,14 @@ export interface SequenceState {
   undo: () => void;
   redo: () => void;
 
-  // S64 — Compound Clips & Nested Sequence Packaging
-  parentSequenceStack: string[];
+  // S64 / S168 — Compound Clips & Nested Sequence Packaging
+  parentSequenceStack: ParentSequenceBreadcrumb[];
   createCompoundClipFromSelection: (name?: string) => Promise<SequenceClip | null>;
   decomposeCompoundClip: (clipId: string) => Promise<void>;
   stepIntoCompoundClip: (compoundClip: SequenceClip) => Promise<void>;
   stepOutOfCompoundClip: () => Promise<void>;
+  stepToParentLevel: (targetIndex: number) => Promise<void>;
+  syncParentCompoundClip: (childDoc: SequenceDocument) => void;
 
   /**
    * S160 — the active pointer tool. `'select'` is every gesture the panel
@@ -1382,7 +1386,10 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
     if (!currentDoc) return;
 
     set((state) => ({
-      parentSequenceStack: [...state.parentSequenceStack, currentDoc.sequence.id],
+      parentSequenceStack: [
+        ...state.parentSequenceStack,
+        { id: currentDoc.sequence.id, name: currentDoc.sequence.name },
+      ],
     }));
 
     try {
@@ -1416,14 +1423,44 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
     }
   },
 
+  syncParentCompoundClip: (childDoc: SequenceDocument) => {
+    const parentDoc = get().document;
+    if (!parentDoc) return;
+    const target = parentDoc.clips.find(
+      (c) => isCompoundClip(c) && c.effects?.compound?.nestedSequenceId === childDoc.sequence.id,
+    );
+    if (!target) return;
+    const updated = syncCompoundClipMetadata(target, childDoc);
+    const updatedClips = parentDoc.clips.map((c) => (c.id === target.id ? updated : c));
+    get().commitClips(updatedClips);
+  },
+
   stepOutOfCompoundClip: async () => {
-    const { parentSequenceStack } = get();
+    const { parentSequenceStack, document } = get();
     if (parentSequenceStack.length === 0) return;
-    const parentId = parentSequenceStack[parentSequenceStack.length - 1];
+    const parentCrumb = parentSequenceStack[parentSequenceStack.length - 1];
+    const childDoc = document;
     set((state) => ({
       parentSequenceStack: state.parentSequenceStack.slice(0, -1),
     }));
-    await get().openSequence(parentId);
+    await get().openSequence(parentCrumb.id);
+    if (childDoc) {
+      get().syncParentCompoundClip(childDoc);
+    }
+  },
+
+  stepToParentLevel: async (targetIndex: number) => {
+    const { parentSequenceStack, document } = get();
+    if (targetIndex < 0 || targetIndex >= parentSequenceStack.length) return;
+    const targetCrumb = parentSequenceStack[targetIndex];
+    const childDoc = document;
+    set((state) => ({
+      parentSequenceStack: state.parentSequenceStack.slice(0, targetIndex),
+    }));
+    await get().openSequence(targetCrumb.id);
+    if (childDoc) {
+      get().syncParentCompoundClip(childDoc);
+    }
   },
 }));
 

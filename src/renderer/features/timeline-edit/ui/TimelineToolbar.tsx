@@ -18,6 +18,7 @@ import {
   computeTrackStereoLevels,
   dbToMeterPercent,
   createAdjustmentLayerClip,
+  isCompoundClip,
   BUS_MASTER,
   DEFAULT_SUBMIX_BUSES,
   resolveTrackBus,
@@ -661,6 +662,32 @@ export function TimelineToolbar() {
           fresh.select([newClip.id]);
         }}
       />
+
+      {/* S168 — Compound Clip Packaging & Decomposing */}
+      <IconButton
+        icon="auto_awesome_motion"
+        label={
+          selectedClips.length > 0
+            ? `Create Compound Clip (${selectedClips.length} selected) (Ctrl+G)`
+            : 'Create Compound Clip (select clips first) (Ctrl+G)'
+        }
+        size="sm"
+        disabled={selectedClips.length === 0}
+        onClick={() => {
+          void useSequenceStore.getState().createCompoundClipFromSelection();
+        }}
+      />
+      {selectedClips.length === 1 && isCompoundClip(selectedClips[0]) && (
+        <IconButton
+          icon="unfold_more"
+          label="Break Apart Compound Clip (Ctrl+Shift+G)"
+          size="sm"
+          onClick={() => {
+            const selId = selectedClips[0].id;
+            void useSequenceStore.getState().decomposeCompoundClip(selId);
+          }}
+        />
+      )}
 
       <span className="min-w-2 flex-1" />
 
