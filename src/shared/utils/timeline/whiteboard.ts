@@ -24,6 +24,61 @@ import {
   polygonCentroid,
   polygonClipPath,
 } from '../geometry/polygon';
+import type { WhiteboardCameraFollowerSettings } from './viewport-camera-ops';
+import type { WhiteboardInkPhysicsSettings } from './ink-physics-ops';
+import type { WhiteboardCustomHandSettings } from './hand-pose-ops';
+import type { AutoTraceSettings } from './bitmap-vectorizer-ops';
+import type { KineticTypographySettings } from './kinetic-typography-ops';
+import type { BidiWritingSettings } from './bidi-writing-ops';
+import type { StylusPressureSettings } from './pressure-ribbon-ops';
+import type { SurfaceFrictionSettings } from './surface-friction-ops';
+import type { SmudgeBlendSettings } from './smudge-blending-ops';
+import type { ToolSwapConfig } from './tool-swap-ops';
+import type { AttentionLightingSettings } from './attention-lighting-ops';
+import type { DraftingGuideSettings } from './drafting-guide-ops';
+import type { DepthOfFieldSettings } from './dof-bokeh-ops';
+import type { DualHandDuetSettings } from './dual-hand-duet-ops';
+import type { ChromaChalkNeonSettings } from './chroma-chalk-ops';
+import type { WetSpongeCondensationSettings } from './wet-sponge-ops';
+import type { LightboardGlassSettings } from './lightboard-glass-ops';
+import type { ShapeRecognitionSettings } from './shape-recognizer-ops';
+import type { LaserPointerSettings } from './laser-pointer-ops';
+import type { PerspectiveGridSettings } from './perspective-grid-ops';
+import type { ContactShadowSettings } from './contact-shadow-ops';
+import type { InkDepletionSettings } from './ink-depletion-ops';
+import type { ToolOrchestrationSettings } from './tool-orchestration-ops';
+import type { PaletteDockSettings } from './palette-dock-ops';
+import type { PressureAudioSettings } from './pressure-audio-resonance-ops';
+import type { StickyNoteSettings, StencilMaskSettings } from './sticky-stencil-ops';
+import type { LassoCalloutSettings } from './lasso-callout-ops';
+import type { HighlighterSettings } from './fluorescent-highlighter-ops';
+import type { MultiSourceLightingSettings } from './multi-source-lighting-ops';
+import type { ChalkDustSettlingSettings } from './chalk-dust-settling-ops';
+import type { HandShadowPenumbraSettings } from './hand-silhouette-penumbra-ops';
+import type { CapSnapFoleySettings } from './cap-snap-foley-ops';
+import type { GradientWashSettings } from './gradient-wash-ribbon-ops';
+import type { NibSplaySettings } from './nib-splay-compression-ops';
+import type { CapillaryBleedSettings } from './capillary-bleed-ops';
+import type { EraserGhostingSettings } from './eraser-smear-ghosting-ops';
+import type { GlassParallaxSettings } from './glass-specular-parallax-ops';
+import type { GraphiteGrainSettings } from './graphite-sheen-grain-ops';
+import type { VaporShimmerSettings } from './solvent-vapor-shimmer-ops';
+import type { MasterExportSettings } from './storyboard-master-export-ops';
+import type { AudioReactiveInkSettings } from './audio-reactive-ink-ops';
+import type { PalmSmudgeSettings } from './palm-smudge-occlusion-ops';
+import type { QuadTreeTileSettings } from './spatial-quadtree-tile-ops';
+import type { ChalkChatterSettings } from './chalk-breakage-chatter-ops';
+import type { StrokeShaderSettings } from './stroke-shader-pipeline-ops';
+import type { CharcoalTortillonSettings } from './charcoal-tortillon-ops';
+import type { OnionSkinSettings } from './onion-skin-light-table-ops';
+import type { PantographSettings } from './pantograph-magnetic-pivot-ops';
+import type { FlexNibSettings } from './flex-nib-railroading-ops';
+import type { LiveSyncSettings } from './live-stream-sync-ops';
+import type { StippleSettings } from './procedural-stippling-ops';
+import type { FoilSettings } from './metallic-foil-ops';
+import type { CompassSettings } from './compass-divider-caliper-ops';
+import type { CollaborativeSyncSettings } from './collaborative-crdt-ops';
+import type { SpatialAudioSettings } from './spatial-audio-atmos-ops';
 
 export interface WhiteboardSettings {
   /**
@@ -54,7 +109,7 @@ export interface WhiteboardSettings {
   inFraction?: number;
   /** S5 — absolute draw start time in seconds. */
   inSeconds?: number;
-  hand: 'pen' | 'marker' | 'none';
+  hand: 'pen' | 'marker' | 'pencil' | 'chalk' | 'none';
   /**
    * S296 — the reveal clock's step rate in Hz (4..30). Absent = smooth: the
    * reveal advances every sequence frame, the pre-S296 behaviour exactly.
@@ -88,6 +143,151 @@ export interface WhiteboardSettings {
    * a derived file's path.
    */
   trace?: WhiteboardTraceSettings;
+  /** Milestone S91 — Drawing contact foley SFX toggle. @default true */
+  foleyEnabled?: boolean;
+  /** Milestone S91 — Foley sound volume level (0.0 to 1.0, default 0.6). */
+  foleyVolume?: number;
+  /** Milestone S93 — Board clearing erase-out at clip conclusion. @default false */
+  eraseOut?: boolean;
+  /** Milestone S93 — Fraction of clip spent erasing the board (0.05 to 0.40, default 0.20). */
+  eraseFraction?: number;
+  /** Milestone S93 — Erase wiping motion style. @default 'zigzag' */
+  erasePattern?: 'zigzag' | 'wipe';
+  /** Milestone S94 — Stroke decimation & Catmull-Rom Bezier smoothing profile. @default 'smooth' */
+  strokeSmoothing?: 'none' | 'subtle' | 'smooth' | 'high';
+  /** Milestone S94 — RDP simplify deviation tolerance in pixels (0.0 to 3.0, default 1.2). */
+  simplifyTolerance?: number;
+  /** Milestone S95 — Vector path continuous morphing into next scene element. */
+  morphTransition?: {
+    enabled?: boolean;
+    easing?: 'linear' | 'ease-in-out' | 'elastic';
+    durationSeconds?: number;
+  };
+  /** Milestone S96 — Procedural cross-hatching and graphite texture shading. */
+  shadingStyle?: 'bloom' | 'hatch' | 'crosshatch';
+  hatchAngle?: number;
+  hatchSpacingPx?: number;
+  crossHatch?: boolean;
+  /** Milestone S97 — Dynamic calligraphy, pressure-sensitive velocity tapering & chisel nib geometry. */
+  brushDynamics?: {
+    taper?: boolean;
+    chiselNib?: boolean;
+    nibAngleDeg?: number;
+    minWidthRatio?: number;
+  };
+  /** Milestone S98 — Multi-path saliency clustering & contour prioritization. @default 'hierarchical' */
+  clusteringMode?: 'none' | 'proximity' | 'saliency' | 'hierarchical';
+  /** Milestone S100 — Dynamic inertial camera viewport follower & directional hand shadow. */
+  cameraFollower?: WhiteboardCameraFollowerSettings;
+  /** Milestone S101 — Physical ink bleed, wet-edge pooling & chalk dust particles. */
+  inkPhysics?: WhiteboardInkPhysicsSettings;
+  /** Milestone S103 — Custom hand stylus asset calibration & dynamic pose warping. */
+  customHand?: WhiteboardCustomHandSettings;
+  /** Milestone S104 — Bitmap vectorization & contour auto-trace settings. */
+  autoTrace?: AutoTraceSettings;
+  /** Milestone S105 — Kinetic typography & handwriting cadence settings. */
+  kineticTypography?: KineticTypographySettings;
+  /** Milestone S106 — Multi-language bidirectional RTL writing & diacritic scheduling. */
+  bidiWriting?: BidiWritingSettings;
+  /** Milestone S107 — Pressure-sensitive stylus dynamics & variable ribbon settings. */
+  stylusPressure?: StylusPressureSettings;
+  /** Milestone S108 — Granular surface friction, substrate tooth & progressive nib wear. */
+  surfaceFriction?: SurfaceFrictionSettings;
+  /** Milestone S109 — Procedural smudge advection, finger-blending & eraser highlights. */
+  smudgeBlend?: SmudgeBlendSettings;
+  /** Milestone S110 — Multi-tool hot-swapping, eraser cap flip & sound-synchronized carousel. */
+  toolSwap?: ToolSwapConfig;
+  /** Milestone S111 — Heatmap-driven attention lighting, dynamic vignetting & pen spotlight shading. */
+  attentionLighting?: AttentionLightingSettings;
+  /** Milestone S112 — Real-time vector ruler, compass & geometric drafting guide system. */
+  draftingGuide?: DraftingGuideSettings;
+  /** Milestone S113 — Layered depth-of-field (DoF) optical bokeh & defocus hand blur. */
+  depthOfField?: DepthOfFieldSettings;
+  /** Milestone S114 — Multi-hand simultaneous duet collaboration & dual-stylus choreography. */
+  dualHandDuet?: DualHandDuetSettings;
+  /** Milestone S115 — Whiteboard Chroma Chalk & Neon UV Blacklight Luminescence Shader. */
+  chromaChalk?: ChromaChalkNeonSettings;
+  /** Milestone S116 — Procedural water droplet condensation, wet sponge evaporation & dew drop smear physics. */
+  wetSponge?: WetSpongeCondensationSettings;
+  /** Milestone S117 — Whiteboard Optical Glass Lightboard & Internal Edge-Lit Luminescence Mode. */
+  lightboard?: LightboardGlassSettings;
+  /** Milestone S118 — Smart geometric shape recognition & snap-to-vector primitive engine. */
+  shapeRecognition?: ShapeRecognitionSettings;
+  /** Milestone S119 — Whiteboard Laser Pointer Tracker, Optical Phosphor Persistence & Luminescent Afterglow Trails. */
+  laserPointer?: LaserPointerSettings;
+  /** Milestone S120 — Whiteboard Magnetic Isometric & Cartesian Grid Snapping with Dynamic 3D Horizon Perspective. */
+  gridSubstrate?: PerspectiveGridSettings;
+  /** Milestone S121 — Procedural Whiteboard Hand Contact Shadows & Dynamic Ambient Occlusion. */
+  contactShadow?: ContactShadowSettings;
+  /** Milestone S122 — Whiteboard Marker Ink Depletion, Dry-Out Streaking & Chalk Micro-Chatter Physics. */
+  inkDepletion?: InkDepletionSettings;
+  /** Milestone S123 — Whiteboard Dynamic Tool Auto-Invocation, Staging Carousel & Retraction Dynamics. */
+  toolOrchestrator?: ToolOrchestrationSettings;
+  /** Milestone S124 — Whiteboard Multi-Color Palette Carousel, Ring Dock & Click-Pen Dynamics. */
+  paletteDock?: PaletteDockSettings;
+  /** Milestone S125 — Whiteboard Stylus Tip Pressure-To-Audio Pitch Modulation, Nib Creak / Slate Squeak Friction Resonance & Multi-Stage Haptic Vibration Feedback. */
+  pressureAudio?: PressureAudioSettings;
+  /** Milestone S126 — Whiteboard Sticky Notes, Board Magnets & Paper Stencil Masking. */
+  stickyNote?: StickyNoteSettings;
+  stencilMask?: StencilMaskSettings;
+  /** Milestone S127 — Whiteboard Lasso Gesture Recognition, Auto-Callout Badges & Focus Pulsing. */
+  lassoCallout?: LassoCalloutSettings;
+  /** Milestone S128 — Whiteboard Broad Chisel-Tip Fluorescent Highlighter Sub-Layer. */
+  highlighter?: HighlighterSettings;
+  /** Milestone S129 — Whiteboard Multi-Source Hand Lighting & Dual-Penumbra Contact Shadows. */
+  multiSourceLighting?: MultiSourceLightingSettings;
+  /** Milestone S130 — Whiteboard Chalk Dust Settling & Gravitational Blackboard Particle Physics. */
+  chalkDustSettling?: ChalkDustSettlingSettings;
+  /** Milestone S131 — Whiteboard Hand Shadow Soft-Penumbra Contact AO with Silhouette Tracing. */
+  handSilhouettePenumbra?: HandShadowPenumbraSettings;
+  /** Milestone S132 — Whiteboard Marker Cap Snap & Pressure Vacuum Click Foley Acoustics with Magnetic Dock Snapping. */
+  capSnapFoley?: CapSnapFoleySettings;
+  /** Milestone S133 — Whiteboard Multi-Color Pen Ribbon Blending & Gradient Transition Wash. */
+  gradientWash?: GradientWashSettings;
+  /** Milestone S134 — Whiteboard Felt-Tip Marker Nib Splay & Directional Fiber Compression Dynamics. */
+  nibSplay?: NibSplaySettings;
+  /** Milestone S135 — Whiteboard Wet-on-Wet Capillary Bleed & Pigment Diffusion at Stroke Intersections. */
+  capillaryBleed?: CapillaryBleedSettings;
+  /** Milestone S136 — Whiteboard Dry-Erase Felt Eraser Swipe Smear & Ghosting Residuals. */
+  eraserGhosting?: EraserGhostingSettings;
+  /** Milestone S137 — Whiteboard Dual-Layer Tempered Glass Specular Glare & Parallax Reflection. */
+  glassParallax?: GlassParallaxSettings;
+  /** Milestone S138 — Whiteboard Graphite Sheen Reflection & Textured Paper Grain Bump Mapping. */
+  graphiteGrain?: GraphiteGrainSettings;
+  /** Milestone S139 — Whiteboard Solvent Vapor Shimmer & Ambient Thermal Convection. */
+  vaporShimmer?: VaporShimmerSettings;
+  /** Milestone S140 — Multi-Track Storyboard Master Mixdown & 4K ProRes/H.265 Export Pipeline. */
+  storyboardMasterExport?: MasterExportSettings;
+  /** Milestone S141 — Whiteboard Live Audio-Visual Reactive Ink Pulsing. */
+  audioReactiveInk?: AudioReactiveInkSettings;
+  /** Milestone S142 — Whiteboard Hand Palm Occlusion & Natural Smudging Physics. */
+  palmSmudge?: PalmSmudgeSettings;
+  /** Milestone S143 — Multi-Resolution Spatial Tile Caching & Vector QuadTree Acceleration. */
+  quadtreeTileCache?: QuadTreeTileSettings;
+  /** Milestone S144 — Whiteboard Chalk Breakage & Variable Angle Edge Chatters. */
+  chalkBreakage?: ChalkChatterSettings;
+  /** Milestone S145 — Real-Time WebGL/WebGPU Stroke Fragment Shader Pipeline. */
+  strokeShader?: StrokeShaderSettings;
+  /** Milestone S146 — Charcoal & Conte Crayon Powder Smearing with Tortillon Stump Blending. */
+  charcoalTortillon?: CharcoalTortillonSettings;
+  /** Milestone S147 — Multi-Layer Animation Onion Skinning & Light Table Backlighting. */
+  onionSkinLightTable?: OnionSkinSettings;
+  /** Milestone S148 — Whiteboard Drafting Pantograph Mechanical Linkage & Magnetic Arc Pivot. */
+  pantographPivot?: PantographSettings;
+  /** Milestone S149 — Calligraphic Dip Pen Flexible Nib Tine Splitting & Meniscus Railroading. */
+  flexNib?: FlexNibSettings;
+  /** Milestone S150 — Multi-Client Whiteboard Live Stream Sync Protocol & Jitter Buffer. */
+  liveStreamSync?: LiveSyncSettings;
+  /** Milestone S151 — Procedural Stippling & Pointillism Ink Shading Engine. */
+  proceduralStippling?: StippleSettings;
+  /** Milestone S152 — Metallic Foil Embossing & Hot Stamp Shimmer Shader Pipeline. */
+  metallicFoil?: FoilSettings;
+  /** Milestone S153 — Whiteboard Drafting Compass & Mechanical Divider Caliper Geometry. */
+  draftingCompass?: CompassSettings;
+  /** Milestone S154 — Collaborative Spatial Locking & Optimistic CRDT Stroke Merging Engine. */
+  collaborativeCRDT?: CollaborativeSyncSettings;
+  /** Milestone S155 — Multi-Track Master Audio Stems & Dolby Atmos Spatial Panning. */
+  spatialAudio?: SpatialAudioSettings;
 }
 
 /** S277 — the vector-sketch trace's knobs. */
@@ -204,6 +404,10 @@ export interface WhiteboardZone {
   type?: WhiteboardZoneType;
   /** Angle for scribble shading (in degrees, default 45). */
   hatchAngle?: number;
+  /** Milestone S96 — Secondary intersecting cross-hatch pass. */
+  crossHatch?: boolean;
+  /** Milestone S96 — Distance in pixels between adjacent hatch lines (default 12). */
+  hatchSpacingPx?: number;
   /** Number of text rows for writing mode (2..16, default 4). */
   rows?: number;
   /** Sweep direction of the draw-in front. @default 'lr' */
@@ -230,7 +434,96 @@ export const WHITEBOARD_DEFAULTS: WhiteboardSettings = {
   rows: 8,
   hand: 'pen',
   look: 'none',
+  foleyEnabled: true,
+  foleyVolume: 0.6,
+  eraseOut: false,
+  eraseFraction: 0.20,
+  erasePattern: 'zigzag',
 };
+
+export interface WhiteboardPreset {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  cadenceFps: number;
+  look: 'none' | 'sketch' | 'pencil' | 'comic';
+  hand: 'pen' | 'marker' | 'pencil' | 'chalk' | 'none';
+  pattern: 'serpentine' | 'wipe' | 'zones' | 'trace';
+  paperColor: string;
+  textColor: string;
+  rows?: number;
+  drawFraction?: number;
+}
+
+export const WHITEBOARD_PRESETS: readonly WhiteboardPreset[] = [
+  {
+    id: 'notion-doodle',
+    name: 'Notion Doodle',
+    icon: 'draw',
+    description: '12 FPS hand-drawn line art on warm parchment with a fountain pen',
+    cadenceFps: 12,
+    look: 'sketch',
+    hand: 'pen',
+    pattern: 'trace',
+    paperColor: '#F5EBD7',
+    textColor: '#2C2523',
+    drawFraction: 0.85,
+  },
+  {
+    id: 'chalkboard-lecture',
+    name: 'Chalkboard Lecture',
+    icon: 'school',
+    description: '16 FPS academic chalk linework on dark slate blackboard',
+    cadenceFps: 16,
+    look: 'pencil',
+    hand: 'chalk',
+    pattern: 'serpentine',
+    paperColor: '#1C221F',
+    textColor: '#E8EFEA',
+    rows: 6,
+    drawFraction: 0.88,
+  },
+  {
+    id: 'architect-blueprint',
+    name: 'Architect Blueprint',
+    icon: 'architecture',
+    description: '24 FPS precise technical vector line tracing on blueprint cyan paper',
+    cadenceFps: 24,
+    look: 'sketch',
+    hand: 'pencil',
+    pattern: 'trace',
+    paperColor: '#0D3B66',
+    textColor: '#E0F2FE',
+    drawFraction: 0.8,
+  },
+  {
+    id: 'comic-pop',
+    name: 'Comic Pop',
+    icon: 'auto_stories',
+    description: '18 FPS bold posterized tone flats on newsprint paper',
+    cadenceFps: 18,
+    look: 'comic',
+    hand: 'marker',
+    pattern: 'wipe',
+    paperColor: '#F9F6EE',
+    textColor: '#1E1B18',
+    drawFraction: 0.75,
+  },
+  {
+    id: 'speed-paint',
+    name: 'Speed Paint',
+    icon: 'flash_on',
+    description: '30 FPS fluid rapid continuous wipe reveal on clean studio white board',
+    cadenceFps: 30,
+    look: 'none',
+    hand: 'marker',
+    pattern: 'wipe',
+    paperColor: '#FFFFFF',
+    textColor: '#111827',
+    drawFraction: 0.7,
+  },
+];
 
 export const WHITEBOARD_DRAW_FRACTION = 0.9;
 
@@ -296,6 +589,21 @@ export function resolveWhiteboardOutSeconds(
   fps: number,
 ): number {
   return resolveWhiteboardDrawSeconds(settings, durationFrames, fps);
+}
+
+/**
+ * Milestone S93 — calculates the duration in seconds of the board erase clearing phase.
+ */
+export function resolveWhiteboardEraseSeconds(
+  settings: Pick<WhiteboardSettings, 'eraseOut' | 'eraseFraction'>,
+  durationFrames: number,
+  fps: number,
+): number {
+  if (!settings.eraseOut) return 0;
+  const safeFps = Math.min(120, Math.max(1, Math.round(fps)));
+  const totalSeconds = Math.max(1, Math.round(durationFrames)) / safeFps;
+  const fraction = Math.min(0.40, Math.max(0.05, settings.eraseFraction ?? 0.20));
+  return Math.min(totalSeconds * 0.5, fraction * totalSeconds);
 }
 
 /**
@@ -692,3 +1000,289 @@ export function whiteboardZoneFrontAt(
   const centroid = polygonCentroid(zone.points);
   return sweep.axis === 'x' ? { x: state.front, y: centroid.y } : { x: centroid.x, y: state.front };
 }
+
+export interface WhiteboardAnnotationExport {
+  canvas: { width: number; height: number };
+  version: string;
+  elements: Array<{
+    id: string;
+    label: string;
+    sequence: number;
+    type: string;
+    region: { x: number; y: number; width: number; height: number };
+    points: [number, number][];
+    reveal: {
+      direction: 'top_to_bottom' | 'bottom_to_top' | 'left_to_right' | 'right_to_left';
+      durationMs?: number;
+      weight: number;
+      style: WhiteboardZoneType;
+    };
+  }>;
+}
+
+export function exportWhiteboardAnnotation(
+  zones: readonly WhiteboardZone[],
+  canvasWidth = 1920,
+  canvasHeight = 1080,
+): WhiteboardAnnotationExport {
+  const elements = zones.map((zone, idx) => {
+    const xs = zone.points.map((p) => p.x * canvasWidth);
+    const ys = zone.points.map((p) => p.y * canvasHeight);
+    const minX = Math.round(Math.min(...xs));
+    const minY = Math.round(Math.min(...ys));
+    const maxX = Math.round(Math.max(...xs));
+    const maxY = Math.round(Math.max(...ys));
+    const direction =
+      zone.sweep === 'tb'
+        ? ('top_to_bottom' as const)
+        : zone.sweep === 'rl'
+          ? ('right_to_left' as const)
+          : ('left_to_right' as const);
+
+    return {
+      id: `zone_${idx + 1}`,
+      label: `Zone ${idx + 1}`,
+      sequence: idx + 1,
+      type: 'structure',
+      region: {
+        x: Math.max(0, minX),
+        y: Math.max(0, minY),
+        width: Math.max(10, maxX - minX),
+        height: Math.max(10, maxY - minY),
+      },
+      points: zone.points.map((p) => [
+        Number(p.x.toFixed(4)),
+        Number(p.y.toFixed(4)),
+      ]) as [number, number][],
+      reveal: {
+        direction,
+        weight: zone.weight ?? 1,
+        style: zone.type ?? 'sketch',
+      },
+    };
+  });
+
+  return {
+    canvas: {
+      width: canvasWidth,
+      height: canvasHeight,
+    },
+    version: '1.0',
+    elements,
+  };
+}
+
+export function importWhiteboardAnnotation(
+  data: any,
+  canvasWidth = 1920,
+  canvasHeight = 1080,
+): WhiteboardZone[] {
+  if (!data || typeof data !== 'object') return [];
+  const cw = data.canvas?.width || canvasWidth || 1920;
+  const ch = data.canvas?.height || canvasHeight || 1080;
+  const result: WhiteboardZone[] = [];
+
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+  if (Array.isArray(data.elements)) {
+    for (const el of data.elements) {
+      if (result.length >= WHITEBOARD_MAX_ZONES) break;
+      let pts: { x: number; y: number }[] = [];
+      if (Array.isArray(el.points) && el.points.length >= 3) {
+        pts = el.points.map((p: any) => {
+          const rawX = Array.isArray(p) ? p[0] : p.x ?? 0;
+          const rawY = Array.isArray(p) ? p[1] : p.y ?? 0;
+          return {
+            x: clamp01(rawX <= 1.0 ? rawX : rawX / cw),
+            y: clamp01(rawY <= 1.0 ? rawY : rawY / ch),
+          };
+        });
+      } else if (el.region && typeof el.region === 'object') {
+        const rx = (el.region.x || 0) / cw;
+        const ry = (el.region.y || 0) / ch;
+        const rw = (el.region.width || 100) / cw;
+        const rh = (el.region.height || 100) / ch;
+        pts = [
+          { x: clamp01(rx), y: clamp01(ry) },
+          { x: clamp01(rx + rw), y: clamp01(ry) },
+          { x: clamp01(rx + rw), y: clamp01(ry + rh) },
+          { x: clamp01(rx), y: clamp01(ry + rh) },
+        ];
+      }
+
+      if (pts.length >= 3) {
+        const rawStyle = el.reveal?.style ?? 'sketch';
+        const type: WhiteboardZoneType =
+          rawStyle === 'scribble' || rawStyle === 'writing' || rawStyle === 'wipe'
+            ? rawStyle
+            : 'sketch';
+
+        let sweep: 'lr' | 'rl' | 'tb' = 'lr';
+        if (el.reveal?.direction === 'top_to_bottom') sweep = 'tb';
+        else if (el.reveal?.direction === 'right_to_left') sweep = 'rl';
+
+        const weight = Math.min(
+          WHITEBOARD_MAX_ZONE_WEIGHT,
+          Math.max(WHITEBOARD_MIN_ZONE_WEIGHT, Number(el.reveal?.weight ?? 1)),
+        );
+
+        result.push({
+          points: pts,
+          entrance: 'draw',
+          type,
+          rows: el.rows ?? 4,
+          sweep,
+          weight,
+        });
+      }
+    }
+  } else {
+    const rawZones = Array.isArray(data.zones)
+      ? data.zones
+      : Array.isArray(data.effects?.whiteboard?.zones)
+        ? data.effects.whiteboard.zones
+        : [];
+
+    for (const z of rawZones) {
+      if (result.length >= WHITEBOARD_MAX_ZONES) break;
+      let pts: { x: number; y: number }[] = [];
+      if (Array.isArray(z.points) && z.points.length >= 3) {
+        pts = z.points.map((p: any) => {
+          const rawX = Array.isArray(p) ? p[0] : p.x ?? 0;
+          const rawY = Array.isArray(p) ? p[1] : p.y ?? 0;
+          return {
+            x: clamp01(rawX <= 1.0 ? rawX : rawX / cw),
+            y: clamp01(rawY <= 1.0 ? rawY : rawY / ch),
+          };
+        });
+      }
+      if (pts.length >= 3) {
+        const rawType = z.type ?? 'sketch';
+        const type: WhiteboardZoneType =
+          rawType === 'scribble' || rawType === 'writing' || rawType === 'wipe'
+            ? rawType
+            : 'sketch';
+
+        const weight = Math.min(
+          WHITEBOARD_MAX_ZONE_WEIGHT,
+          Math.max(WHITEBOARD_MIN_ZONE_WEIGHT, Number(z.weight ?? 1)),
+        );
+
+        result.push({
+          points: pts,
+          entrance: 'draw',
+          type,
+          rows: z.rows ?? 4,
+          sweep: z.sweep ?? 'lr',
+          weight,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Milestone S90: Auto-aligns whiteboard timing and zone pacing to speech audio peaks.
+ *
+ * Given a normalized array of audio peaks [0..1] spanning the clip's timeline window:
+ * 1. Computes adaptive speech energy threshold:
+ *    theta = max(0.025, 0.22 * mean + 0.08 * max)
+ * 2. Determines speech onset (first frame >= theta) and offset (last frame >= theta).
+ * 3. Maps speech boundaries to normalized inFraction and drawFraction.
+ * 4. If custom zones are present, segments speech activity across zones and distributes
+ *    relative weights proportional to speech duration / energy.
+ */
+export function autoAlignWhiteboardToAudioPeaks(
+  peaks: readonly number[],
+  zones?: readonly WhiteboardZone[],
+): {
+  inFraction: number;
+  drawFraction: number;
+  zones?: WhiteboardZone[];
+} {
+  if (!peaks || peaks.length === 0) {
+    return { inFraction: 0, drawFraction: 0.85, zones: zones ? [...zones] : undefined };
+  }
+
+  let sum = 0;
+  let maxAmp = 0;
+  for (let i = 0; i < peaks.length; i++) {
+    const val = peaks[i];
+    sum += val;
+    if (val > maxAmp) maxAmp = val;
+  }
+  const meanAmp = sum / peaks.length;
+
+  // Threshold: quiet speech or voiceover
+  const threshold = Math.max(0.025, 0.22 * meanAmp + 0.08 * maxAmp);
+
+  let firstIndex = -1;
+  let lastIndex = -1;
+
+  for (let i = 0; i < peaks.length; i++) {
+    if (peaks[i] >= threshold) {
+      if (firstIndex === -1) firstIndex = i;
+      lastIndex = i;
+    }
+  }
+
+  // Fallback if audio is completely silent
+  if (firstIndex === -1 || lastIndex <= firstIndex) {
+    return { inFraction: 0, drawFraction: 0.85, zones: zones ? [...zones] : undefined };
+  }
+
+  // Small lead-in margin (2% of clip or ~3 bins)
+  const marginBins = Math.max(1, Math.round(peaks.length * 0.02));
+  const rawIn = Math.max(0, firstIndex - marginBins) / peaks.length;
+  const rawOut = Math.min(peaks.length - 1, lastIndex + marginBins) / peaks.length;
+
+  // Clamp fractions
+  const inFraction = Number(Math.min(0.75, Math.max(0, rawIn)).toFixed(3));
+  const drawFraction = Number(
+    Math.min(1.0, Math.max(inFraction + 0.15, rawOut)).toFixed(3),
+  );
+
+  if (!zones || zones.length === 0) {
+    return { inFraction, drawFraction };
+  }
+
+  // Distribute zone weights across speech sub-intervals
+  const activeStart = firstIndex;
+  const activeEnd = lastIndex;
+  const activeSpan = Math.max(1, activeEnd - activeStart);
+  const zoneCount = zones.length;
+
+  const updatedZones: WhiteboardZone[] = zones.map((zone, zIdx) => {
+    const segStart = activeStart + Math.floor((zIdx / zoneCount) * activeSpan);
+    const segEnd = activeStart + Math.floor(((zIdx + 1) / zoneCount) * activeSpan);
+
+    let segEnergy = 0;
+    for (let j = segStart; j <= segEnd; j++) {
+      segEnergy += peaks[j] || 0;
+    }
+    const segAvg = segEnergy / Math.max(1, segEnd - segStart + 1);
+
+    // Relative weight scaling
+    const normalizedShare = segAvg / Math.max(0.01, meanAmp);
+    const rawWeight = Number(
+      Math.max(
+        WHITEBOARD_MIN_ZONE_WEIGHT,
+        Math.min(WHITEBOARD_MAX_ZONE_WEIGHT, normalizedShare),
+      ).toFixed(2),
+    );
+
+    return {
+      ...zone,
+      weight: rawWeight,
+    };
+  });
+
+  return {
+    inFraction,
+    drawFraction,
+    zones: updatedZones,
+  };
+}
+

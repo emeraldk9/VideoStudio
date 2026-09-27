@@ -12,6 +12,7 @@ import {
 import { encodeGrayPng } from './png-encode';
 import { sourceIdentity } from './segment-cache';
 import { decodeFrameRgba, probeFrameSize } from './watermark-frame-io';
+import { traceSvg } from './whiteboard-svg';
 
 /**
  * Beta S277 — the vector-sketch trace: the still's own linework, ordered
@@ -244,7 +245,13 @@ function traceChains(skeleton: Uint8Array, width: number, height: number): Chain
   return chains.filter((chain) => chain.points.length >= MIN_CHAIN_LENGTH);
 }
 
-/** Orders chains; `'nearest'` starts from the longest contour and reverses chains so nearer ends lead. */
+/**
+ * Orders chains using a 3-tier semantic topological hierarchy:
+ * Tier 1 (Outer silhouettes & major boundaries) ->
+ * Tier 2 (Internal feature contours) ->
+ * Tier 3 (Fine details & cross-hatching)
+ * With minimal-jump Euclidean endpoint routing and chain reversal.
+ */
 function orderChains(chains: Chain[], order: WhiteboardTraceSettings['order']): Chain[] {
   if (order === 'reading') {
     return [...chains].sort((a, b) => {
@@ -254,45 +261,70 @@ function orderChains(chains: Chain[], order: WhiteboardTraceSettings['order']): 
     });
   }
   if (chains.length <= 1) return [...chains];
-  const remaining = [...chains];
+
+  // Compute metrics for semantic classification
+  const scored = chains.map((chain) => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of chain.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const span = Math.hypot(maxX - minX, maxY - minY);
+    return { chain, length: chain.points.length, span, minY, minX };
+  });
+
+  const sortedLengths = scored.map((s) => s.length).sort((a, b) => a - b);
+  const n = sortedLengths.length;
+  const p75 = sortedLengths[Math.floor(n * 0.75)] ?? 0;
+  const p35 = sortedLengths[Math.floor(n * 0.35)] ?? 0;
+
+  const tier1 = scored.filter((s) => s.length >= p75 || s.span > 100);
+  const tier2 = scored.filter((s) => (s.length >= p35 && s.length < p75 && s.span <= 100));
+  const tier3 = scored.filter((s) => s.length < p35 && s.span <= 100);
+
+  // Initial anchor: top-to-bottom for primary silhouettes
+  tier1.sort((a, b) => (Math.floor(a.minY / 24) - Math.floor(b.minY / 24)) || (a.minX - b.minX));
+
   const ordered: Chain[] = [];
+  let cursor: { x: number; y: number } | null = null;
 
-  // Start with the longest chain (major silhouette / outline)
-  let longestIdx = 0;
-  for (let i = 1; i < remaining.length; i += 1) {
-    if (remaining[i].points.length > remaining[longestIdx].points.length) {
-      longestIdx = i;
+  for (const tier of [tier1, tier2, tier3]) {
+    const remaining = tier.map((t) => t.chain);
+    while (remaining.length > 0) {
+      let bestIndex = 0;
+      let bestDistance = Infinity;
+      let bestReversed = false;
+
+      if (cursor === null) {
+        bestIndex = 0;
+      } else {
+        for (let i = 0; i < remaining.length; i += 1) {
+          const head = remaining[i].points[0];
+          const tail = remaining[i].points[remaining[i].points.length - 1];
+          const headDist = Math.hypot(head.x - cursor.x, head.y - cursor.y);
+          const tailDist = Math.hypot(tail.x - cursor.x, tail.y - cursor.y);
+          if (headDist < bestDistance) {
+            bestDistance = headDist;
+            bestIndex = i;
+            bestReversed = false;
+          }
+          if (tailDist < bestDistance) {
+            bestDistance = tailDist;
+            bestIndex = i;
+            bestReversed = true;
+          }
+        }
+      }
+
+      const [picked] = remaining.splice(bestIndex, 1);
+      const points = bestReversed ? [...picked.points].reverse() : picked.points;
+      ordered.push({ points });
+      cursor = points[points.length - 1];
     }
   }
-  const [first] = remaining.splice(longestIdx, 1);
-  ordered.push(first);
-  let cursor = first.points[first.points.length - 1];
 
-  while (remaining.length > 0) {
-    let bestIndex = 0;
-    let bestDistance = Infinity;
-    let bestReversed = false;
-    for (let i = 0; i < remaining.length; i += 1) {
-      const head = remaining[i].points[0];
-      const tail = remaining[i].points[remaining[i].points.length - 1];
-      const headDistance = Math.hypot(head.x - cursor.x, head.y - cursor.y);
-      const tailDistance = Math.hypot(tail.x - cursor.x, tail.y - cursor.y);
-      if (headDistance < bestDistance) {
-        bestDistance = headDistance;
-        bestIndex = i;
-        bestReversed = false;
-      }
-      if (tailDistance < bestDistance) {
-        bestDistance = tailDistance;
-        bestIndex = i;
-        bestReversed = true;
-      }
-    }
-    const [chain] = remaining.splice(bestIndex, 1);
-    const points = bestReversed ? [...chain.points].reverse() : chain.points;
-    ordered.push({ points });
-    cursor = points[points.length - 1];
-  }
   return ordered;
 }
 
@@ -520,17 +552,25 @@ export async function ensureTraceArtifact(options: {
     // Cold cache — trace now.
   }
 
-  const size = await probeFrameSize(options.ffmpegPath, options.filePath);
-  const rgba = await decodeFrameRgba(options.ffmpegPath, options.filePath, size.width, size.height);
   const canvas = analysisCanvasFor(options.frameWidth, options.frameHeight);
-  const gray = letterboxGray(
-    rgbaToGray(rgba, size.width, size.height),
-    size.width,
-    size.height,
-    canvas.width,
-    canvas.height,
-  );
-  const result = traceImage(gray, canvas.width, canvas.height, options.trace);
+  let result: TraceImageResult;
+
+  if (options.filePath.toLowerCase().endsWith('.svg')) {
+    // S89 Native vector SVG trace: bypass lossy Sobel edge detection & thinning
+    const svgXml = await fs.promises.readFile(options.filePath, 'utf8');
+    result = traceSvg(svgXml, canvas.width, canvas.height, options.trace);
+  } else {
+    const size = await probeFrameSize(options.ffmpegPath, options.filePath);
+    const rgba = await decodeFrameRgba(options.ffmpegPath, options.filePath, size.width, size.height);
+    const gray = letterboxGray(
+      rgbaToGray(rgba, size.width, size.height),
+      size.width,
+      size.height,
+      canvas.width,
+      canvas.height,
+    );
+    result = traceImage(gray, canvas.width, canvas.height, options.trace);
+  }
 
   await fs.promises.mkdir(dir, { recursive: true });
   await fs.promises.writeFile(mapPath, encodeGrayPng(result.timeMap, canvas.width, canvas.height));

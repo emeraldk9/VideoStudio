@@ -135,7 +135,15 @@ export function resolveHandAsset(hand: WhiteboardSettings['hand']): string | nul
     fs.accessSync(candidate, fs.constants.R_OK);
     return candidate;
   } catch {
-    return null;
+    // S88: graceful fallback for pencil / chalk to existing pen / marker assets
+    const fallbackName = hand === 'pencil' || hand === 'chalk' ? 'hand-pen.png' : 'hand-marker.png';
+    const fallback = path.join(root, fallbackName);
+    try {
+      fs.accessSync(fallback, fs.constants.R_OK);
+      return fallback;
+    } catch {
+      return null;
+    }
   }
 }
 

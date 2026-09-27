@@ -36,6 +36,8 @@ import {
   type SequenceRenderRequest,
   type SequenceRenderResult,
   type SequenceTrack,
+  resolveWhiteboardDrawSeconds,
+  resolveWhiteboardEraseSeconds,
 } from '@shared';
 
 import type { ChildLogger } from '../logging/logger';
@@ -71,6 +73,7 @@ import { probeFfmpegCapabilities } from './watermark-capabilities';
 import { writeZoneMasks, zoneMaskPath } from './whiteboard-mask';
 import { buildWhiteboardSegmentArgs, resolveHandAsset } from './whiteboard-segment';
 import { ensureTraceArtifact, type TraceArtifact } from './whiteboard-trace';
+import { synthesizeWhiteboardFoleyWav } from './whiteboard-foley-node';
 
 /**
  * Beta S145 — renders a timeline to a file, in four staged passes.
@@ -1418,6 +1421,9 @@ export class SequenceRenderService {
     // track's **speaker** (`muted`), not its eye — hiding a picture and
     // silencing it are now separate decisions.
     const videoAudio = await this.collectSourceAudio(document);
+    // S92 — Whiteboard drawing procedural foley sound effects
+    const whiteboardFoley = await this.collectWhiteboardFoleyAudio(document, workDir);
+
     // Exempt clips join the **key** side rather than bypassing the duck with a
     // third bed. That keeps `buildDuckMixArgs` on its two measured inputs, and
     // it is the musically right answer for what the flag is for: source
@@ -1426,13 +1432,16 @@ export class SequenceRenderService {
     const exempt = videoAudio.filter((placed) => placed.clip.duckExempt === true);
     const ducked = videoAudio.filter((placed) => placed.clip.duckExempt !== true);
     narration.push(...exempt);
-    music.push(...ducked);
+    music.push(...ducked, ...whiteboardFoley);
 
     // S68 — Audio Stem Isolation (dialogue, music, sfx, master)
     if (request?.stemType && request.stemType !== 'master') {
       const stem = request.stemType;
       const trackMap = new Map(tracks.map((t) => [t.id, t]));
       const matchesStem = (placed: PlacedClip) => {
+        if (placed.clip.id.startsWith('foley-')) {
+          return stem === 'sfx';
+        }
         const track = trackMap.get(placed.clip.trackId);
         return track ? isTrackMatchingStem(track, stem, request.stemRoutingMap) : false;
       };
@@ -1548,6 +1557,73 @@ export class SequenceRenderService {
       if (answer) withAudio.push(placed);
     }
     return withAudio;
+  }
+
+  /**
+   * S92 — Procedural whiteboard drawing foley audio synthesis.
+   *
+   * Scans non-muted video tracks for still clips configured with whiteboard
+   * animation effects where foley is not explicitly disabled (`foleyEnabled !== false`).
+   * Synthesizes 16-bit PCM WAV audio for each clip, aligned to its timeline start.
+   */
+  private async collectWhiteboardFoleyAudio(
+    document: SequenceDocument,
+    workDir: string,
+  ): Promise<PlacedClip[]> {
+    const { clips, tracks, sequence } = document;
+    const candidates = tracks
+      .filter((track) => track.kind === 'video' && !track.muted)
+      .flatMap((track) => layoutTrack(clips, track))
+      .filter(
+        (placed) =>
+          placed.clip.sourceKind === 'still' &&
+          placed.clip.effects?.whiteboard &&
+          placed.clip.effects.whiteboard.pattern &&
+          placed.clip.effects.whiteboard.foleyEnabled !== false,
+      );
+
+    if (candidates.length === 0) return [];
+
+    const foleyClips: PlacedClip[] = [];
+    for (const [idx, placed] of candidates.entries()) {
+      const whiteboard = placed.clip.effects!.whiteboard!;
+      const durationSeconds = framesToSeconds(placed.clip.durationFrames, sequence.fps);
+      const drawDurationSeconds = resolveWhiteboardDrawSeconds(whiteboard, placed.clip.durationFrames, sequence.fps);
+      const eraseDurationSeconds = resolveWhiteboardEraseSeconds(whiteboard, placed.clip.durationFrames, sequence.fps);
+      const foleyWavPath = path.join(workDir, `whiteboard-foley-${placed.clip.id}-${idx}.wav`);
+
+      try {
+        await synthesizeWhiteboardFoleyWav(foleyWavPath, {
+          durationSeconds,
+          drawDurationSeconds,
+          eraseDurationSeconds,
+          stylus: whiteboard.hand && whiteboard.hand !== 'none' ? whiteboard.hand : 'pen',
+          volume: whiteboard.foleyVolume ?? 0.6,
+        });
+
+        const foleyClip: PlacedClip = {
+          startFrames: placed.startFrames,
+          endFrames: placed.endFrames,
+          clip: {
+            ...placed.clip,
+            id: `foley-${placed.clip.id}`,
+            sourceKind: 'audio',
+            filePath: foleyWavPath,
+            sourceInFrames: 0,
+            durationFrames: placed.clip.durationFrames,
+            gainDb: 0,
+            duckExempt: false,
+          } as PlacedClip['clip'],
+        };
+        foleyClips.push(foleyClip);
+      } catch (err) {
+        this.logger.warn('Failed to synthesize whiteboard foley audio; skipping', {
+          clipId: placed.clip.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return foleyClips;
   }
 
   /**

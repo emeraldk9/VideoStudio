@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 import {
@@ -6,6 +6,8 @@ import {
   WHITEBOARD_MAX_ZONE_POINTS,
   WHITEBOARD_MAX_ZONE_WEIGHT,
   WHITEBOARD_MIN_ZONE_WEIGHT,
+  exportWhiteboardAnnotation,
+  importWhiteboardAnnotation,
   polygonBounds,
   polygonCentroid,
   simplifyPolyline,
@@ -102,8 +104,138 @@ export function WhiteboardZoneEditorModal({
     })),
   );
   const [selectedKey, setSelectedKey] = useState<number | null>(null);
+  const [selectedVertexIndex, setSelectedVertexIndex] = useState<number | null>(null);
   /** The in-flight freehand polyline, rendered live; `null` when not drawing. */
   const [drawing, setDrawing] = useState<PolygonPoint[] | null>(null);
+
+  // Live simulation playback state
+  const [isPlayingSimulation, setIsPlayingSimulation] = useState(false);
+  const [simProgress, setSimProgress] = useState(0);
+
+  const insertVertex = useCallback((key: number, afterIndex: number, point: PolygonPoint) => {
+    setDraft((current) =>
+      current.map((zone) => {
+        if (zone.key !== key || zone.points.length >= WHITEBOARD_MAX_ZONE_POINTS) return zone;
+        const newPoints = [...zone.points];
+        newPoints.splice(afterIndex + 1, 0, point);
+        return { ...zone, points: newPoints };
+      }),
+    );
+    setSelectedVertexIndex(afterIndex + 1);
+  }, []);
+
+  const deleteVertex = useCallback((key: number, vertexIndex: number) => {
+    setDraft((current) =>
+      current.map((zone) => {
+        if (zone.key !== key || zone.points.length <= 3) return zone;
+        return {
+          ...zone,
+          points: zone.points.filter((_, idx) => idx !== vertexIndex),
+        };
+      }),
+    );
+    setSelectedVertexIndex(null);
+  }, []);
+
+  // Keyboard shortcut: Delete or Backspace to delete selected vertex
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        selectedKey !== null &&
+        selectedVertexIndex !== null
+      ) {
+        if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+        deleteVertex(selectedKey, selectedVertexIndex);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedKey, selectedVertexIndex, deleteVertex]);
+
+  // Live simulation animation loop
+  useEffect(() => {
+    if (!isPlayingSimulation || draft.length === 0) return;
+    let animationFrameId: number;
+    const startTime = performance.now();
+    const durationMs = Math.max(2500, draft.length * 1800);
+
+    const tick = (now: number) => {
+      const elapsed = now - startTime;
+      const p = (elapsed % durationMs) / durationMs;
+      setSimProgress(p);
+      animationFrameId = requestAnimationFrame(tick);
+    };
+
+    animationFrameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isPlayingSimulation, draft.length]);
+
+  const simulationState = useMemo(() => {
+    if (!isPlayingSimulation || draft.length === 0) return null;
+    const totalWeight = draft.reduce((sum, z) => sum + (z.weight ?? 1), 0);
+    if (totalWeight <= 0) return null;
+
+    let cumulative = 0;
+    for (let i = 0; i < draft.length; i++) {
+      const zone = draft[i];
+      const zoneWeight = (zone.weight ?? 1) / totalWeight;
+      const zoneStart = cumulative;
+      const zoneEnd = cumulative + zoneWeight;
+      cumulative = zoneEnd;
+
+      if (simProgress >= zoneStart && simProgress < zoneEnd) {
+        const localT = (simProgress - zoneStart) / Math.max(0.0001, zoneWeight);
+        const bounds = polygonBounds(zone.points);
+        let tip: PolygonPoint = polygonCentroid(zone.points);
+
+        if (zone.type === 'sketch') {
+          const idx = Math.floor(localT * zone.points.length);
+          const nextIdx = (idx + 1) % zone.points.length;
+          const segT = localT * zone.points.length - idx;
+          const p0 = zone.points[idx];
+          const p1 = zone.points[nextIdx];
+          tip = {
+            x: p0.x + (p1.x - p0.x) * segT,
+            y: p0.y + (p1.y - p0.y) * segT,
+          };
+        } else if (zone.type === 'writing') {
+          const rows = zone.rows ?? 4;
+          const rowIdx = Math.floor(localT * rows);
+          const colT = localT * rows - rowIdx;
+          tip = {
+            x: bounds.minX + colT * (bounds.maxX - bounds.minX),
+            y: bounds.minY + ((rowIdx + 0.5) / rows) * (bounds.maxY - bounds.minY),
+          };
+        } else if (zone.type === 'wipe') {
+          const sweep = zone.sweep ?? 'lr';
+          if (sweep === 'lr') {
+            tip = {
+              x: bounds.minX + localT * (bounds.maxX - bounds.minX),
+              y: (bounds.minY + bounds.maxY) / 2,
+            };
+          } else if (sweep === 'rl') {
+            tip = {
+              x: bounds.maxX - localT * (bounds.maxX - bounds.minX),
+              y: (bounds.minY + bounds.maxY) / 2,
+            };
+          } else {
+            tip = {
+              x: (bounds.minX + bounds.maxX) / 2,
+              y: bounds.minY + localT * (bounds.maxY - bounds.minY),
+            };
+          }
+        }
+
+        return {
+          activeZoneIndex: i,
+          activeZoneKey: zone.key,
+          tip,
+        };
+      }
+    }
+    return null;
+  }, [isPlayingSimulation, draft, simProgress]);
 
   /**
    * The stage box, sized in px to the largest sequence-aspect rectangle the
@@ -281,6 +413,61 @@ export function WhiteboardZoneEditorModal({
     onClose();
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportAnnotation = () => {
+    const payload = exportWhiteboardAnnotation(
+      draft.map((zone) => ({
+        points: zone.points.map((p) => ({ ...p })),
+        entrance: 'draw' as const,
+        type: zone.type,
+        rows: zone.rows,
+        sweep: zone.sweep,
+        weight: zone.weight,
+      })),
+      sequenceWidth,
+      sequenceHeight,
+    );
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'annotation.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const parsed = JSON.parse(text);
+        const importedZones = importWhiteboardAnnotation(parsed, sequenceWidth, sequenceHeight);
+        if (importedZones.length > 0) {
+          const newDraft: DraftZone[] = importedZones.map((z) => ({
+            key: (nextZoneKey += 1),
+            points: z.points,
+            type: z.type ?? 'sketch',
+            rows: z.rows ?? 4,
+            sweep: z.sweep ?? 'lr',
+            weight: z.weight ?? 1,
+          }));
+          setDraft(newDraft);
+          setSelectedKey(newDraft[0].key);
+        }
+      } catch (err) {
+        console.error('Failed to import whiteboard annotation:', err);
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const svgPoints = (points: readonly PolygonPoint[]): string =>
     points.map((point) => `${point.x * sequenceWidth},${point.y * sequenceHeight}`).join(' ');
 
@@ -301,6 +488,30 @@ export function WhiteboardZoneEditorModal({
                 draggable={false}
                 className="pointer-events-none absolute inset-0 h-full w-full object-contain"
               />
+              {/* Stage Overlay Controls */}
+              <div className="absolute top-2 left-2 z-20 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPlayingSimulation((prev) => !prev)}
+                  disabled={draft.length === 0}
+                  className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur shadow-md border transition-all ${
+                    isPlayingSimulation
+                      ? 'bg-accent-warning text-black border-accent-warning shadow-accent-warning/20'
+                      : 'bg-black/75 text-white border-white/15 hover:bg-black/90 hover:border-accent-ai/50'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">
+                    {isPlayingSimulation ? 'pause' : 'play_arrow'}
+                  </span>
+                  <span>{isPlayingSimulation ? 'Pause Test' : 'Test Sequence'}</span>
+                  {isPlayingSimulation && (
+                    <span className="ml-1 font-mono text-[10px] opacity-80">
+                      {Math.round(simProgress * 100)}%
+                    </span>
+                  )}
+                </button>
+              </div>
+
               <svg
                 className="absolute inset-0 h-full w-full cursor-crosshair touch-none"
                 viewBox={`0 0 ${sequenceWidth} ${sequenceHeight}`}
@@ -311,16 +522,17 @@ export function WhiteboardZoneEditorModal({
               >
                 {draft.map((zone, index) => {
                   const selected = zone.key === selectedKey;
+                  const isSimulatingActive = simulationState?.activeZoneKey === zone.key;
                   const centroid = polygonCentroid(zone.points);
                   return (
                     <g key={zone.key}>
                       <polygon
                         points={svgPoints(zone.points)}
-                        fill="var(--accent-ai)"
-                        fillOpacity={selected ? 0.28 : 0.16}
+                        fill={isSimulatingActive ? 'var(--accent-warning)' : 'var(--accent-ai)'}
+                        fillOpacity={isSimulatingActive ? 0.45 : selected ? 0.28 : 0.16}
                         fillRule="evenodd"
-                        stroke="var(--accent-ai)"
-                        strokeWidth={selected ? 2.5 : 1.5}
+                        stroke={isSimulatingActive ? 'var(--accent-warning)' : 'var(--accent-ai)'}
+                        strokeWidth={isSimulatingActive ? 3.5 : selected ? 2.5 : 1.5}
                         vectorEffect="non-scaling-stroke"
                         className="cursor-move"
                         onPointerDown={(event) => startZoneMove(event, zone.key)}
@@ -331,30 +543,70 @@ export function WhiteboardZoneEditorModal({
                         textAnchor="middle"
                         dominantBaseline="central"
                         fontSize={sequenceWidth * 0.03}
-                        fill="var(--accent-ai)"
-                        className="pointer-events-none select-none font-bold"
+                        fill={isSimulatingActive ? 'var(--accent-warning)' : 'var(--accent-ai)'}
+                        className="pointer-events-none select-none font-bold drop-shadow"
                       >
                         {index + 1}
                       </text>
-                      {selected
-                        ? zone.points.map((point, vertexIndex) => (
-                            <circle
-                              // Vertices have no identity beyond their slot.
-                              // eslint-disable-next-line react/no-array-index-key
-                              key={vertexIndex}
-                              cx={point.x * sequenceWidth}
-                              cy={point.y * sequenceHeight}
-                              r={sequenceWidth * 0.006}
-                              fill="var(--accent-ai)"
-                              stroke="var(--bg-workspace)"
-                              vectorEffect="non-scaling-stroke"
-                              className="cursor-grab"
-                              onPointerDown={(event) =>
-                                startVertexDrag(event, zone.key, vertexIndex)
-                              }
-                            />
-                          ))
-                        : null}
+                      {selected ? (
+                        <>
+                          {/* Midpoint Insertion Handles */}
+                          {zone.points.length < WHITEBOARD_MAX_ZONE_POINTS &&
+                            zone.points.map((point, i) => {
+                              const next = zone.points[(i + 1) % zone.points.length];
+                              const midX = (point.x + next.x) / 2;
+                              const midY = (point.y + next.y) / 2;
+                              return (
+                                <circle
+                                  key={`mid-${i}`}
+                                  cx={midX * sequenceWidth}
+                                  cy={midY * sequenceHeight}
+                                  r={sequenceWidth * 0.004}
+                                  fill="var(--accent-warning)"
+                                  opacity={0.65}
+                                  stroke="var(--bg-workspace)"
+                                  vectorEffect="non-scaling-stroke"
+                                  className="cursor-copy hover:opacity-100 hover:scale-150 transition-all"
+                                  onPointerDown={(event) => {
+                                    event.stopPropagation();
+                                    insertVertex(zone.key, i, { x: midX, y: midY });
+                                  }}
+                                >
+                                  <title>Click to insert vertex along this segment</title>
+                                </circle>
+                              );
+                            })}
+
+                          {/* Vertices */}
+                          {zone.points.map((point, vertexIndex) => {
+                            const isVertexSelected = selectedVertexIndex === vertexIndex;
+                            return (
+                              <circle
+                                key={`vert-${vertexIndex}`}
+                                cx={point.x * sequenceWidth}
+                                cy={point.y * sequenceHeight}
+                                r={sequenceWidth * (isVertexSelected ? 0.008 : 0.006)}
+                                fill={isVertexSelected ? 'var(--accent-warning)' : 'var(--accent-ai)'}
+                                stroke="var(--bg-workspace)"
+                                strokeWidth={isVertexSelected ? 2 : 1}
+                                vectorEffect="non-scaling-stroke"
+                                className="cursor-grab hover:scale-125 transition-transform"
+                                onPointerDown={(event) => {
+                                  setSelectedVertexIndex(vertexIndex);
+                                  startVertexDrag(event, zone.key, vertexIndex);
+                                }}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  deleteVertex(zone.key, vertexIndex);
+                                }}
+                              >
+                                <title>{`Vertex ${vertexIndex + 1} (Right-click or Del to remove)`}</title>
+                              </circle>
+                            );
+                          })}
+                        </>
+                      ) : null}
                     </g>
                   );
                 })}
@@ -369,6 +621,28 @@ export function WhiteboardZoneEditorModal({
                     className="pointer-events-none"
                   />
                 ) : null}
+
+                {/* Simulation Stylus Pointer */}
+                {isPlayingSimulation && simulationState && (
+                  <g
+                    transform={`translate(${simulationState.tip.x * sequenceWidth}, ${simulationState.tip.y * sequenceHeight})`}
+                    className="pointer-events-none transition-all duration-75"
+                  >
+                    <circle
+                      r={sequenceWidth * 0.006}
+                      fill="var(--accent-warning)"
+                      stroke="black"
+                      strokeWidth={1.5}
+                    />
+                    <path
+                      d="M 0 0 L 14 -32 L 22 -28 Z"
+                      fill="#f59e0b"
+                      stroke="black"
+                      strokeWidth={1}
+                      filter="drop-shadow(0 2px 4px rgba(0,0,0,0.5))"
+                    />
+                  </g>
+                )}
               </svg>
             </div>
           ) : null}
@@ -476,9 +750,29 @@ export function WhiteboardZoneEditorModal({
         </div>
       </div>
       <div className="mt-4 flex shrink-0 items-center justify-between gap-3">
-        <span className="text-xs text-text-disabled">
-          {draft.length}/{WHITEBOARD_MAX_ZONES} zones
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-disabled">
+            {draft.length}/{WHITEBOARD_MAX_ZONES} zones
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={handleImportFile}
+          />
+          <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
+            Import Annotation
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={draft.length === 0}
+            onClick={handleExportAnnotation}
+          >
+            Export Annotation
+          </Button>
+        </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel

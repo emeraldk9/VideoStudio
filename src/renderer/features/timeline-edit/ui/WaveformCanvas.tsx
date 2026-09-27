@@ -11,8 +11,8 @@ export interface WaveformCanvasProps {
   pixelsPerSecond: number;
   widthPx: number;
   heightPx: number;
-  /** 'audio' (default, full lane height) or 'video' (lower third overlay). */
-  laneKind?: 'audio' | 'video';
+  /** 'audio' (default, full lane height), 'video' (lower third overlay), or 'sketch' (subtle underlay). */
+  laneKind?: 'audio' | 'video' | 'sketch';
 }
 
 /**
@@ -49,6 +49,7 @@ export function WaveformCanvas({
   const { read, themeVersion } = useThemeTokens();
 
   const isVideo = laneKind === 'video';
+  const isSketch = laneKind === 'sketch';
   const relevantClips = isVideo
     ? placed.filter(
         (item) =>
@@ -120,7 +121,10 @@ export function WaveformCanvas({
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, widthPx, heightPx);
 
-    if (isVideo) {
+    if (isSketch) {
+      context.fillStyle = read('--accent-ai');
+      context.globalAlpha = 0.35;
+    } else if (isVideo) {
       context.fillStyle = read('--accent-ai');
       context.globalAlpha = 0.45;
     } else {
@@ -130,7 +134,7 @@ export function WaveformCanvas({
 
     const pixelsPerFrame = pixelsPerSecond / fps;
     const middle = isVideo ? heightPx - heightPx * 0.18 : heightPx / 2;
-    const maxBarHeight = isVideo ? heightPx * 0.32 : heightPx - 2;
+    const maxBarHeight = isVideo ? heightPx * 0.32 : isSketch ? heightPx * 0.7 : heightPx - 2;
 
     for (const item of relevantClips) {
       if (!item.clip.filePath) continue;

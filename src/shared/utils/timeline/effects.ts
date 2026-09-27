@@ -600,7 +600,7 @@ export const clipEffectsSchema = z
         // S5 / S6 — Keyframe In start delay (fraction and seconds)
         inFraction: boundedNumber(0, 1).optional(),
         inSeconds: z.number().min(0).max(3600).optional(),
-        hand: z.enum(['pen', 'marker', 'none']),
+        hand: z.enum(['pen', 'marker', 'pencil', 'chalk', 'none']),
         // S296 — the reveal clock's step rate; absent = smooth (pre-S296).
         cadenceFps: z
           .number()
@@ -624,6 +624,8 @@ export const clipEffectsSchema = z
                 entrance: z.enum(['draw']),
                 type: z.enum(['sketch', 'scribble', 'writing', 'wipe']).optional(),
                 hatchAngle: z.number().optional(),
+                crossHatch: z.boolean().optional(),
+                hatchSpacingPx: boundedNumber(2, 50).optional(),
                 rows: z.number().int().min(2).max(16).optional(),
                 sweep: z.enum(['lr', 'rl', 'tb']).optional(),
                 weight: boundedNumber(WHITEBOARD_MIN_ZONE_WEIGHT, WHITEBOARD_MAX_ZONE_WEIGHT).optional(),
@@ -639,6 +641,764 @@ export const clipEffectsSchema = z
             detail: z.enum(['low', 'medium', 'high']),
             order: z.enum(['reading', 'nearest']),
             strokeFraction: boundedNumber(0.1, 0.95).optional(),
+          })
+          .strict()
+          .optional(),
+        // S91 — procedural whiteboard drawing foley sound effects
+        foleyEnabled: z.boolean().optional(),
+        foleyVolume: boundedNumber(0, 1).optional(),
+        // S93 — procedural whiteboard board clearing / erase-out
+        eraseOut: z.boolean().optional(),
+        eraseFraction: boundedNumber(0.05, 0.40).optional(),
+        erasePattern: z.enum(['zigzag', 'wipe']).optional(),
+        // S94 — stroke decimation & Catmull-Rom Bezier smoothing
+        strokeSmoothing: z.enum(['none', 'subtle', 'smooth', 'high']).optional(),
+        simplifyTolerance: boundedNumber(0, 3.0).optional(),
+        // S95 — vector path continuous morphing
+        morphTransition: z
+          .object({
+            enabled: z.boolean().optional(),
+            easing: z.enum(['linear', 'ease-in-out', 'elastic']).optional(),
+            durationSeconds: boundedNumber(0.1, 10).optional(),
+          })
+          .strict()
+          .optional(),
+        // S96 — procedural cross-hatching and graphite texture shading
+        shadingStyle: z.enum(['bloom', 'hatch', 'crosshatch']).optional(),
+        hatchAngle: z.number().optional(),
+        hatchSpacingPx: boundedNumber(2, 50).optional(),
+        crossHatch: z.boolean().optional(),
+        // S97 — dynamic calligraphy & chisel nib geometry
+        brushDynamics: z
+          .object({
+            taper: z.boolean().optional(),
+            chiselNib: z.boolean().optional(),
+            nibAngleDeg: boundedNumber(0, 180).optional(),
+            minWidthRatio: boundedNumber(0.1, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S98 — multi-path saliency clustering & contour prioritization
+        clusteringMode: z.enum(['none', 'proximity', 'saliency', 'hierarchical']).optional(),
+        // S100 — dynamic inertial viewport camera follower & directional hand shadow
+        cameraFollower: z
+          .object({
+            enabled: z.boolean().optional(),
+            zoom: boundedNumber(1.0, 3.0).optional(),
+            smoothness: boundedNumber(0.1, 0.98).optional(),
+            showHandShadow: z.boolean().optional(),
+            shadowAngleDeg: boundedNumber(0, 360).optional(),
+          })
+          .strict()
+          .optional(),
+        // S101 — physical ink bleed, wet-edge pooling & chalk dust
+        inkPhysics: z
+          .object({
+            bleedIntensity: boundedNumber(0, 1.0).optional(),
+            poolingFactor: boundedNumber(0, 1.0).optional(),
+            dustParticles: z.boolean().optional(),
+            subtractiveBlend: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S103 — custom hand stylus asset calibration & dynamic pose warping
+        customHand: z
+          .object({
+            assetUri: z.string().optional(),
+            nibAnchorPct: z.object({ x: boundedNumber(0, 1), y: boundedNumber(0, 1) }).strict().optional(),
+            wristAnchorPct: z.object({ x: boundedNumber(0, 1), y: boundedNumber(0, 1) }).strict().optional(),
+            dynamicTilt: z.boolean().optional(),
+            tiltIntensity: boundedNumber(0, 1).optional(),
+            scale: boundedNumber(0.1, 5).optional(),
+          })
+          .strict()
+          .optional(),
+        // S104 — bitmap vectorization & contour auto-trace
+        autoTrace: z
+          .object({
+            enabled: z.boolean().optional(),
+            threshold: z.number().int().min(0).max(255).optional(),
+            minPathLength: boundedNumber(1, 1000).optional(),
+            cornerTolerance: boundedNumber(0.1, 10).optional(),
+          })
+          .strict()
+          .optional(),
+        // S105 — kinetic typography & handwriting cadence
+        kineticTypography: z
+          .object({
+            enabled: z.boolean().optional(),
+            letterCadenceMs: boundedNumber(10, 2000).optional(),
+            punctuationPauseMs: boundedNumber(10, 3000).optional(),
+            cursiveLigatures: z.boolean().optional(),
+            handwritingJitter: boundedNumber(0, 1).optional(),
+          })
+          .strict()
+          .optional(),
+        // S106 — multi-language bidirectional RTL writing & diacritic scheduling
+        bidiWriting: z
+          .object({
+            direction: z.enum(['auto', 'ltr', 'rtl', 'vertical', 'neutral']).optional(),
+            deferDiacritics: z.boolean().optional(),
+            diacriticDelayMs: boundedNumber(0, 1000).optional(),
+          })
+          .strict()
+          .optional(),
+        // S107 — pressure-sensitive stylus dynamics & variable ribbon
+        stylusPressure: z
+          .object({
+            enabled: z.boolean().optional(),
+            curve: z.enum(['linear', 'exponential', 'sigmoid', 'calligraphic']).optional(),
+            sensitivity: boundedNumber(0.1, 3.0).optional(),
+            minWidthPct: boundedNumber(0.05, 0.95).optional(),
+            tiltDeformation: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S108 — granular surface friction & nib wear
+        surfaceFriction: z
+          .object({
+            enabled: z.boolean().optional(),
+            surfaceType: z.enum(['whiteboard', 'paper', 'slate', 'canvas']).optional(),
+            grainScale: boundedNumber(0.1, 5.0).optional(),
+            nibWearRate: boundedNumber(0, 1.0).optional(),
+            toothRoughness: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S109 — procedural smudge blending & eraser highlights
+        smudgeBlend: z
+          .object({
+            enabled: z.boolean().optional(),
+            mode: z.enum(['finger', 'stump', 'towel', 'kneaded_eraser']).optional(),
+            radiusPx: boundedNumber(1, 200).optional(),
+            strength: boundedNumber(0, 1.0).optional(),
+            liftHighlights: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S110 — multi-tool hot-swapping & eraser cap flip
+        toolSwap: z
+          .object({
+            enabled: z.boolean().optional(),
+            defaultTransition: z.enum(['flip', 'dock', 'instant']).optional(),
+            durationSec: boundedNumber(0.1, 5.0).optional(),
+            dockX: boundedNumber(0, 1.0).optional(),
+            dockY: boundedNumber(0, 1.0).optional(),
+            foleyAudioCues: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S111 — attention lighting & dynamic vignetting
+        attentionLighting: z
+          .object({
+            enabled: z.boolean().optional(),
+            spotlightRadiusPx: boundedNumber(50, 1200).optional(),
+            spotlightIntensity: boundedNumber(0, 1.0).optional(),
+            vignetteStrength: boundedNumber(0, 1.0).optional(),
+            inertia: boundedNumber(0, 0.99).optional(),
+          })
+          .strict()
+          .optional(),
+        // S112 — geometric drafting guides (ruler & compass)
+        draftingGuide: z
+          .object({
+            enabled: z.boolean().optional(),
+            mode: z.enum(['auto', 'ruler', 'compass', 'none']).optional(),
+            material: z.enum(['acrylic', 'wood', 'metal']).optional(),
+            minLineLengthPx: boundedNumber(20, 1000).optional(),
+            slideAudioCue: z.boolean().optional(),
+            showGraduations: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S113 — optical depth-of-field & bokeh hand blur
+        depthOfField: z
+          .object({
+            enabled: z.boolean().optional(),
+            aperture: z.enum(['f1.4', 'f1.8', 'f2.8', 'f4.0', 'f5.6']).optional(),
+            maxBlurPx: boundedNumber(1, 100).optional(),
+            tipLiftDefocus: z.boolean().optional(),
+            wristElevationMm: boundedNumber(10, 500).optional(),
+          })
+          .strict()
+          .optional(),
+        // S114 — multi-hand duet collaboration
+        dualHandDuet: z
+          .object({
+            enabled: z.boolean().optional(),
+            partitionMode: z.enum(['spatial', 'interleaved', 'sync']).optional(),
+            minSeparationPx: boundedNumber(50, 600).optional(),
+            collisionLiftPx: boundedNumber(10, 300).optional(),
+            stereoFoleyPanning: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S115 — whiteboard chroma chalk & neon UV luminescence
+        chromaChalk: z
+          .object({
+            enabled: z.boolean().optional(),
+            palette: z.enum(['cyber', 'pastels', 'arcade']).optional(),
+            bloomRadiusPx: boundedNumber(1, 100).optional(),
+            bloomIntensity: boundedNumber(0, 3.0).optional(),
+            chromaticAberrationPx: boundedNumber(0, 10).optional(),
+            darkSlateBackground: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S116 — wet sponge evaporation & moisture condensation
+        wetSponge: z
+          .object({
+            enabled: z.boolean().optional(),
+            initialWetness: boundedNumber(0.01, 1.0).optional(),
+            dryingTimeSec: boundedNumber(0.5, 60.0).optional(),
+            dilutionFactor: boundedNumber(0, 1.0).optional(),
+            gravityDrip: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S117 — optical glass lightboard & edge-lit luminescence
+        lightboard: z
+          .object({
+            enabled: z.boolean().optional(),
+            mirrorHorizontal: z.boolean().optional(),
+            ledPreset: z.enum(['cyan', 'emerald', 'amber', 'white']).optional(),
+            customLedColorHex: hexColorSchema.optional(),
+            ledIntensity: boundedNumber(0.1, 5.0).optional(),
+            glassThicknessPx: boundedNumber(1, 30).optional(),
+            ghostReflectionOpacity: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S118 — smart geometric shape recognition & snap-to-vector primitive
+        shapeRecognition: z
+          .object({
+            enabled: z.boolean().optional(),
+            snapTolerance: boundedNumber(0.05, 0.90).optional(),
+            angleSnap: z.boolean().optional(),
+            morphDurationSec: boundedNumber(0.05, 3.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S119 — whiteboard laser pointer & phosphor afterglow
+        laserPointer: z
+          .object({
+            enabled: z.boolean().optional(),
+            colorPreset: z.enum(['emerald', 'ruby', 'violet']).optional(),
+            customColorHex: hexColorSchema.optional(),
+            coreRadiusPx: boundedNumber(1, 20).optional(),
+            haloRadiusPx: boundedNumber(4, 60).optional(),
+            persistenceSec: boundedNumber(0.05, 5.0).optional(),
+            trailIntensity: boundedNumber(0.1, 3.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S120 — whiteboard magnetic grid & perspective drafting substrate
+        gridSubstrate: z
+          .object({
+            enabled: z.boolean().optional(),
+            mode: z.enum(['cartesian', 'isometric', 'perspective', 'dots']).optional(),
+            spacingPx: boundedNumber(5, 500).optional(),
+            snapRadiusPx: boundedNumber(1, 100).optional(),
+            horizonYPct: boundedNumber(0.05, 0.95).optional(),
+            opacity: boundedNumber(0, 1.0).optional(),
+            gridColor: hexColorSchema.optional(),
+          })
+          .strict()
+          .optional(),
+        // S121 — procedural whiteboard hand contact shadows & ambient occlusion
+        contactShadow: z
+          .object({
+            enabled: z.boolean().optional(),
+            lightAngleDeg: boundedNumber(0, 360).optional(),
+            shadowOpacity: boundedNumber(0.01, 1.0).optional(),
+            blurRadiusPx: boundedNumber(1, 100).optional(),
+            offsetDistancePx: boundedNumber(0, 100).optional(),
+            liftDissipation: boundedNumber(0, 1.0).optional(),
+            wristSkewFactor: boundedNumber(0.5, 5.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S122 — whiteboard marker ink depletion, dry-out streaking & chalk micro-chatter
+        inkDepletion: z
+          .object({
+            enabled: z.boolean().optional(),
+            depletionRate: boundedNumber(0.0001, 0.1).optional(),
+            minSaturation: boundedNumber(0.05, 0.95).optional(),
+            streakCount: z.number().int().min(1).max(20).optional(),
+            rechargeRate: boundedNumber(0.01, 5.0).optional(),
+            chatterFrequency: boundedNumber(0.01, 2.0).optional(),
+            enableChalkChatter: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S123 — whiteboard dynamic tool auto-invocation & staging carousel
+        toolOrchestrator: z
+          .object({
+            enabled: z.boolean().optional(),
+            autoRulerThresholdPx: boundedNumber(10, 500).optional(),
+            autoLaserHoldSec: boundedNumber(0.05, 5.0).optional(),
+            toolEnterDurationSec: boundedNumber(0.05, 3.0).optional(),
+            toolDismissTimeoutSec: boundedNumber(0.1, 5.0).optional(),
+            trayPosition: z.enum(['bottom-right', 'bottom-left', 'top-right']).optional(),
+          })
+          .strict()
+          .optional(),
+        // S124 — whiteboard multi-color palette carousel & pen dock
+        paletteDock: z
+          .object({
+            enabled: z.boolean().optional(),
+            dockStyle: z.enum(['caddy', 'ring_dock', 'multipen_click']).optional(),
+            activeColorIdx: z.number().int().min(0).max(7).optional(),
+            palettePreset: z.enum(['standard', 'neon', 'earth']).optional(),
+            rotationDurationSec: boundedNumber(0.05, 3.0).optional(),
+            clickFoleyVolume: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S125 — whiteboard stylus pressure audio & squeak resonance
+        pressureAudio: z
+          .object({
+            enabled: z.boolean().optional(),
+            baseFreqHz: boundedNumber(100, 5000).optional(),
+            pitchSensitivity: boundedNumber(0, 1.0).optional(),
+            squeakThresholdPressure: boundedNumber(0.1, 1.0).optional(),
+            squeakThresholdVelocity: boundedNumber(10, 2000).optional(),
+            squeakBaseFreqHz: boundedNumber(500, 10000).optional(),
+            squeakVolume: boundedNumber(0, 1.0).optional(),
+            hapticThumpVolume: boundedNumber(0, 1.0).optional(),
+            hapticRumbleGain: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S126 — whiteboard sticky notes & stencil masking
+        stickyNote: z
+          .object({
+            enabled: z.boolean().optional(),
+            colorPreset: z.enum(['canary', 'pink', 'cyan', 'mint', 'orange']).optional(),
+            customColorHex: hexColorSchema.optional(),
+            posX: boundedNumber(-2000, 4000).optional(),
+            posY: boundedNumber(-2000, 4000).optional(),
+            width: boundedNumber(50, 1200).optional(),
+            height: boundedNumber(50, 1200).optional(),
+            rotationDeg: boundedNumber(-180, 180).optional(),
+            peelElevationPx: boundedNumber(0, 50).optional(),
+            pinStyle: z.enum(['magnet', 'pushpin', 'tape', 'none']).optional(),
+          })
+          .strict()
+          .optional(),
+        stencilMask: z
+          .object({
+            enabled: z.boolean().optional(),
+            shape: z.enum(['rectangle', 'circle', 'speech_bubble']).optional(),
+            invertMask: z.boolean().optional(),
+            posX: boundedNumber(-2000, 4000).optional(),
+            posY: boundedNumber(-2000, 4000).optional(),
+            width: boundedNumber(50, 2000).optional(),
+            height: boundedNumber(50, 2000).optional(),
+            radius: boundedNumber(10, 1000).optional(),
+          })
+          .strict()
+          .optional(),
+        // S127 — whiteboard lasso gesture recognition & auto-callout badges
+        lassoCallout: z
+          .object({
+            enabled: z.boolean().optional(),
+            closureThresholdRatio: boundedNumber(0.05, 0.95).optional(),
+            minEnclosedArea: boundedNumber(10, 50000).optional(),
+            calloutStyle: z.enum(['pulse_beacon', 'badge_pin', 'magnifier_loupe']).optional(),
+            badgeLabel: z.string().max(10).optional(),
+            pulseFrequencyHz: boundedNumber(0.1, 10.0).optional(),
+            glowColorHex: hexColorSchema.optional(),
+          })
+          .strict()
+          .optional(),
+        // S128 — whiteboard broad chisel-tip fluorescent highlighter
+        highlighter: z
+          .object({
+            enabled: z.boolean().optional(),
+            colorPreset: z.enum(['yellow', 'green', 'pink', 'cyan', 'orange']).optional(),
+            customColorHex: hexColorSchema.optional(),
+            nibWidthPx: boundedNumber(5, 100).optional(),
+            nibAngleDeg: boundedNumber(0, 180).optional(),
+            opacity: boundedNumber(0.05, 1.0).optional(),
+            compositeMode: z.enum(['subtractive_multiply', 'under_ink']).optional(),
+          })
+          .strict()
+          .optional(),
+        // S129 — whiteboard multi-source hand lighting & dual-penumbra contact shadows
+        multiSourceLighting: z
+          .object({
+            enabled: z.boolean().optional(),
+            keyLight: z
+              .object({
+                angleDeg: boundedNumber(0, 360).optional(),
+                intensity: boundedNumber(0, 1.0).optional(),
+                distancePx: boundedNumber(0, 100).optional(),
+                blurRadiusPx: boundedNumber(1, 100).optional(),
+              })
+              .strict()
+              .optional(),
+            fillLight: z
+              .object({
+                angleDeg: boundedNumber(0, 360).optional(),
+                intensity: boundedNumber(0, 1.0).optional(),
+                distancePx: boundedNumber(0, 100).optional(),
+                blurRadiusPx: boundedNumber(1, 100).optional(),
+              })
+              .strict()
+              .optional(),
+            ambientOcclusionIntensity: boundedNumber(0, 1.0).optional(),
+            liftHeightPx: boundedNumber(0, 100).optional(),
+            inverseSquareFalloff: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S130 — whiteboard chalk dust settling & gravitational tray physics
+        chalkDustSettling: z
+          .object({
+            enabled: z.boolean().optional(),
+            gravitySpeed: boundedNumber(10, 300).optional(),
+            terminalVelocity: boundedNumber(10, 300).optional(),
+            turbulenceAmplitude: boundedNumber(0, 10.0).optional(),
+            trayYPercent: boundedNumber(0.50, 0.99).optional(),
+            trayDepthPx: boundedNumber(2, 100).optional(),
+            reposeSigma: boundedNumber(0.5, 50).optional(),
+            accumulationGain: boundedNumber(1.0, 100).optional(),
+            chalkColorHex: hexColorSchema.optional(),
+          })
+          .strict()
+          .optional(),
+        // S131 — whiteboard hand shadow soft-penumbra contact AO with silhouette tracing
+        handSilhouettePenumbra: z
+          .object({
+            enabled: z.boolean().optional(),
+            lightElevationMm: boundedNumber(100, 3000).optional(),
+            wristElevationMm: boundedNumber(10, 300).optional(),
+            umbraOpacity: boundedNumber(0.05, 1.0).optional(),
+            maxPenumbraBlurPx: boundedNumber(1, 100).optional(),
+            minUmbraBlurPx: boundedNumber(0.5, 30).optional(),
+            aoIntensity: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S132 — whiteboard marker cap snap & pressure vacuum click foley acoustics
+        capSnapFoley: z
+          .object({
+            enabled: z.boolean().optional(),
+            volume: boundedNumber(0, 1.0).optional(),
+            snapSharpness: boundedNumber(0.1, 1.0).optional(),
+            suctionDepth: boundedNumber(0.1, 1.0).optional(),
+            magneticSnapDistancePx: boundedNumber(10, 100).optional(),
+            autoFoleyOnToolSwap: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S133 — whiteboard multi-color pen ribbon blending & gradient transition wash
+        gradientWash: z
+          .object({
+            enabled: z.boolean().optional(),
+            washLengthPx: boundedNumber(10, 150).optional(),
+            useOklab: z.boolean().optional(),
+            secondaryColorHex: hexColorSchema.optional(),
+            ditherNoise: boundedNumber(0, 0.20).optional(),
+          })
+          .strict()
+          .optional(),
+        // S134 — whiteboard felt-tip marker nib splay & directional fiber compression dynamics
+        nibSplay: z
+          .object({
+            enabled: z.boolean().optional(),
+            splayGain: boundedNumber(0.2, 2.5).optional(),
+            fiberStiffness: boundedNumber(0.1, 0.95).optional(),
+            dragDeflection: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S135 — whiteboard wet-on-wet capillary bleed & pigment diffusion at stroke intersections
+        capillaryBleed: z
+          .object({
+            enabled: z.boolean().optional(),
+            dryingTimeSec: boundedNumber(0.5, 5.0).optional(),
+            bleedBloomRadiusPx: boundedNumber(2.0, 15.0).optional(),
+            solventDilution: boundedNumber(0, 0.70).optional(),
+            featherSpikes: boundedNumber(3, 12).optional(),
+          })
+          .strict()
+          .optional(),
+        // S136 — whiteboard dry-erase felt eraser swipe smear & ghosting residuals
+        eraserGhosting: z
+          .object({
+            enabled: z.boolean().optional(),
+            feltSaturationRate: boundedNumber(0.01, 0.20).optional(),
+            smearOpacity: boundedNumber(0.01, 0.15).optional(),
+            ghostPersistence: boundedNumber(0.01, 0.12).optional(),
+            cleaningDecayRate: boundedNumber(0.20, 0.80).optional(),
+          })
+          .strict()
+          .optional(),
+        // S137 — whiteboard dual-layer tempered glass specular glare & parallax reflection
+        glassParallax: z
+          .object({
+            enabled: z.boolean().optional(),
+            glassThickness: boundedNumber(1.0, 25.0).optional(),
+            fresnelGlareIntensity: boundedNumber(0, 0.60).optional(),
+            parallaxGhostOpacity: boundedNumber(0.01, 0.25).optional(),
+            glarePosX: boundedNumber(0, 1.0).optional(),
+            glarePosY: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S138 — whiteboard graphite sheen reflection & textured paper grain bump mapping
+        graphiteGrain: z
+          .object({
+            enabled: z.boolean().optional(),
+            grainRoughness: boundedNumber(0, 0.80).optional(),
+            graphiteSheenIntensity: boundedNumber(0, 0.80).optional(),
+            sheenShininess: boundedNumber(8, 64).optional(),
+            lightAzimuthDeg: boundedNumber(0, 360).optional(),
+          })
+          .strict()
+          .optional(),
+        // S139 — whiteboard solvent vapor shimmer & ambient thermal convection
+        vaporShimmer: z
+          .object({
+            enabled: z.boolean().optional(),
+            shimmerAmplitudePx: boundedNumber(0.5, 8.0).optional(),
+            solventEvapHalfLife: boundedNumber(0.3, 3.0).optional(),
+            convectionSpeed: boundedNumber(10, 100).optional(),
+            buoyancyPlumeHeightPx: boundedNumber(15, 80).optional(),
+          })
+          .strict()
+          .optional(),
+        // S140 — multi-track storyboard master mixdown & 4K ProRes/H.265 export pipeline
+        storyboardMasterExport: z
+          .object({
+            preset: z.enum(['prores_422_hq', 'hevc_4k', 'h264_web']).optional(),
+            ebuTargetLufs: boundedNumber(-36, -6).optional(),
+            speechDuckingAttenuationDb: boundedNumber(-24, 0).optional(),
+            drawingFoleyGainDb: boundedNumber(-24, 12).optional(),
+            toolFoleyGainDb: boundedNumber(-24, 12).optional(),
+          })
+          .strict()
+          .optional(),
+        // S141 — whiteboard live audio-visual reactive ink pulsing
+        audioReactiveInk: z
+          .object({
+            enabled: z.boolean().optional(),
+            energyGain: boundedNumber(0, 5.0).optional(),
+            energyGamma: boundedNumber(0.1, 4.0).optional(),
+            attackMs: boundedNumber(1, 200).optional(),
+            releaseMs: boundedNumber(1, 1000).optional(),
+            pitchRippleAmp: boundedNumber(0, 20).optional(),
+            pitchRefHz: boundedNumber(30, 1000).optional(),
+            transientThreshold: boundedNumber(0.01, 1.0).optional(),
+            transientBurstRadius: boundedNumber(0, 50).optional(),
+            syncOffsetMs: boundedNumber(-500, 500).optional(),
+          })
+          .strict()
+          .optional(),
+        // S142 — whiteboard hand palm occlusion & natural smudging physics
+        palmSmudge: z
+          .object({
+            enabled: z.boolean().optional(),
+            touchdownElevationMm: boundedNumber(1, 30).optional(),
+            palmRadiusPx: boundedNumber(5, 150).optional(),
+            palmAspectRatio: boundedNumber(0.2, 1.0).optional(),
+            palmOffsetX: boundedNumber(0, 150).optional(),
+            palmOffsetY: boundedNumber(0, 150).optional(),
+            smudgeIntensity: boundedNumber(0, 1.5).optional(),
+            smudgeDecayPx: boundedNumber(5, 300).optional(),
+            wetTimeWindowSec: boundedNumber(0.1, 20).optional(),
+            shadowOpacity: boundedNumber(0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S143 — multi-resolution spatial tile caching & vector quadtree acceleration
+        quadtreeTileCache: z
+          .object({
+            enabled: z.boolean().optional(),
+            maxDepth: boundedNumber(2, 10).optional(),
+            maxItemsPerNode: boundedNumber(2, 64).optional(),
+            tileSize: z.union([z.literal(128), z.literal(256), z.literal(512)]).optional(),
+            mipLevels: boundedNumber(1, 5).optional(),
+            cullingMarginPx: boundedNumber(0, 200).optional(),
+          })
+          .strict()
+          .optional(),
+        // S144 — whiteboard chalk breakage & variable angle edge chatters
+        chalkBreakage: z
+          .object({
+            enabled: z.boolean().optional(),
+            slantAngleDeg: boundedNumber(10, 85).optional(),
+            chatterFrequencyHz: boundedNumber(20, 300).optional(),
+            skipThreshold: boundedNumber(0.05, 0.9).optional(),
+            breakagePressureThreshold: boundedNumber(0.5, 0.99).optional(),
+            facetWidthMultiplier: boundedNumber(1.0, 5.0).optional(),
+            dustBurstCount: boundedNumber(0, 50).optional(),
+            chalkColorHex: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+        // S145 — real-time WebGL/WebGPU stroke fragment shader pipeline
+        strokeShader: z
+          .object({
+            enabled: z.boolean().optional(),
+            substrateRoughness: boundedNumber(0, 1).optional(),
+            edgeFeathering: boundedNumber(0.2, 6.0).optional(),
+            specularIntensity: boundedNumber(0, 1).optional(),
+            specularRoughness: boundedNumber(0.02, 1.0).optional(),
+            fresnelStrength: boundedNumber(0, 1).optional(),
+            shadowOpacity: boundedNumber(0, 1).optional(),
+            inkColorHex: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+        // S146 — charcoal & conte crayon powder smearing with tortillon stump blending
+        charcoalTortillon: z
+          .object({
+            enabled: z.boolean().optional(),
+            mediaType: z.enum(['vine_charcoal', 'compressed_charcoal', 'conte_crayon']).optional(),
+            powderFriability: boundedNumber(0.1, 1).optional(),
+            stumpHardness: boundedNumber(0.1, 0.9).optional(),
+            blendRadiusPx: boundedNumber(2, 25).optional(),
+            burnishDepth: boundedNumber(0.1, 1).optional(),
+            charcoalColorHex: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+        // S147 — multi-layer animation onion skinning & light table backlighting
+        onionSkinLightTable: z
+          .object({
+            enabled: z.boolean().optional(),
+            pastFramesCount: boundedNumber(1, 5).optional(),
+            futureFramesCount: boundedNumber(1, 5).optional(),
+            baseOpacity: boundedNumber(0.05, 0.95).optional(),
+            opacityFalloffGamma: boundedNumber(0.2, 0.98).optional(),
+            pastTintHex: z.string().optional(),
+            futureTintHex: z.string().optional(),
+            currentInkHex: z.string().optional(),
+            lightTableIntensity: boundedNumber(0, 1).optional(),
+            pegBarEnabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S148 — whiteboard drafting pantograph mechanical linkage & magnetic arc pivot
+        pantographPivot: z
+          .object({
+            enabled: z.boolean().optional(),
+            anchorPoint: z.tuple([z.number(), z.number()]).optional(),
+            scaleRatio: boundedNumber(0.2, 5.0).optional(),
+            armLengthPrimary: boundedNumber(50, 1000).optional(),
+            armLengthSecondary: boundedNumber(50, 1000).optional(),
+            magneticSnapEnabled: z.boolean().optional(),
+            magneticSnapRadius: boundedNumber(1, 200).optional(),
+            arcLockRadius: boundedNumber(0, 2000).optional(),
+            arcSnapStep: boundedNumber(5, 500).optional(),
+            elasticFlexDamping: boundedNumber(0, 0.5).optional(),
+            needleFrictionFactor: boundedNumber(0, 2.0).optional(),
+            renderOverlayEnabled: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S149 — calligraphic dip pen flexible nib tine splitting & meniscus railroading
+        flexNib: z
+          .object({
+            enabled: z.boolean().optional(),
+            hairlineWidth: boundedNumber(0.5, 5.0).optional(),
+            maxSwellWidth: boundedNumber(1.0, 40.0).optional(),
+            flexSensitivity: boundedNumber(0.5, 3.0).optional(),
+            meniscusRuptureWidth: boundedNumber(1.0, 40.0).optional(),
+            meniscusReconnectWidth: boundedNumber(0.5, 40.0).optional(),
+            reservoirCapacityPx: boundedNumber(100, 10000).optional(),
+            inkFlowRate: boundedNumber(0.1, 5.0).optional(),
+            inkColorHex: z.string().optional(),
+            paperScratchResonance: boundedNumber(0, 2.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S150 — multi-client whiteboard live stream sync protocol & jitter buffer
+        liveStreamSync: z
+          .object({
+            enabled: z.boolean().optional(),
+            minDelayMs: boundedNumber(5, 100).optional(),
+            maxDelayMs: boundedNumber(15, 1000).optional(),
+            targetDelayMs: boundedNumber(5, 1000).optional(),
+            smoothingAlpha: boundedNumber(0.01, 0.5).optional(),
+            plcEnabled: z.boolean().optional(),
+            showCursorPresence: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S151 — procedural stippling & pointillism ink shading engine
+        proceduralStippling: z
+          .object({
+            enabled: z.boolean().optional(),
+            minDotRadius: boundedNumber(0.2, 10.0).optional(),
+            maxDotRadius: boundedNumber(0.5, 20.0).optional(),
+            densityScale: boundedNumber(0.1, 5.0).optional(),
+            relaxationIterations: boundedNumber(0, 10).optional(),
+            dotGainFactor: boundedNumber(0.0, 1.0).optional(),
+            paperBleedPx: boundedNumber(0.0, 5.0).optional(),
+            stippleColorHex: z.string().optional(),
+            foleyTapVolume: boundedNumber(0.0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S152 — metallic foil embossing & hot stamp shimmer shader pipeline
+        metallicFoil: z
+          .object({
+            enabled: z.boolean().optional(),
+            preset: z.enum(['gold', 'silver', 'rose_gold', 'copper', 'holographic']).optional(),
+            embossHeightPx: boundedNumber(0.5, 8.0).optional(),
+            bevelWidthPx: boundedNumber(1.0, 10.0).optional(),
+            specularShininess: boundedNumber(8.0, 128.0).optional(),
+            lightAngleDeg: boundedNumber(0.0, 360.0).optional(),
+            lightElevationDeg: boundedNumber(15.0, 85.0).optional(),
+            shimmerSpeed: boundedNumber(0.0, 3.0).optional(),
+            sparkleIntensity: boundedNumber(0.0, 1.0).optional(),
+            foleyPressVolume: boundedNumber(0.0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S153 — whiteboard drafting compass & mechanical divider caliper geometry
+        draftingCompass: z
+          .object({
+            enabled: z.boolean().optional(),
+            armLengthPx: boundedNumber(80.0, 400.0).optional(),
+            needleFriction: boundedNumber(0.0, 1.0).optional(),
+            thumbscrewPitchPx: boundedNumber(0.5, 10.0).optional(),
+            showCompassOverlay: z.boolean().optional(),
+            foleyRatchetVolume: boundedNumber(0.0, 1.0).optional(),
+          })
+          .strict()
+          .optional(),
+        // S154 — collaborative spatial locking & optimistic CRDT stroke merging engine
+        collaborativeCRDT: z
+          .object({
+            enabled: z.boolean().optional(),
+            clientId: z.string().optional(),
+            spatialLeaseTtlMs: boundedNumber(500, 5000).optional(),
+            lockPaddingPx: boundedNumber(0, 50).optional(),
+            optimisticBufferLimit: boundedNumber(10, 500).optional(),
+            enableSelectiveUndo: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        // S155 — multi-track whiteboard master sequence audio stems & Dolby Atmos spatial panning
+        spatialAudio: z
+          .object({
+            enabled: z.boolean().optional(),
+            roomWidthM: boundedNumber(4.0, 20.0).optional(),
+            roomDepthM: boundedNumber(4.0, 20.0).optional(),
+            roomHeightM: boundedNumber(2.5, 6.0).optional(),
+            listenerPos: z.tuple([z.number(), z.number(), z.number()]).optional(),
+            distanceFalloffExponent: boundedNumber(0.5, 2.0).optional(),
+            referenceDistanceM: boundedNumber(0.5, 3.0).optional(),
+            airAbsorptionCoeff: boundedNumber(0.0, 0.01).optional(),
+            headRadiusM: boundedNumber(0.07, 0.11).optional(),
+            speedOfSoundMps: boundedNumber(300.0, 360.0).optional(),
+            hrtfBinauralEnabled: z.boolean().optional(),
+            masterFormat: z.enum(['StereoBinaural', 'Surround51', 'Atmos714', 'ADM_BWF']).optional(),
           })
           .strict()
           .optional(),

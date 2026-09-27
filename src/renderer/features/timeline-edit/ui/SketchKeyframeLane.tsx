@@ -9,6 +9,7 @@ import {
   whiteboardZoneTimeSlices,
   zoneThumbnailViewBox,
   type ClipEffects,
+  type PlacedClip,
   type SequenceClip,
   type SequenceTrack,
   type WhiteboardSettings,
@@ -17,6 +18,7 @@ import {
 import { useSequenceStore } from '../../../entities/sequence';
 import { useMediaPanelStore } from '../../timeline-media/lib/mediaPanelStore';
 import { LANE_LABEL_WIDTH_PX } from './TimelineLane';
+import { WaveformCanvas } from './WaveformCanvas';
 
 export interface SketchKeyframeLaneProps {
   spineTrack: SequenceTrack;
@@ -52,6 +54,10 @@ export function SketchKeyframeLane({
   const patchClip = useSequenceStore((state) => state.patchClip);
   const setPlayhead = useSequenceStore((state) => state.setPlayhead);
   const select = useSequenceStore((state) => state.select);
+  const tracks = useSequenceStore((state) => state.document?.tracks ?? []);
+  const allClips = useSequenceStore((state) => state.document?.clips ?? []);
+
+  const [showWaveform, setShowWaveform] = useState(true);
 
   const pixelsPerFrame = pixelsPerSecond / fps;
 
@@ -66,6 +72,27 @@ export function SketchKeyframeLane({
     () => placedSpine.filter((item) => Boolean(item.clip.effects?.whiteboard)),
     [placedSpine],
   );
+
+  // Extract overlapping audio clips across all audio tracks + spine video clips with audio
+  const audioPlaced = useMemo<PlacedClip[]>(() => {
+    if (!showWaveform) return [];
+    const audioTracks = tracks.filter((t: SequenceTrack) => t.kind === 'audio');
+    const allPlaced: PlacedClip[] = [];
+    for (const track of audioTracks) {
+      const trackClips = allClips.filter((c) => c.trackId === track.id);
+      allPlaced.push(...layoutTrack(trackClips, track));
+    }
+    for (const item of placedSpine) {
+      if (
+        item.clip.sourceKind === 'video' &&
+        item.clip.sourceAudioEnabled !== false &&
+        item.clip.filePath
+      ) {
+        allPlaced.push(item);
+      }
+    }
+    return allPlaced;
+  }, [tracks, allClips, showWaveform, placedSpine]);
 
   // Check if any active sketch clip has multi-zone configuration
   const hasZones = useMemo(
@@ -211,14 +238,28 @@ export function SketchKeyframeLane({
                 Sketch FX
               </span>
             </div>
-            <button
-              type="button"
-              title="Open Sketch Settings Panel"
-              className="flex h-5 w-5 items-center justify-center rounded text-text-disabled hover:bg-bg-hover hover:text-text-primary transition-colors shrink-0"
-              onClick={() => useMediaPanelStore.getState().setCategory('sketch')}
-            >
-              <span className="material-symbols-outlined text-[13px]">tune</span>
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                title={showWaveform ? 'Hide Voiceover Waveform Underlay' : 'Show Voiceover Waveform Underlay'}
+                className={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                  showWaveform ? 'text-accent-ai hover:bg-accent-ai/20' : 'text-text-disabled hover:bg-bg-hover hover:text-text-primary'
+                }`}
+                onClick={() => setShowWaveform((prev) => !prev)}
+              >
+                <span className="material-symbols-outlined text-[13px]">
+                  {showWaveform ? 'volume_up' : 'volume_off'}
+                </span>
+              </button>
+              <button
+                type="button"
+                title="Open Sketch Settings Panel"
+                className="flex h-5 w-5 items-center justify-center rounded text-text-disabled hover:bg-bg-hover hover:text-text-primary transition-colors shrink-0"
+                onClick={() => useMediaPanelStore.getState().setCategory('sketch')}
+              >
+                <span className="material-symbols-outlined text-[13px]">tune</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center justify-between gap-1 text-[9px] text-text-secondary font-mono">
@@ -256,6 +297,18 @@ export function SketchKeyframeLane({
             </span>
             <button
               type="button"
+              title={showWaveform ? 'Hide Voiceover Waveform Underlay' : 'Show Voiceover Waveform Underlay'}
+              className={`flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                showWaveform ? 'text-accent-ai hover:bg-accent-ai/20' : 'text-text-disabled hover:bg-bg-hover hover:text-text-primary'
+              }`}
+              onClick={() => setShowWaveform((prev) => !prev)}
+            >
+              <span className="material-symbols-outlined text-[13px]">
+                {showWaveform ? 'volume_up' : 'volume_off'}
+              </span>
+            </button>
+            <button
+              type="button"
               title="Open Sketch Settings Panel"
               className="flex h-5 w-5 items-center justify-center rounded text-text-disabled hover:bg-bg-hover hover:text-text-primary transition-colors"
               onClick={() => useMediaPanelStore.getState().setCategory('sketch')}
@@ -272,6 +325,17 @@ export function SketchKeyframeLane({
         className="relative shrink-0 rounded-[var(--radius-button)] bg-bg-workspace/70 overflow-hidden"
         style={{ height: `${heightPx}px`, width: Math.max(widthPx, 1) }}
       >
+        {/* Real-Time Audio Voiceover Waveform Underlay */}
+        {showWaveform && audioPlaced.length > 0 && (
+          <WaveformCanvas
+            placed={audioPlaced}
+            fps={fps}
+            pixelsPerSecond={pixelsPerSecond}
+            widthPx={widthPx}
+            heightPx={heightPx}
+            laneKind="sketch"
+          />
+        )}
         {sketchClips.map((item) => {
           const settings = item.clip.effects?.whiteboard;
           if (!settings) return null;
