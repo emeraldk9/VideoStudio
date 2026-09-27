@@ -35,6 +35,11 @@ import {
   scanSequenceForSmartCuts,
   DEFAULT_FILLER_WORDS,
   type CutInterval,
+  extractTranscriptCues,
+  calculateWordsBoundingSpan,
+  formatTranscriptExport,
+  type TranscriptWordToken,
+  type TranscriptCue,
 } from '@shared';
 
 import {
@@ -105,6 +110,11 @@ export function SubtitlesPane() {
   const [duplicateSequenceFirst, setDuplicateSequenceFirst] = useState(true);
   const [isExecutingCut, setIsExecutingCut] = useState(false);
 
+  // S163: AI Text-Based Transcript Editing state
+  const [viewMode, setViewMode] = useState<'transcript' | 'captions'>('transcript');
+  const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
+  const lastClickedWordRef = useRef<TranscriptWordToken | null>(null);
+
   // Real-time active cue tracking without thrashing React state on every frame
   const [activeCueId, setActiveCueId] = useState<string | null>(null);
   const subtitleClipsRef = useRef<SequenceClip[]>([]);
@@ -166,6 +176,129 @@ export function SubtitlesPane() {
   useEffect(() => {
     subtitleClipsRef.current = subtitleClips;
   }, [subtitleClips]);
+
+  // S163: Derived word-level transcript cues & selection
+  const transcriptCues = useMemo(() => {
+    return extractTranscriptCues(
+      subtitleClips,
+      selectedTrackId !== 'all' ? selectedTrackId : undefined,
+      selectedFillerWords,
+    );
+  }, [subtitleClips, selectedTrackId, selectedFillerWords]);
+
+  const allWordTokens = useMemo(() => {
+    return transcriptCues.flatMap((c) => c.words);
+  }, [transcriptCues]);
+
+  const selectedTokens = useMemo(() => {
+    if (selectedWordIds.size === 0) return [];
+    return allWordTokens.filter((w) => selectedWordIds.has(w.id));
+  }, [allWordTokens, selectedWordIds]);
+
+  const selectedSpan = useMemo(() => {
+    return calculateWordsBoundingSpan(selectedTokens);
+  }, [selectedTokens]);
+
+  const handleWordClick = useCallback(
+    (token: TranscriptWordToken, e: React.MouseEvent) => {
+      e.stopPropagation();
+      useSequenceStore.getState().setPlayhead(token.startFrame);
+
+      if (e.shiftKey && lastClickedWordRef.current) {
+        const lastIdx = allWordTokens.findIndex((w) => w.id === lastClickedWordRef.current?.id);
+        const currentIdx = allWordTokens.findIndex((w) => w.id === token.id);
+        if (lastIdx !== -1 && currentIdx !== -1) {
+          const start = Math.min(lastIdx, currentIdx);
+          const end = Math.max(lastIdx, currentIdx);
+          const spanTokens = allWordTokens.slice(start, end + 1);
+          setSelectedWordIds(new Set(spanTokens.map((t) => t.id)));
+          return;
+        }
+      }
+
+      if (e.metaKey || e.ctrlKey) {
+        setSelectedWordIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(token.id)) {
+            next.delete(token.id);
+          } else {
+            next.add(token.id);
+          }
+          return next;
+        });
+        lastClickedWordRef.current = token;
+        return;
+      }
+
+      // Single click toggle or select
+      setSelectedWordIds((prev) => {
+        if (prev.has(token.id) && prev.size === 1) {
+          lastClickedWordRef.current = null;
+          return new Set();
+        }
+        lastClickedWordRef.current = token;
+        return new Set([token.id]);
+      });
+    },
+    [allWordTokens],
+  );
+
+  const handleSelectAllFillers = useCallback(() => {
+    const fillers = allWordTokens.filter((t) => t.isFiller);
+    if (fillers.length === 0) {
+      pushToast({ variant: 'info', message: 'No verbal filler words detected in transcript.' });
+      return;
+    }
+    setSelectedWordIds(new Set(fillers.map((t) => t.id)));
+    pushToast({
+      variant: 'info',
+      message: `Selected ${fillers.length} filler word${fillers.length === 1 ? '' : 's'}. Click Ripple Cut to remove.`,
+    });
+  }, [allWordTokens, pushToast]);
+
+  const handleRippleDeleteSelection = useCallback(() => {
+    if (!selectedSpan || selectedTokens.length === 0) return;
+    const { startFrame, endFrame, durationFrames } = selectedSpan;
+    const durationSec = (durationFrames / fps).toFixed(2);
+    const count = selectedTokens.length;
+
+    useSequenceStore.getState().rippleDeleteRange(startFrame, endFrame, 3);
+    setSelectedWordIds(new Set());
+    lastClickedWordRef.current = null;
+
+    pushToast({
+      variant: 'success',
+      message: `✂ Ripple cut ${count} word${count === 1 ? '' : 's'} (-${durationSec}s) across all tracks.`,
+    });
+  }, [fps, pushToast, selectedSpan, selectedTokens.length]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedWordIds(new Set());
+    lastClickedWordRef.current = null;
+  }, []);
+
+  // S163: Global keyboard shortcuts for word selection ripple delete
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (selectedWordIds.size === 0) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        handleRippleDeleteSelection();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleClearSelection();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedWordIds, handleRippleDeleteSelection, handleClearSelection]);
 
   // Search matches count
   const searchMatchesCount = useMemo(() => {
@@ -459,7 +592,7 @@ export function SubtitlesPane() {
   };
 
   // Handle Export File Download
-  const handleExportDownload = (format: 'srt' | 'vtt' | 'ass' | 'txt') => {
+  const handleExportDownload = (format: 'srt' | 'vtt' | 'ass' | 'txt' | 'markdown') => {
     if (!document || subtitleClips.length === 0) {
       pushToast({ variant: 'warning', message: 'No subtitles on timeline to export.' });
       return;
@@ -470,7 +603,11 @@ export function SubtitlesPane() {
     let ext = 'srt';
     let mime = 'text/plain';
 
-    if (format === 'srt') {
+    if (format === 'markdown') {
+      fileContent = formatTranscriptExport(transcriptCues, 'markdown', fps, document.sequence.name);
+      ext = 'md';
+      mime = 'text/markdown';
+    } else if (format === 'srt') {
       fileContent = timelineClipsToSRT(document.clips, fps, filterTrack);
       ext = 'srt';
     } else if (format === 'vtt') {
@@ -810,6 +947,36 @@ export function SubtitlesPane() {
             <span className="ml-1 rounded-full bg-bg-hover px-1.5 py-0.5 text-[10px] font-mono text-text-secondary">
               {subtitleClips.length}
             </span>
+
+            {/* S163: Transcript Editor vs Caption Cards Mode Pill */}
+            <div className="ml-2 flex items-center rounded border border-hairline bg-bg-surface p-0.5 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setViewMode('transcript')}
+                className={`flex items-center gap-1 rounded px-2 py-0.5 font-medium transition-all ${
+                  viewMode === 'transcript'
+                    ? 'bg-accent-ai text-white shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                title="Word-level interactive transcript editor & timeline ripple cuts"
+              >
+                <span className="material-symbols-outlined text-[12px]">edit_note</span>
+                <span>Transcript</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('captions')}
+                className={`flex items-center gap-1 rounded px-2 py-0.5 font-medium transition-all ${
+                  viewMode === 'captions'
+                    ? 'bg-accent-ai text-white shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                title="Per-cue subtitle cards with duration and styling controls"
+              >
+                <span className="material-symbols-outlined text-[12px]">subtitles</span>
+                <span>Cards</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-1">
@@ -872,7 +1039,7 @@ export function SubtitlesPane() {
               />
               {isExportOpen && (
                 <div
-                  className="absolute right-0 top-full z-50 mt-1 w-44 rounded-lg border border-hairline bg-bg-elevated p-1 shadow-xl"
+                  className="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-hairline bg-bg-elevated p-1 shadow-xl"
                   onMouseLeave={() => setIsExportOpen(false)}
                 >
                   <button
@@ -907,6 +1074,14 @@ export function SubtitlesPane() {
                     <span className="material-symbols-outlined text-sm text-text-secondary">text_snippet</span>
                     <span>Export Transcript (.txt)</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExportDownload('markdown')}
+                    className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-xs hover:bg-bg-hover"
+                  >
+                    <span className="material-symbols-outlined text-sm text-text-secondary">format_quote</span>
+                    <span>Export Markdown (.md)</span>
+                  </button>
                   <div className="my-1 border-t border-hairline" />
                   <button
                     type="button"
@@ -939,24 +1114,40 @@ export function SubtitlesPane() {
           </div>
         </div>
 
-        {/* Track Scope Selector */}
-        <div className="flex items-center gap-2">
-          <label htmlFor="subtitle-track-select" className="text-[11px] text-text-secondary shrink-0">
-            Lane:
-          </label>
-          <select
-            id="subtitle-track-select"
-            value={selectedTrackId}
-            onChange={(e) => setSelectedTrackId(e.target.value)}
-            className="h-7 w-full rounded border border-hairline bg-bg-surface px-2 py-0 text-xs text-text-primary focus:border-accent-ai focus:outline-none"
-          >
-            <option value="all">All Text & Subtitle Lanes ({subtitleClips.length} cues)</option>
-            {subtitleTracks.map((track) => (
-              <option key={track.id} value={track.id}>
-                {track.name} ({document?.clips.filter((c) => c.trackId === track.id && c.sourceKind === 'text').length || 0} cues)
-              </option>
-            ))}
-          </select>
+        {/* Track Scope Selector & Transcript Tools */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-1">
+            <label htmlFor="subtitle-track-select" className="text-[11px] text-text-secondary shrink-0">
+              Lane:
+            </label>
+            <select
+              id="subtitle-track-select"
+              value={selectedTrackId}
+              onChange={(e) => setSelectedTrackId(e.target.value)}
+              className="h-7 w-full max-w-[220px] rounded border border-hairline bg-bg-surface px-2 py-0 text-xs text-text-primary focus:border-accent-ai focus:outline-none"
+            >
+              <option value="all">All Text & Subtitle Lanes ({subtitleClips.length} cues)</option>
+              {subtitleTracks.map((track) => (
+                <option key={track.id} value={track.id}>
+                  {track.name} ({document?.clips.filter((c) => c.trackId === track.id && c.sourceKind === 'text').length || 0} cues)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {viewMode === 'transcript' && subtitleClips.length > 0 && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleSelectAllFillers}
+                className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
+                title="Select all detected verbal filler words ('um', 'uh', 'like', etc.) for one-click ripple cut"
+              >
+                <span className="material-symbols-outlined text-xs">auto_fix_high</span>
+                <span>Select Fillers</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1644,6 +1835,119 @@ export function SubtitlesPane() {
               </Button>
             </div>
           </div>
+        ) : viewMode === 'transcript' ? (
+          // S163: Interactive Transcript Word-Level Editor
+          transcriptCues.map((cue, index) => {
+            const isCurrent =
+              activeCueId ? cue.clipId === activeCueId : livePlayhead >= cue.startFrame && livePlayhead < cue.endFrame;
+            const isSelected = selectedClipIds.includes(cue.clipId);
+            const canSplitAtPlayhead =
+              livePlayhead > cue.startFrame && livePlayhead < cue.endFrame;
+
+            return (
+              <div
+                key={cue.clipId}
+                className={`group relative flex flex-col rounded-lg border p-2.5 transition-all ${
+                  isSelected
+                    ? 'border-accent-ai bg-accent-ai/5 shadow-sm'
+                    : isCurrent
+                    ? 'border-accent-ai/60 bg-bg-surface shadow-sm'
+                    : 'border-hairline bg-bg-surface hover:border-hairline-bright'
+                }`}
+              >
+                {/* Cue Header */}
+                <div className="flex items-center justify-between gap-1 text-[11px] mb-2 pb-1.5 border-b border-hairline/50">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-bold text-text-secondary">
+                      #{index + 1}
+                    </span>
+
+                    {isCurrent && (
+                      <span className="flex items-center gap-1 rounded bg-accent-ai/20 px-1.5 py-0.2 text-[9px] font-bold text-accent-ai tracking-wider uppercase">
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent-ai animate-pulse" />
+                        Playing
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => useSequenceStore.getState().setPlayhead(cue.startFrame)}
+                      className="font-mono text-text-secondary hover:text-accent-ai transition-colors"
+                      title="Jump playhead to start of cue"
+                    >
+                      {formatTimecode(cue.startFrame, fps)} → {formatTimecode(cue.endFrame, fps)}
+                    </button>
+
+                    <span className="text-[10px] text-text-tertiary">
+                      ({framesToSeconds(cue.durationFrames, fps).toFixed(1)}s)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {canSplitAtPlayhead && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetClip = subtitleClips.find((c) => c.id === cue.clipId);
+                          if (targetClip) handleSplitCue(targetClip);
+                        }}
+                        title={`Split cue at playhead (${formatTimecode(livePlayhead, fps)})`}
+                        className="rounded p-0.5 text-text-secondary hover:bg-bg-hover hover:text-accent-ai transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">call_split</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCue(cue.clipId)}
+                      title="Delete subtitle cue"
+                      className="rounded p-0.5 text-text-secondary hover:bg-rose-500/20 hover:text-rose-400 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">delete</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Interactive Word Tokens */}
+                <div className="flex flex-wrap items-center gap-1.5 leading-relaxed">
+                  {cue.words.length === 0 ? (
+                    <span className="text-text-muted italic text-[11px]">Empty cue</span>
+                  ) : (
+                    cue.words.map((token) => {
+                      const isWordSelected = selectedWordIds.has(token.id);
+                      const isWordActive =
+                        livePlayhead >= token.startFrame && livePlayhead < token.endFrame;
+
+                      return (
+                        <button
+                          key={token.id}
+                          type="button"
+                          onClick={(e) => handleWordClick(token, e)}
+                          title={`"${token.cleanWord}" • ${formatTimecode(token.startFrame, fps)} (frames ${token.startFrame}..${token.endFrame})${
+                            token.isFiller ? ' [Verbal Filler]' : ''
+                          }\nClick: seek playhead | Shift+Click: range select | Del: ripple cut`}
+                          className={`group/word relative inline-flex items-center rounded px-1.5 py-0.5 text-xs transition-all ${
+                            isWordSelected
+                              ? 'bg-accent-ai text-white font-semibold shadow-xs ring-1 ring-accent-ai'
+                              : isWordActive
+                              ? 'bg-accent-ai/25 text-accent-ai font-bold ring-1 ring-accent-ai/70'
+                              : token.isFiller
+                              ? 'bg-amber-500/15 text-amber-300 border border-dashed border-amber-500/40 hover:bg-amber-500/25'
+                              : 'bg-bg-canvas text-text-primary hover:bg-bg-hover hover:text-white border border-hairline/40'
+                          }`}
+                        >
+                          <span>{token.word}</span>
+                          {token.isFiller && !isWordSelected && (
+                            <span className="ml-1 h-1 w-1 rounded-full bg-amber-400" />
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })
         ) : (
           subtitleClips.map((clip, index) => {
             const startFrames = clip.startFrames ?? 0;
@@ -1759,6 +2063,47 @@ export function SubtitlesPane() {
             );
           })
         )}
+
+        {/* S163 Floating/Docked Ripple Delete Bar */}
+        {selectedTokens.length > 0 && selectedSpan && (
+          <div className="sticky bottom-2 z-30 mx-1 flex items-center justify-between gap-3 rounded-lg border border-accent-ai/60 bg-bg-surface/95 px-3 py-2 shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-accent-ai px-1.5 font-mono text-[10px] font-bold text-white">
+                {selectedTokens.length}
+              </span>
+              <span className="font-semibold text-text-primary">
+                {selectedTokens.length === 1 ? 'word selected' : 'words selected'}
+              </span>
+              <span className="font-mono text-text-secondary text-[11px]">
+                [{formatTimecode(selectedSpan.startFrame, fps)} → {formatTimecode(selectedSpan.endFrame, fps)}]
+              </span>
+              <span className="rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-rose-400">
+                -{((selectedSpan.endFrame - selectedSpan.startFrame) / fps).toFixed(2)}s
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearSelection}
+                title="Deselect all words (Esc)"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleRippleDeleteSelection}
+                className="bg-rose-600 hover:bg-rose-500 text-white border-none shadow-sm"
+                title="Ripple cut selected speech and compact all video/audio tracks (Del / Backspace)"
+              >
+                <span className="material-symbols-outlined text-sm">content_cut</span>
+                Ripple Cut
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Summary Bar */}
@@ -1766,6 +2111,7 @@ export function SubtitlesPane() {
         <div className="flex shrink-0 items-center justify-between border-t border-hairline bg-bg-canvas px-3 py-1.5 text-[11px] text-text-secondary">
           <span>
             {subtitleClips.length} cue{subtitleClips.length === 1 ? '' : 's'} ·{' '}
+            {allWordTokens.length} words ·{' '}
             {subtitleClips.reduce((acc, c) => acc + c.durationFrames, 0) / fps > 0
               ? `${(subtitleClips.reduce((acc, c) => acc + c.durationFrames, 0) / fps).toFixed(1)}s total speech`
               : '0s'}

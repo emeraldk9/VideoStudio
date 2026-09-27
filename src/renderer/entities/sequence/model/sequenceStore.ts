@@ -28,6 +28,7 @@ import {
   unpackCompoundClip,
   isCompoundClip,
   getCompoundClipMetadata,
+  rippleDeleteTranscriptRange,
 } from '@shared';
 
 import { readLocalSetting, writeLocalSetting } from '../../../shared/lib/localSetting';
@@ -245,6 +246,8 @@ export interface SequenceState {
   toggleFolderLocked: (folderId: string) => Promise<void>;
   toggleFolderVisible: (folderId: string) => Promise<void>;
 
+  /** S163 — Excises a time range across all synchronized tracks with multi-track ripple compaction */
+  rippleDeleteRange: (startFrame: number, endFrame: number, microFadeFrames?: number) => void;
   /** Replaces the clip list, pushing the previous one onto the undo stack. */
   commitClips: (next: SequenceClip[]) => void;
   /** Same, without an undo entry — for a load or a re-sync the user already confirmed separately. */
@@ -1070,6 +1073,16 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
     set((state) => ({
       selectedClipIds: state.selectedClipIds.filter((id) => !removing.has(id)),
     }));
+  },
+
+  rippleDeleteRange: (startFrame, endFrame, microFadeFrames = 3) => {
+    const document = get().document;
+    if (!document) return;
+    const nextDoc = rippleDeleteTranscriptRange(document, startFrame, endFrame, microFadeFrames);
+    if (nextDoc.clips !== document.clips) {
+      get().commitClips(nextDoc.clips);
+      get().setPlayhead(startFrame);
+    }
   },
 
   undo: () => {
