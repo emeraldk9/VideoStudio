@@ -57,6 +57,8 @@ export type TimelineActionId =
   | 'tool_split'
   | 'tool_ripple'
   | 'tool_roll'
+  | 'tool_slip'
+  | 'tool_slide'
   | 'tool_select_right'
   | 'tool_select_left'
   | 'tool_escape'
@@ -123,6 +125,8 @@ export const TIMELINE_ACTIONS: ActionMetadata[] = [
   { id: 'tool_split', name: 'Razor / Blade Tool', description: 'Click on a clip to split at the pointer frame', category: 'tools' },
   { id: 'tool_ripple', name: 'Ripple Edit Tool', description: 'Trim clip while rippling adjacent downstream clips', category: 'tools' },
   { id: 'tool_roll', name: 'Rolling Edit Tool', description: 'Roll edit boundary between two adjacent clips', category: 'tools' },
+  { id: 'tool_slip', name: 'Slip Edit Tool (Y)', description: 'Adjust source in/out points while keeping clip duration and timeline position fixed', category: 'tools' },
+  { id: 'tool_slide', name: 'Slide Edit Tool (U)', description: 'Slide clip along timeline while rippling adjacent clips to maintain total sequence duration', category: 'tools' },
   { id: 'tool_select_right', name: 'Track Select Forward', description: 'Select all clips to the right of cursor', category: 'tools' },
   { id: 'tool_select_left', name: 'Track Select Backward', description: 'Select all clips to the left of cursor', category: 'tools' },
   { id: 'tool_escape', name: 'Escape / Clear Selection', description: 'Clear active selection and reset to Selection tool', category: 'tools' },
@@ -204,6 +208,8 @@ export const VIDEOSTUDIO_KEYMAP: NleKeymapProfile = {
     tool_split: [{ key: 'c' }],
     tool_ripple: [{ key: 'b' }],
     tool_roll: [{ key: 'n' }],
+    tool_slip: [{ key: 'y' }],
+    tool_slide: [{ key: 'u' }],
     tool_select_right: [{ key: 'a' }],
     tool_select_left: [{ key: 'a', shift: true }],
     tool_escape: [{ key: 'Escape' }],
@@ -269,6 +275,8 @@ export const PREMIERE_KEYMAP: NleKeymapProfile = {
     tool_split: [{ key: 'c' }],
     tool_ripple: [{ key: 'b' }],
     tool_roll: [{ key: 'n' }],
+    tool_slip: [{ key: 'y' }],
+    tool_slide: [{ key: 'u' }],
     tool_select_right: [{ key: 'a' }],
     tool_select_left: [{ key: 'a', shift: true }],
     tool_escape: [{ key: 'Escape' }],
@@ -334,6 +342,8 @@ export const RESOLVE_KEYMAP: NleKeymapProfile = {
     tool_split: [{ key: 'b' }],
     tool_ripple: [{ key: 't' }],
     tool_roll: [{ key: 'u' }],
+    tool_slip: [{ key: 'y', shift: true }, { key: 's', alt: true }],
+    tool_slide: [{ key: 'u', shift: true }],
     tool_select_right: [{ key: 'y' }],
     tool_select_left: [{ key: 'y', ctrlOrMeta: true }],
     tool_escape: [{ key: 'Escape' }],
@@ -399,6 +409,8 @@ export const FINALCUT_KEYMAP: NleKeymapProfile = {
     tool_split: [{ key: 'b' }],
     tool_ripple: [{ key: 't' }],
     tool_roll: [{ key: 'r' }],
+    tool_slip: [{ key: 'y' }],
+    tool_slide: [{ key: 'u' }],
     tool_select_right: [{ key: 'p' }],
     tool_select_left: [{ key: 'p', shift: true }],
     tool_escape: [{ key: 'Escape' }],
@@ -464,6 +476,8 @@ export const CAPCUT_KEYMAP: NleKeymapProfile = {
     tool_split: [{ key: 'b' }],
     tool_ripple: [{ key: 'r' }],
     tool_roll: [{ key: 't' }],
+    tool_slip: [{ key: 'y' }],
+    tool_slide: [{ key: 'u' }],
     tool_select_right: [{ key: 'a' }],
     tool_select_left: [{ key: 'a', shift: true }],
     tool_escape: [{ key: 'Escape' }],

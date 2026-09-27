@@ -296,7 +296,7 @@ export interface SequenceState {
    * sweep. Renderer-local, never persisted — a timeline that reopens in
    * blade mode cuts something before the user notices.
    */
-  toolMode: 'select' | 'split' | 'select-left' | 'select-right' | 'ripple' | 'roll';
+  toolMode: 'select' | 'split' | 'select-left' | 'select-right' | 'ripple' | 'roll' | 'slip' | 'slide';
   setToolMode: (mode: SequenceState['toolMode']) => void;
 
   /**

@@ -181,6 +181,12 @@ export function TimelineScreen() {
           case 'tool_roll':
             state.setToolMode('roll');
             return;
+          case 'tool_slip':
+            state.setToolMode('slip');
+            return;
+          case 'tool_slide':
+            state.setToolMode('slide');
+            return;
           case 'tool_select_right':
             state.setToolMode('select-right');
             return;

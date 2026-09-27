@@ -28,6 +28,8 @@ import {
   buildSnapTargetsWithMeta,
   executeRippleTrim,
   executeRollingEdit,
+  slipClipMedia,
+  slideClipPosition,
   type SnapTargetEntry,
   selectTimelineWatermarkTargets,
   formatTimecode,
@@ -418,6 +420,21 @@ export function TimelinePanel() {
       if (!track) return;
 
       if (state.kind === 'move') {
+        if (toolMode === 'slip') {
+          if (state.deltaFrames === 0) return;
+          const nextClip = slipClipMedia(clip, state.deltaFrames);
+          const next = clips.map((c) => (c.id === clip.id ? nextClip : c));
+          commitClips(next);
+          return;
+        }
+
+        if (toolMode === 'slide') {
+          if (state.deltaFrames === 0) return;
+          const next = slideClipPosition(clips, track, clip.id, state.deltaFrames);
+          if (next !== clips) commitClips(next);
+          return;
+        }
+
         // S160 (owner item 3) — group drag: grabbing a clip that belongs to
         // a multi-selection moves the whole selection by the same delta.
         // Horizontal only — a cross-track landing for N clips on M tracks
@@ -524,26 +541,50 @@ export function TimelinePanel() {
     (deltaFrames: number, snappedTarget: number | null, snapLabel?: string) => {
       // S176 — the live drag offset: one custom-property write per pointer
       // event moves every flagged clip. Direct rather than rAF-coalesced.
-      sizerRef.current?.style.setProperty(
-        '--drag-dx',
-        `${deltaFrames * (pixelsPerSecond / fps)}px`,
-      );
+      if (toolMode !== 'slip') {
+        sizerRef.current?.style.setProperty(
+          '--drag-dx',
+          `${deltaFrames * (pixelsPerSecond / fps)}px`,
+        );
+      } else {
+        sizerRef.current?.style.setProperty('--drag-dx', '0px');
+      }
       const line = snapLineRef.current;
       const badge = snapBadgeRef.current;
       if (!line) return;
+
+      if (toolMode === 'slip') {
+        line.style.display = 'none';
+        if (badge) {
+          badge.textContent = `Slip: ${deltaFrames >= 0 ? '+' : ''}${deltaFrames}f`;
+          badge.style.display = 'block';
+        }
+        return;
+      }
+
       if (snappedTarget === null) {
         line.style.display = 'none';
-        if (badge) badge.style.display = 'none';
+        if (badge) {
+          if (toolMode === 'slide' && deltaFrames !== 0) {
+            badge.textContent = `Slide: ${deltaFrames >= 0 ? '+' : ''}${deltaFrames}f`;
+            badge.style.display = 'block';
+          } else {
+            badge.style.display = 'none';
+          }
+        }
         return;
       }
       line.style.display = 'block';
       line.style.left = `calc(var(--lane-label-w) + ${snappedTarget * (pixelsPerSecond / fps)}px)`;
       if (badge) {
-        badge.textContent = snapLabel || `${snappedTarget}f`;
+        badge.textContent =
+          toolMode === 'slide'
+            ? `Slide: ${deltaFrames >= 0 ? '+' : ''}${deltaFrames}f (${snapLabel || `${snappedTarget}f`})`
+            : snapLabel || `${snappedTarget}f`;
         badge.style.display = 'block';
       }
     },
-    [fps, pixelsPerSecond],
+    [fps, pixelsPerSecond, toolMode],
   );
 
   const scrubRafRef = useRef<number | null>(null);
@@ -617,6 +658,10 @@ export function TimelinePanel() {
    */
   const liveDragClipIds = useMemo<ReadonlySet<string> | null>(() => {
     if (!drag?.clipId) return null;
+    if (toolMode === 'slip') {
+      // Slip holds the timeline position fixed — inner media slips
+      return null;
+    }
     if (drag.kind === 'move') {
       if (selectedClipIds.length > 1 && selectedClipIds.includes(drag.clipId)) {
         const lockedTracks = new Set(tracks.filter((track) => track.locked).map((track) => track.id));
@@ -630,7 +675,7 @@ export function TimelinePanel() {
     }
     if (drag.kind === 'trim-start' || drag.kind === 'trim-end') return new Set([drag.clipId]);
     return null;
-  }, [clips, drag, selectedClipIds, tracks]);
+  }, [clips, drag, selectedClipIds, toolMode, tracks]);
 
   /**
    * Live landing target while a clip is mid-move — the row to highlight, or
@@ -2402,7 +2447,7 @@ export function TimelinePanel() {
 
           <div
             ref={lanesRef}
-            className={`relative flex flex-1 flex-col gap-2 ${toolMode === 'split' ? 'cursor-crosshair' : toolMode === 'ripple' ? 'cursor-col-resize' : toolMode === 'roll' ? 'cursor-ew-resize' : ''}`}
+            className={`relative flex flex-1 flex-col gap-2 ${toolMode === 'split' ? 'cursor-crosshair' : toolMode === 'ripple' ? 'cursor-col-resize' : toolMode === 'roll' ? 'cursor-ew-resize' : toolMode === 'slip' ? 'cursor-ew-resize' : toolMode === 'slide' ? 'cursor-move' : ''}`}
             onPointerMove={(event) => {
               move(event);
               // The landing preview follows the pointer, not the commit — a
@@ -2528,7 +2573,7 @@ export function TimelinePanel() {
                         return;
                       }
                       // The sweep tools select on click; nothing is dragged.
-                      if (toolMode !== 'select') return;
+                      if (toolMode === 'select-left' || toolMode === 'select-right') return;
                       dragTarget.current = { clip };
                       // A fresh gesture must not inherit the previous one's glow.
                       updateMoveLanding(null);
@@ -2536,6 +2581,17 @@ export function TimelinePanel() {
                       begin(event, 'move', clip, placed?.startFrames ?? 0);
                     }}
                     onTrimStart={(event, clip, edge) => {
+                      if (toolMode === 'split') {
+                        bladeAt(event.clientX, track, event.altKey);
+                        return;
+                      }
+                      if (toolMode === 'slip' || toolMode === 'slide') {
+                        dragTarget.current = { clip };
+                        updateMoveLanding(null);
+                        const placed = layoutTrack(clips, track).find((item) => item.clip.id === clip.id);
+                        begin(event, 'move', clip, placed?.startFrames ?? 0);
+                        return;
+                      }
                       dragTarget.current = { clip, edge };
                       // **The gesture begins at the edge being dragged**, in
                       // absolute frames — not at 0, which is what S145 shipped.

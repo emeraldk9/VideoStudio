@@ -1320,10 +1320,6 @@ export function slideClipPosition(
   const delta = Math.round(deltaFrames);
   const target = placed[targetIndex];
 
-  if (track.magnetic) {
-    return clips as SequenceClip[];
-  }
-
   const prev = targetIndex > 0 ? placed[targetIndex - 1] : null;
   const next = targetIndex < placed.length - 1 ? placed[targetIndex + 1] : null;
 
@@ -1342,7 +1338,7 @@ export function slideClipPosition(
     if (clip.id === target.clip.id) {
       return {
         ...clip,
-        startFrames: Math.max(0, (clip.startFrames ?? 0) + clampedDelta),
+        startFrames: track.magnetic ? null : Math.max(0, (clip.startFrames ?? 0) + clampedDelta),
       };
     }
     if (prev && clip.id === prev.clip.id) {
@@ -1352,7 +1348,7 @@ export function slideClipPosition(
       };
     }
     if (next && clip.id === next.clip.id) {
-      const nextStart = Math.max(0, (clip.startFrames ?? 0) + clampedDelta);
+      const nextStart = track.magnetic ? null : Math.max(0, (clip.startFrames ?? 0) + clampedDelta);
       const nextDuration = Math.max(1, clip.durationFrames - clampedDelta);
       const nextSourceIn =
         typeof clip.sourceInFrames === 'number'

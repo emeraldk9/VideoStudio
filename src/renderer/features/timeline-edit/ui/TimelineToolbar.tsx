@@ -58,6 +58,8 @@ const TOOLS = [
   { mode: 'split', icon: 'content_cut', label: 'Split tool (C)' },
   { mode: 'ripple', icon: 'swap_horiz', label: 'Ripple Edit tool (B)' },
   { mode: 'roll', icon: 'view_column', label: 'Rolling Edit tool (N)' },
+  { mode: 'slip', icon: 'sync_alt', label: 'Slip tool (Y)' },
+  { mode: 'slide', icon: 'compare_arrows', label: 'Slide tool (U)' },
   { mode: 'select-right', icon: 'keyboard_double_arrow_right', label: 'Select rightward (A)' },
   { mode: 'select-left', icon: 'keyboard_double_arrow_left', label: 'Select leftward (Shift+A)' },
 ] as const;
