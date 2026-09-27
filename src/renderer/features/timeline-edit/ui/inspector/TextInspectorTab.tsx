@@ -1110,32 +1110,62 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
                     { value: 'flip_x', label: '3D Flip X Rotation' },
                     { value: 'elastic_drop', label: 'Elastic Ceiling Drop' },
                     { value: 'tracking_expand', label: 'Tracking Kerning Expansion' },
+                    { value: 'kinetic_pop_in', label: 'Kinetic Pop-In (Spring Physics)' },
+                    { value: 'minimal_lower_third', label: 'Minimalist Lower-Third Bar' },
+                    { value: 'glitch_distortion', label: 'Glitch Distortion (RGB Shift)' },
+                    { value: 'cinematic_glow_fade', label: 'Cinematic Glow Fade' },
+                    { value: 'typewriter_speech', label: 'Typewriter (Speech Cadence & Cursor)' },
                   ]}
                 />
                 {effectsText.compoundAnimation?.inAnimation && effectsText.compoundAnimation.inAnimation !== 'none' && (
-                  <label className="flex items-center gap-3 text-xs text-text-secondary mt-1">
-                    <span className="w-16 shrink-0">Duration</span>
-                    <input
-                      type="range"
-                      min={6}
-                      max={60}
-                      step={1}
-                      value={effectsText.compoundAnimation.inDurationFrames ?? 18}
-                      aria-label="In duration frames"
-                      className="flex-1 accent-[var(--accent-ai)]"
-                      onChange={(e) => {
-                        updateText({
-                          compoundAnimation: {
-                            ...effectsText.compoundAnimation!,
-                            inDurationFrames: Number(e.target.value),
-                          },
-                        });
-                      }}
-                    />
-                    <span className="w-12 shrink-0 text-right font-mono">
-                      {effectsText.compoundAnimation.inDurationFrames ?? 18}f
-                    </span>
-                  </label>
+                  <>
+                    <label className="flex items-center gap-3 text-xs text-text-secondary mt-1">
+                      <span className="w-16 shrink-0">Duration</span>
+                      <input
+                        type="range"
+                        min={6}
+                        max={60}
+                        step={1}
+                        value={effectsText.compoundAnimation.inDurationFrames ?? 18}
+                        aria-label="In duration frames"
+                        className="flex-1 accent-[var(--accent-ai)]"
+                        onChange={(e) => {
+                          updateText({
+                            compoundAnimation: {
+                              ...effectsText.compoundAnimation!,
+                              inDurationFrames: Number(e.target.value),
+                            },
+                          });
+                        }}
+                      />
+                      <span className="w-12 shrink-0 text-right font-mono">
+                        {effectsText.compoundAnimation.inDurationFrames ?? 18}f
+                      </span>
+                    </label>
+                    <div className="flex items-center gap-3 text-xs text-text-secondary mt-1">
+                      <span className="w-16 shrink-0">Easing</span>
+                      <Select
+                        aria-label="In easing curve"
+                        value={effectsText.compoundAnimation.inEasing ?? 'ease_out'}
+                        onChange={(val) => {
+                          updateText({
+                            compoundAnimation: {
+                              ...effectsText.compoundAnimation!,
+                              inEasing: val as any,
+                            },
+                          });
+                        }}
+                        options={[
+                          { value: 'ease_out', label: 'Smooth Ease Out' },
+                          { value: 'ease_in_out', label: 'Ease In-Out' },
+                          { value: 'cubic_bezier', label: 'Cubic Bezier' },
+                          { value: 'spring', label: 'Spring Physics (Bounce)' },
+                          { value: 'elastic', label: 'Elastic' },
+                          { value: 'linear', label: 'Linear' },
+                        ]}
+                      />
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -1202,31 +1232,78 @@ export function TextInspectorTab({ clip, patchClip }: TextInspectorTabProps) {
                   ]}
                 />
                 {effectsText.compoundAnimation?.outAnimation && effectsText.compoundAnimation.outAnimation !== 'none' && (
-                  <label className="flex items-center gap-3 text-xs text-text-secondary mt-1">
-                    <span className="w-16 shrink-0">Duration</span>
-                    <input
-                      type="range"
-                      min={6}
-                      max={60}
-                      step={1}
-                      value={effectsText.compoundAnimation.outDurationFrames ?? 15}
-                      aria-label="Out duration frames"
-                      className="flex-1 accent-[var(--accent-ai)]"
-                      onChange={(e) => {
-                        updateText({
-                          compoundAnimation: {
-                            ...effectsText.compoundAnimation!,
-                            outDurationFrames: Number(e.target.value),
-                          },
-                        });
-                      }}
-                    />
-                    <span className="w-12 shrink-0 text-right font-mono">
-                      {effectsText.compoundAnimation.outDurationFrames ?? 15}f
-                    </span>
-                  </label>
+                  <>
+                    <label className="flex items-center gap-3 text-xs text-text-secondary mt-1">
+                      <span className="w-16 shrink-0">Duration</span>
+                      <input
+                        type="range"
+                        min={6}
+                        max={60}
+                        step={1}
+                        value={effectsText.compoundAnimation.outDurationFrames ?? 15}
+                        aria-label="Out duration frames"
+                        className="flex-1 accent-[var(--accent-ai)]"
+                        onChange={(e) => {
+                          updateText({
+                            compoundAnimation: {
+                              ...effectsText.compoundAnimation!,
+                              outDurationFrames: Number(e.target.value),
+                            },
+                          });
+                        }}
+                      />
+                      <span className="w-12 shrink-0 text-right font-mono">
+                        {effectsText.compoundAnimation.outDurationFrames ?? 15}f
+                      </span>
+                    </label>
+                    <div className="flex items-center gap-3 text-xs text-text-secondary mt-1">
+                      <span className="w-16 shrink-0">Easing</span>
+                      <Select
+                        aria-label="Out easing curve"
+                        value={effectsText.compoundAnimation.outEasing ?? 'ease_out'}
+                        onChange={(val) => {
+                          updateText({
+                            compoundAnimation: {
+                              ...effectsText.compoundAnimation!,
+                              outEasing: val as any,
+                            },
+                          });
+                        }}
+                        options={[
+                          { value: 'ease_out', label: 'Smooth Ease Out' },
+                          { value: 'ease_in_out', label: 'Ease In-Out' },
+                          { value: 'cubic_bezier', label: 'Cubic Bezier' },
+                          { value: 'spring', label: 'Spring Physics (Bounce)' },
+                          { value: 'elastic', label: 'Elastic' },
+                          { value: 'linear', label: 'Linear' },
+                        ]}
+                      />
+                    </div>
+                  </>
                 )}
               </div>
+
+              {/* S167 Duration-Responsive Timing Toggle */}
+              <label className="flex items-center gap-2 p-2 rounded-lg bg-bg-app border border-hairline text-xs text-text-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={effectsText.compoundAnimation?.responsiveTiming ?? true}
+                  className="accent-[var(--accent-ai)]"
+                  onChange={(e) => {
+                    const prev = effectsText.compoundAnimation ?? {};
+                    updateText({
+                      compoundAnimation: {
+                        ...prev,
+                        responsiveTiming: e.target.checked,
+                      },
+                    });
+                  }}
+                />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-text-primary">Responsive Timing Auto-Scale</span>
+                  <span className="text-[10px] text-text-disabled">Automatically clamps & scales In/Out animations when clip is trimmed short</span>
+                </div>
+              </label>
             </div>
           </Section>
         </>

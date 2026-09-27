@@ -60,6 +60,7 @@ import {
   buildSvgMaskData,
   FONT_FAMILIES,
   calculateTypewriterSlice,
+  calculateSpeechTypewriterSlice,
   calculateTextMotionTransform,
   calculateCompoundTextMotion,
   calculateKaraokeHighlight,
@@ -930,10 +931,21 @@ export function TimelinePreview() {
     const posX = live?.x ?? (keyframeX !== undefined ? keyframeX : effectsText.positionPct.x);
     const posY = live?.y ?? (keyframeY !== undefined ? keyframeY : effectsText.positionPct.y);
     const position = { x: posX, y: posY };
-    const displayedText =
-      effectsText.animation?.type === 'typewriter'
-        ? calculateTypewriterSlice(effectsText.text, frameInClip, effectsText.animation.durationFrames)
-        : effectsText.text;
+    const isSpeechTypewriter =
+      effectsText.animation?.type === 'typewriter_speech' ||
+      effectsText.compoundAnimation?.inAnimation === 'typewriter_speech';
+    const typewriterDur =
+      effectsText.animation?.type === 'typewriter_speech'
+        ? effectsText.animation.durationFrames
+        : effectsText.compoundAnimation?.inDurationFrames ?? 45;
+
+    let displayedText = effectsText.text;
+    if (isSpeechTypewriter) {
+      const speechRes = calculateSpeechTypewriterSlice(effectsText.text, frameInClip, typewriterDur, true);
+      displayedText = speechRes.text + speechRes.cursor;
+    } else if (effectsText.animation?.type === 'typewriter') {
+      displayedText = calculateTypewriterSlice(effectsText.text, frameInClip, effectsText.animation.durationFrames);
+    }
 
     const motionState = calculateCompoundTextMotion(effectsText, frameInClip, durationFrames, fps);
 

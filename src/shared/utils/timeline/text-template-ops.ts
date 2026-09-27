@@ -14,6 +14,7 @@ import {
   type CompoundTextAnimationSettings,
   calculateTextMotionTransform,
 } from './typography-ops';
+import { calculateResponsiveAnimationDurations } from './kinetic-motion-ops';
 
 export type SmartTextTemplateCategory =
   | 'titles'
@@ -873,6 +874,184 @@ export const SMART_TEXT_TEMPLATES: readonly SmartTextTemplate[] = [
       templateLayout: 'bordered_card',
     },
   },
+  // ==========================================
+  // 6. S167 Dynamic Kinetic Typography Presets
+  // ==========================================
+  {
+    id: 'kinetic-spring-pop',
+    category: 'titles',
+    categoryLabel: 'Titles & Intros',
+    name: 'Kinetic Spring Pop-In',
+    description: 'High-energy spring physics pop with rotational snap and elastic bounce',
+    primaryText: 'NEXT LEVEL',
+    secondaryText: 'MOTION DESIGN',
+    layout: 'single',
+    durationSeconds: 3.5,
+    compoundAnimation: {
+      inAnimation: 'kinetic_pop_in',
+      inDurationFrames: 20,
+      inEasing: 'spring',
+      outAnimation: 'shrink_out',
+      outDurationFrames: 14,
+      responsiveTiming: true,
+    },
+    style: {
+      fontSizePx: 80,
+      colorHex: '#ffffff',
+      secondaryFontSizePx: 32,
+      secondaryColorHex: '#38bdf8',
+      align: 'center',
+      positionPct: { x: 0.5, y: 0.45 },
+      anchor: 'middle',
+      fontFamily: 'Montserrat',
+      fontWeight: '900',
+      letterSpacingPx: 3,
+      stroke: { colorHex: '#0f172a', widthPx: 3 },
+      shadow: { colorHex: '#000000', blurPx: 12, offsetX: 0, offsetY: 6, opacity: 0.7 },
+      preset: 'title',
+      templateStyleId: 'kinetic-spring-pop',
+      templateLayout: 'single',
+    },
+  },
+  {
+    id: 'minimalist-editorial-lower-third',
+    category: 'lower_thirds',
+    categoryLabel: 'Lower Thirds',
+    name: 'Minimalist Editorial Bar',
+    description: 'Editorial lower third with expanding accent bar and clean masked slide reveal',
+    primaryText: 'ALEXANDER WRIGHT',
+    secondaryText: 'Lead Creative Director & Filmmaker',
+    layout: 'stacked',
+    durationSeconds: 4.5,
+    compoundAnimation: {
+      inAnimation: 'minimal_lower_third',
+      inDurationFrames: 18,
+      inEasing: 'cubic_bezier',
+      outAnimation: 'fade_out',
+      outDurationFrames: 15,
+      responsiveTiming: true,
+    },
+    style: {
+      fontSizePx: 44,
+      colorHex: '#f8fafc',
+      secondaryFontSizePx: 22,
+      secondaryColorHex: '#94a3b8',
+      align: 'left',
+      positionPct: { x: 0.08, y: 0.82 },
+      anchor: 'bottom',
+      fontFamily: 'Inter',
+      fontWeight: '700',
+      letterSpacingPx: 1,
+      preset: 'lower_third',
+      templateStyleId: 'minimalist-editorial-lower-third',
+      templateLayout: 'stacked',
+    },
+  },
+  {
+    id: 'cyber-glitch-distortion',
+    category: 'kinetic',
+    categoryLabel: 'Kinetic & Quotes',
+    name: 'Cyber Glitch Distortion',
+    description: 'Chromatic aberration split with RGB channel displacement and digital jitter',
+    primaryText: 'SYSTEM OVERRIDE',
+    secondaryText: 'CRITICAL FAILURE DETECTED',
+    layout: 'single',
+    durationSeconds: 3.0,
+    compoundAnimation: {
+      inAnimation: 'glitch_distortion',
+      inDurationFrames: 18,
+      loopAnimation: 'glow_pulse',
+      outAnimation: 'dissolve',
+      outDurationFrames: 12,
+      responsiveTiming: true,
+    },
+    style: {
+      fontSizePx: 74,
+      colorHex: '#00f0ff',
+      secondaryFontSizePx: 24,
+      secondaryColorHex: '#ff0055',
+      align: 'center',
+      positionPct: { x: 0.5, y: 0.5 },
+      anchor: 'middle',
+      fontFamily: 'Bebas Neue',
+      fontWeight: '700',
+      letterSpacingPx: 4,
+      stroke: { colorHex: '#ff0055', widthPx: 1 },
+      shadow: { colorHex: '#00f0ff', blurPx: 14, offsetX: 0, offsetY: 0, opacity: 0.85 },
+      preset: 'title',
+      templateStyleId: 'cyber-glitch-distortion',
+      templateLayout: 'single',
+    },
+  },
+  {
+    id: 'cinematic-luminous-glow',
+    category: 'titles',
+    categoryLabel: 'Titles & Intros',
+    name: 'Cinematic Glow Fade',
+    description: 'Dreamy soft bloom glow expansion with subtle tracking widen',
+    primaryText: 'THE ODYSSEY',
+    secondaryText: 'A CINEMATIC JOURNEY',
+    layout: 'single',
+    durationSeconds: 5.0,
+    compoundAnimation: {
+      inAnimation: 'cinematic_glow_fade',
+      inDurationFrames: 30,
+      inEasing: 'ease_out',
+      outAnimation: 'fade_out',
+      outDurationFrames: 24,
+      responsiveTiming: true,
+    },
+    style: {
+      fontSizePx: 84,
+      colorHex: '#ffd700',
+      secondaryFontSizePx: 26,
+      secondaryColorHex: '#ffffff',
+      align: 'center',
+      positionPct: { x: 0.5, y: 0.46 },
+      anchor: 'middle',
+      fontFamily: 'Cinzel',
+      fontWeight: '600',
+      letterSpacingPx: 6,
+      shadow: { colorHex: '#000000', blurPx: 10, offsetX: 0, offsetY: 4, opacity: 0.7 },
+      preset: 'title',
+      templateStyleId: 'cinematic-luminous-glow',
+      templateLayout: 'single',
+    },
+  },
+  {
+    id: 'typewriter-speech-cadence',
+    category: 'kinetic',
+    categoryLabel: 'Kinetic & Quotes',
+    name: 'Typewriter Speech Cadence',
+    description: 'Character-by-character typing with punctuation pauses and live blinking cursor',
+    primaryText: 'Every detail matters when storytelling.',
+    secondaryText: 'PRODUCER NOTES',
+    layout: 'single',
+    durationSeconds: 4.0,
+    compoundAnimation: {
+      inAnimation: 'typewriter_speech',
+      inDurationFrames: 45,
+      outAnimation: 'fade_out',
+      outDurationFrames: 15,
+      responsiveTiming: true,
+    },
+    style: {
+      fontSizePx: 50,
+      colorHex: '#ffffff',
+      secondaryFontSizePx: 22,
+      secondaryColorHex: '#38bdf8',
+      align: 'center',
+      positionPct: { x: 0.5, y: 0.5 },
+      anchor: 'middle',
+      fontFamily: 'Roboto Mono',
+      fontWeight: '600',
+      letterSpacingPx: 1,
+      shadow: { colorHex: '#000000', blurPx: 8, offsetX: 0, offsetY: 2, opacity: 0.65 },
+      preset: 'title',
+      templateStyleId: 'typewriter-speech-cadence',
+      templateLayout: 'single',
+    },
+  },
 ];
 
 /**
@@ -891,9 +1070,12 @@ export function calculateCompoundTextMotion(
     return calculateTextMotionTransform(effectsText.animation, frameInClip, fps);
   }
 
-  const inDuration = Math.max(1, compound.inDurationFrames ?? 15);
-  const outDuration = Math.max(1, compound.outDurationFrames ?? 15);
-  const exitStartFrame = Math.max(inDuration, durationFrames - outDuration);
+  const rawIn = Math.max(1, compound.inDurationFrames ?? 15);
+  const rawOut = Math.max(1, compound.outDurationFrames ?? 15);
+  const { inDurationFrames: inDuration, outDurationFrames: outDuration, exitStartFrame } =
+    compound.responsiveTiming || rawIn + rawOut > durationFrames
+      ? calculateResponsiveAnimationDurations(rawIn, rawOut, durationFrames)
+      : { inDurationFrames: rawIn, outDurationFrames: rawOut, exitStartFrame: Math.max(rawIn, durationFrames - rawOut) };
 
   // Phase 1: In / Entrance Animation
   if (frameInClip < inDuration && compound.inAnimation && compound.inAnimation !== 'none') {

@@ -1,4 +1,5 @@
 import type { SequenceClip } from '../../types/sequence';
+import { calculateKineticMotionTransform } from './kinetic-motion-ops';
 
 /**
  * Pure arithmetic, typography styling, and kinetic motion animation engine
@@ -95,6 +96,12 @@ export type TextAnimationType =
   | 'flip_x'
   | 'elastic_drop'
   | 'tracking_expand'
+  // S167 Kinetic Typography & Motion Titles
+  | 'kinetic_pop_in'
+  | 'minimal_lower_third'
+  | 'glitch_distortion'
+  | 'cinematic_glow_fade'
+  | 'typewriter_speech'
   // Exit (Out)
   | 'fade_out'
   | 'slide_down_out'
@@ -119,9 +126,12 @@ export interface TextAnimationSettings {
 export interface CompoundTextAnimationSettings {
   inAnimation?: TextAnimationType;
   inDurationFrames?: number;
+  inEasing?: 'linear' | 'ease_out' | 'ease_in_out' | 'cubic_bezier' | 'elastic' | 'spring';
   loopAnimation?: TextAnimationType;
   outAnimation?: TextAnimationType;
   outDurationFrames?: number;
+  outEasing?: 'linear' | 'ease_out' | 'ease_in_out' | 'cubic_bezier' | 'elastic' | 'spring';
+  responsiveTiming?: boolean;
 }
 
 export interface StudioTextPreset {
@@ -267,7 +277,7 @@ export function calculateTextMotionTransform(
   frameInClip: number,
   fps: number = 30
 ): TextMotionState {
-  if (!animation || animation.type === 'none' || animation.type === 'typewriter') {
+  if (!animation || animation.type === 'none' || animation.type === 'typewriter' || animation.type === 'typewriter_speech') {
     return {};
   }
 
@@ -389,6 +399,13 @@ export function calculateTextMotionTransform(
         opacity: easeOut,
       };
     }
+
+    // S167 Kinetic Typography & Motion Titles
+    case 'kinetic_pop_in':
+    case 'minimal_lower_third':
+    case 'glitch_distortion':
+    case 'cinematic_glow_fade':
+      return calculateKineticMotionTransform(animation.type, frameInClip, dur, fps);
 
     // Exit Animations (progress based on durationFrames)
     case 'fade_out': {

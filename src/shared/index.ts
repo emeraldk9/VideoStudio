@@ -89,6 +89,7 @@ export * from './utils/timeline/ink-stream-protocol';
 export * from './utils/timeline/hand-pose-ops';
 export * from './utils/timeline/bitmap-vectorizer-ops';
 export * from './utils/timeline/kinetic-typography-ops';
+export * from './utils/timeline/kinetic-motion-ops';
 export * from './utils/timeline/bidi-writing-ops';
 export * from './utils/timeline/pressure-ribbon-ops';
 export * from './utils/timeline/surface-friction-ops';
