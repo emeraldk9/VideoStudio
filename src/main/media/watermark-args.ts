@@ -54,9 +54,20 @@ export const VIDEO_ENCODER_LADDER = [
   'h264_qsv',
   'h264_amf',
   'h264_videotoolbox',
+  'h264_mf',
   'libx264',
 ] as const;
 export type VideoEncoder = (typeof VIDEO_ENCODER_LADDER)[number];
+
+export const HEVC_ENCODER_LADDER = [
+  'hevc_nvenc',
+  'hevc_qsv',
+  'hevc_amf',
+  'hevc_videotoolbox',
+  'hevc_mf',
+  'libx265',
+] as const;
+export type HevcEncoder = (typeof HEVC_ENCODER_LADDER)[number];
 
 /** Parses `ffmpeg -encoders` output into the set of encoder names it actually has. */
 export function parseEncoders(stdout: string): Set<string> {
@@ -146,9 +157,44 @@ export function encoderQualityArgs(encoder: VideoEncoder, quality: EncodeQuality
     case 'h264_videotoolbox':
       // VideoToolbox's scale runs the other way: higher is better, 0-100.
       return ['-q:v', String(clampInt(100 - crf * 2, 1, 100))];
+    case 'h264_mf':
+      // MediaFoundation on Windows: -rate_control quality -quality <1-100>
+      return ['-rate_control', 'quality', '-quality', String(clampInt(100 - crf * 2, 1, 100))];
     case 'libx264':
     default:
       return ['-preset', 'slow', '-crf', String(crf)];
+  }
+}
+
+/**
+ * S158 — Quality arguments for HEVC / H.265 encoders.
+ */
+export function hevcQualityArgs(encoder: HevcEncoder, quality: EncodeQuality = {}): string[] {
+  const crf = clampInt(quality.crf ?? (DEFAULT_CRF + 4), CRF_MIN, CRF_MAX);
+  if (quality.lossless) {
+    switch (encoder) {
+      case 'libx265':
+        return ['-preset', 'slow', '-x265-params', 'lossless=1'];
+      case 'hevc_nvenc':
+        return ['-preset', 'p7', '-tune', 'lossless'];
+      default:
+        return ['-preset', 'slow', '-x265-params', 'lossless=1'];
+    }
+  }
+  switch (encoder) {
+    case 'hevc_nvenc':
+      return ['-preset', 'p6', '-tune', 'hq', '-rc', 'vbr', '-cq', String(crf + 4)];
+    case 'hevc_qsv':
+      return ['-preset', 'veryslow', '-global_quality', String(crf + 4)];
+    case 'hevc_amf':
+      return ['-quality', 'quality', '-rc', 'cqp', '-qp_i', String(crf + 4), '-qp_p', String(crf + 4)];
+    case 'hevc_videotoolbox':
+      return ['-q:v', String(clampInt(100 - crf * 2, 1, 100))];
+    case 'hevc_mf':
+      return ['-rate_control', 'quality', '-quality', String(clampInt(100 - crf * 2, 1, 100))];
+    case 'libx265':
+    default:
+      return ['-preset', 'medium', '-crf', String(crf)];
   }
 }
 

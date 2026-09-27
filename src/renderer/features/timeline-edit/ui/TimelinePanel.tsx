@@ -87,6 +87,7 @@ import { AutoReframeModal } from './AutoReframeModal';
 import { AutoBeatSyncModal } from './AutoBeatSyncModal';
 import { VocalStemSeparatorModal } from './VocalStemSeparatorModal';
 import { LANE_LABEL_WIDTH_PX, TimelineTrackRow } from './TimelineLane';
+import { TimelineTrackFolderRow } from './TimelineTrackFolderRow';
 import { SketchKeyframeLane } from './SketchKeyframeLane';
 import { TIMELINE_RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler';
 
@@ -147,6 +148,54 @@ export function TimelinePanel() {
   const clips = useMemo(() => document?.clips ?? [], [document]);
   const tracks = useMemo(() => document?.tracks ?? [], [document]);
   const displayTracks = useMemo(() => tracksInDisplayOrder(tracks), [tracks]);
+  const folders = useMemo(() => document?.folders ?? [], [document]);
+
+  const timelineRows = useMemo(() => {
+    const result: Array<
+      | { type: 'folder'; folder: (typeof folders)[number]; childCount: number }
+      | { type: 'track'; track: SequenceTrack }
+    > = [];
+
+    const foldersByKind = {
+      video: folders.filter((f) => f.kind === 'video'),
+      audio: folders.filter((f) => f.kind === 'audio'),
+    };
+
+    const renderedFolderIds = new Set<string>();
+
+    for (const kind of ['video', 'audio'] as const) {
+      const kindTracks = displayTracks.filter((t) => t.kind === kind);
+      const kindFolders = foldersByKind[kind];
+
+      // Empty folders of this kind
+      for (const folder of kindFolders) {
+        const childCount = kindTracks.filter((t) => t.folderId === folder.id).length;
+        if (childCount === 0) {
+          result.push({ type: 'folder', folder, childCount: 0 });
+          renderedFolderIds.add(folder.id);
+        }
+      }
+
+      for (const track of kindTracks) {
+        if (track.folderId) {
+          const folder = kindFolders.find((f) => f.id === track.folderId);
+          if (folder) {
+            if (!renderedFolderIds.has(folder.id)) {
+              const childCount = kindTracks.filter((t) => t.folderId === folder.id).length;
+              result.push({ type: 'folder', folder, childCount });
+              renderedFolderIds.add(folder.id);
+            }
+            if (folder.collapsed) {
+              continue;
+            }
+          }
+        }
+        result.push({ type: 'track', track });
+      }
+    }
+
+    return result;
+  }, [displayTracks, folders]);
   const spineTrackId = document?.sequence.spineTrackId ?? null;
   const spineTrack = useMemo(
     () => tracks.find((t) => t.id === spineTrackId) ?? null,
@@ -302,13 +351,17 @@ export function TimelinePanel() {
       const y = clientY - element.getBoundingClientRect().top;
       if (y < 0) return null;
       let cursor = 0;
-      for (const track of displayTracks) {
-        cursor += Math.max(24, track.heightPx) + LANE_GAP_PX;
-        if (y < cursor) return { type: 'row', track };
+      for (const item of timelineRows) {
+        if (item.type === 'folder') {
+          cursor += 30 + LANE_GAP_PX;
+        } else {
+          cursor += Math.max(24, item.track.heightPx) + LANE_GAP_PX;
+          if (y < cursor) return { type: 'row', track: item.track };
+        }
       }
       return { type: 'new' };
     },
-    [displayTracks],
+    [timelineRows],
   );
 
   /** "Drag out of the lane creates a lane" — mint a track the clip may live on, then move onto it.
@@ -2382,110 +2435,122 @@ export function TimelinePanel() {
               void dropOnNewTrack(items, frameAtClientX(event.clientX));
             }}
           >
-            {displayTracks.map((track) => (
-              <Fragment key={track.id}>
-                <TimelineTrackRow
-                  track={track}
-                  clips={clips}
-                  fps={fps}
-                  pixelsPerSecond={pixelsPerSecond}
-                  widthPx={widthPx}
-                  selectedClipIds={selectedClipIds}
-                  dimmed={soloTrackIds.length > 0 && track.kind === 'audio' && !soloTrackIds.includes(track.id)}
-                  lifted={reorderHover?.trackId === track.id}
-                  liveDragClipIds={liveDragClipIds}
-                  liveDragKind={drag?.kind ?? null}
-                  onMoveUp={canMoveTrack(track, 'up') ? () => moveTrack(track, 'up') : null}
-                  onMoveDown={canMoveTrack(track, 'down') ? () => moveTrack(track, 'down') : null}
-                  dropTarget={
-                    (moveLanding?.type === 'row' &&
-                      moveLanding.track.id === track.id &&
-                      track.id !== dragSourceTrackId &&
-                      dragClip !== null &&
-                      dragSource !== null &&
-                      track.kind === dragSource.track.kind &&
-                      clipAllowedOnTrack(dragClip, track) &&
-                      !track.locked) ||
-                    (dropLanding?.type === 'row' && dropLanding.trackId === track.id)
-                  }
-                  dropItems={
-                    dropLanding?.type === 'row' && dropLanding.trackId === track.id ? dragItems : null
-                  }
-                  onSelect={handleSelect}
-                  onToggleSelect={handleToggleSelect}
-                  onClipContextMenu={handleClipContextMenu}
-                  onTroughContextMenu={handleTroughContextMenu}
-                  activeGap={troughMenu?.gap ?? null}
-                  onMoveStart={(event, clip) => {
-                    // S160 — the blade tool: a clip click cuts at the pointer's
-                    // frame instead of picking the clip up. Alt = every track.
-                    if (toolMode === 'split') {
-                      bladeAt(event.clientX, track, event.altKey);
-                      return;
-                    }
-                    // The sweep tools select on click; nothing is dragged.
-                    if (toolMode !== 'select') return;
-                    dragTarget.current = { clip };
-                    // A fresh gesture must not inherit the previous one's glow.
-                    updateMoveLanding(null);
-                    const placed = layoutTrack(clips, track).find((item) => item.clip.id === clip.id);
-                    begin(event, 'move', clip, placed?.startFrames ?? 0);
-                  }}
-                  onTrimStart={(event, clip, edge) => {
-                    dragTarget.current = { clip, edge };
-                    // **The gesture begins at the edge being dragged**, in
-                    // absolute frames — not at 0, which is what S145 shipped.
-                    // With origin 0 the hook's `Math.max(0, origin + delta)`
-                    // floor clamped every leftward drag to nothing, so the head
-                    // could not extend and the tail could not shorten; and the
-                    // snap targets (absolute clip edges) were being compared
-                    // against a delta, which is a different coordinate space.
-                    const placed = layoutTrack(clips, track).find(
-                      (item) => item.clip.id === clip.id,
-                    );
-                    begin(
-                      event,
-                      edge === 'start' ? 'trim-start' : 'trim-end',
-                      clip,
-                      edge === 'start' ? (placed?.startFrames ?? 0) : (placed?.endFrames ?? 0),
-                      // S176 — the same clamps `trimClipEdge` applies on
-                      // commit, given to the hook so the live preview cannot
-                      // promise a trim the commit will refuse: the tail keeps
-                      // ≥1 frame; the head keeps ≥1 frame and cannot reach
-                      // before the source's own start (stills have no source
-                      // range and extend without bound).
-                      edge === 'end'
-                        ? { minDelta: 1 - clip.durationFrames, maxDelta: Number.MAX_SAFE_INTEGER }
-                        : {
-                            minDelta:
-                              clip.sourceInFrames != null
-                                ? -clip.sourceInFrames
-                                : -Number.MAX_SAFE_INTEGER,
-                            maxDelta: clip.durationFrames - 1,
-                          },
-                    );
-                  }}
-                  onDropHover={handleDropHover}
-                  onDropFile={handleDrop}
-                  onDropExternalFiles={handleDropExternalFiles}
-                  onReorderStart={handleReorderStart}
-                  onReorderMove={handleReorderMove}
-                  onReorderEnd={handleReorderEnd}
-                  onMarqueeStart={handleMarqueeStart}
-                />
-                {/* S5 — Dedicated Sketch In/Out Keyframe Lane, visible only when sketches are enabled on the spine */}
-                {track.id === spineTrackId && hasSpineSketches && spineTrack && (
-                  <SketchKeyframeLane
-                    spineTrack={spineTrack}
-                    spineClips={spineClips}
+            {timelineRows.map((rowItem) => {
+              if (rowItem.type === 'folder') {
+                return (
+                  <TimelineTrackFolderRow
+                    key={rowItem.folder.id}
+                    folder={rowItem.folder}
+                    childTrackCount={rowItem.childCount}
+                  />
+                );
+              }
+              const track = rowItem.track;
+              return (
+                <Fragment key={track.id}>
+                  <TimelineTrackRow
+                    track={track}
+                    clips={clips}
                     fps={fps}
                     pixelsPerSecond={pixelsPerSecond}
                     widthPx={widthPx}
                     selectedClipIds={selectedClipIds}
+                    dimmed={soloTrackIds.length > 0 && track.kind === 'audio' && !soloTrackIds.includes(track.id)}
+                    lifted={reorderHover?.trackId === track.id}
+                    liveDragClipIds={liveDragClipIds}
+                    liveDragKind={drag?.kind ?? null}
+                    onMoveUp={canMoveTrack(track, 'up') ? () => moveTrack(track, 'up') : null}
+                    onMoveDown={canMoveTrack(track, 'down') ? () => moveTrack(track, 'down') : null}
+                    dropTarget={
+                      (moveLanding?.type === 'row' &&
+                        moveLanding.track.id === track.id &&
+                        track.id !== dragSourceTrackId &&
+                        dragClip !== null &&
+                        dragSource !== null &&
+                        track.kind === dragSource.track.kind &&
+                        clipAllowedOnTrack(dragClip, track) &&
+                        !track.locked) ||
+                      (dropLanding?.type === 'row' && dropLanding.trackId === track.id)
+                    }
+                    dropItems={
+                      dropLanding?.type === 'row' && dropLanding.trackId === track.id ? dragItems : null
+                    }
+                    onSelect={handleSelect}
+                    onToggleSelect={handleToggleSelect}
+                    onClipContextMenu={handleClipContextMenu}
+                    onTroughContextMenu={handleTroughContextMenu}
+                    activeGap={troughMenu?.gap ?? null}
+                    onMoveStart={(event, clip) => {
+                      // S160 — the blade tool: a clip click cuts at the pointer's
+                      // frame instead of picking the clip up. Alt = every track.
+                      if (toolMode === 'split') {
+                        bladeAt(event.clientX, track, event.altKey);
+                        return;
+                      }
+                      // The sweep tools select on click; nothing is dragged.
+                      if (toolMode !== 'select') return;
+                      dragTarget.current = { clip };
+                      // A fresh gesture must not inherit the previous one's glow.
+                      updateMoveLanding(null);
+                      const placed = layoutTrack(clips, track).find((item) => item.clip.id === clip.id);
+                      begin(event, 'move', clip, placed?.startFrames ?? 0);
+                    }}
+                    onTrimStart={(event, clip, edge) => {
+                      dragTarget.current = { clip, edge };
+                      // **The gesture begins at the edge being dragged**, in
+                      // absolute frames — not at 0, which is what S145 shipped.
+                      // With origin 0 the hook's `Math.max(0, origin + delta)`
+                      // floor clamped every leftward drag to nothing, so the head
+                      // could not extend and the tail could not shorten; and the
+                      // snap targets (absolute clip edges) were being compared
+                      // against a delta, which is a different coordinate space.
+                      const placed = layoutTrack(clips, track).find(
+                        (item) => item.clip.id === clip.id,
+                      );
+                      begin(
+                        event,
+                        edge === 'start' ? 'trim-start' : 'trim-end',
+                        clip,
+                        edge === 'start' ? (placed?.startFrames ?? 0) : (placed?.endFrames ?? 0),
+                        // S176 — the same clamps `trimClipEdge` applies on
+                        // commit, given to the hook so the live preview cannot
+                        // promise a trim the commit will refuse: the tail keeps
+                        // ≥1 frame; the head keeps ≥1 frame and cannot reach
+                        // before the source's own start (stills have no source
+                        // range and extend without bound).
+                        edge === 'end'
+                          ? { minDelta: 1 - clip.durationFrames, maxDelta: Number.MAX_SAFE_INTEGER }
+                          : {
+                              minDelta:
+                                clip.sourceInFrames != null
+                                  ? -clip.sourceInFrames
+                                  : -Number.MAX_SAFE_INTEGER,
+                              maxDelta: clip.durationFrames - 1,
+                            },
+                      );
+                    }}
+                    onDropHover={handleDropHover}
+                    onDropFile={handleDrop}
+                    onDropExternalFiles={handleDropExternalFiles}
+                    onReorderStart={handleReorderStart}
+                    onReorderMove={handleReorderMove}
+                    onReorderEnd={handleReorderEnd}
+                    onMarqueeStart={handleMarqueeStart}
                   />
-                )}
-              </Fragment>
-            ))}
+                  {/* S5 — Dedicated Sketch In/Out Keyframe Lane, visible only when sketches are enabled on the spine */}
+                  {track.id === spineTrackId && hasSpineSketches && spineTrack && (
+                    <SketchKeyframeLane
+                      spineTrack={spineTrack}
+                      spineClips={spineClips}
+                      fps={fps}
+                      pixelsPerSecond={pixelsPerSecond}
+                      widthPx={widthPx}
+                      selectedClipIds={selectedClipIds}
+                    />
+                  )}
+                </Fragment>
+              );
+            })}
             {/* S157 — the space below the last lane is the "drag out of the
                 lane" zone; a mid-move hover shows what a release would mint.
                 (The add-track buttons themselves moved to the dock toolbar.) */}

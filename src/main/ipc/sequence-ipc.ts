@@ -22,11 +22,14 @@ import {
   type MediaSourceKind,
   type PickedMediaFile,
   type RemoveImportedMediaResult,
+  type RenderAcceleration,
   type RenderEncoderInfo,
   type Sequence,
   type SequenceDocument,
   type SequenceMarker,
   type SequenceRenderResult,
+  type SequenceTrack,
+  type TrackFolder,
   type WhiteboardTraceMapPayload,
 } from '@shared';
 
@@ -428,9 +431,64 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
       (_event, payload): SequenceDocument | null =>
         sequences.replaceDocument(
           payload.sequenceId,
-          { tracks: payload.tracks, clips: payload.clips, spineTrackId: payload.spineTrackId },
+          {
+            tracks: payload.tracks,
+            clips: payload.clips,
+            spineTrackId: payload.spineTrackId,
+            folders: payload.folders,
+          },
           now(),
         ),
+    ),
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_CREATE_TRACK_FOLDER,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_CREATE_TRACK_FOLDER],
+      (_event, payload): TrackFolder =>
+        sequences.createFolder({
+          sequenceId: payload.sequenceId,
+          name: payload.name,
+          kind: payload.kind,
+          color: payload.color,
+          parentFolderId: payload.parentFolderId,
+        }),
+    ),
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_UPDATE_TRACK_FOLDER,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_UPDATE_TRACK_FOLDER],
+      (_event, payload): TrackFolder | null =>
+        sequences.updateFolder(payload.folderId, {
+          name: payload.name,
+          collapsed: payload.collapsed,
+          muted: payload.muted,
+          locked: payload.locked,
+          visible: payload.visible,
+          color: payload.color,
+          parentFolderId: payload.parentFolderId,
+          audioBusId: payload.audioBusId,
+        }),
+    ),
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_DELETE_TRACK_FOLDER,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_DELETE_TRACK_FOLDER],
+      (_event, payload): boolean => sequences.deleteFolder(payload.folderId),
+    ),
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEQUENCE_SET_TRACK_FOLDER,
+    withValidation(
+      IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_SET_TRACK_FOLDER],
+      (_event, payload): SequenceTrack | null =>
+        sequences.setTrackFolder(payload.trackId, payload.folderId),
     ),
   );
 
@@ -703,12 +761,16 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
     IPC_CHANNELS.SEQUENCE_GET_ENCODER,
     withValidation(
       IPC_SCHEMAS[IPC_CHANNELS.SEQUENCE_GET_ENCODER],
-      async (): Promise<RenderEncoderInfo> =>
+      async (_event, payload?: { acceleration?: RenderAcceleration }): Promise<RenderEncoderInfo> =>
         // The same call the render itself makes, and every step of it is
         // process-cached — so asking here warms exactly what the export will
         // use, and the panel cannot claim a hardware encoder the render then
         // declines to open.
-        resolveRenderEncoder(ffmpegPath, await probeFfmpegCapabilities(ffmpegPath), 'auto'),
+        resolveRenderEncoder(
+          ffmpegPath,
+          await probeFfmpegCapabilities(ffmpegPath),
+          payload?.acceleration ?? 'auto',
+        ),
     ),
   );
 
@@ -1121,19 +1183,23 @@ export function registerSequenceIpcHandlers(deps: SequenceIpcDependencies): void
         // choice names the base file — the render writes `name_%05d.png`
         // beside it, which the filter's plural label discloses.
         const format = payload.format ?? 'mp4';
-        const audio = format === 'm4a';
+        const audio = format === 'm4a' || format === 'wav';
         const filter: Electron.FileFilter =
           format === 'm4a'
             ? { name: 'AAC audio', extensions: ['m4a'] }
-            : format === 'gif'
-              ? { name: 'GIF animation', extensions: ['gif'] }
-              : format === 'webm'
-                ? { name: 'WebM video', extensions: ['webm'] }
-                : format === 'apng'
-                  ? { name: 'Animated PNG', extensions: ['apng'] }
-                  : format === 'png'
-                    ? { name: 'PNG frame sequence', extensions: ['png'] }
-                    : { name: 'MP4 video', extensions: ['mp4'] };
+            : format === 'wav'
+              ? { name: 'Broadcast WAV audio', extensions: ['wav'] }
+              : format === 'gif'
+                ? { name: 'GIF animation', extensions: ['gif'] }
+                : format === 'webm'
+                  ? { name: 'WebM video', extensions: ['webm'] }
+                  : format === 'apng'
+                    ? { name: 'Animated PNG', extensions: ['apng'] }
+                    : format === 'png'
+                      ? { name: 'PNG frame sequence', extensions: ['png'] }
+                      : format === 'prores' || format === 'dnxhd'
+                        ? { name: 'QuickTime Master', extensions: ['mov'] }
+                        : { name: 'MP4 video', extensions: ['mp4'] };
         const result = await showSaveDialog({
           title: audio ? 'Export sequence audio' : 'Export sequence',
           defaultPath: `${payload.suggestedName}.${filter.extensions[0]}`,

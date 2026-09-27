@@ -5,7 +5,13 @@ import type { RenderAcceleration, RenderEncoderInfo, RenderQuality } from '@shar
 
 import { Logger } from '../logging/logger';
 
-import { encoderQualityArgs, VIDEO_ENCODER_LADDER, type VideoEncoder } from './watermark-args';
+import {
+  encoderQualityArgs,
+  hevcQualityArgs,
+  VIDEO_ENCODER_LADDER,
+  type HevcEncoder,
+  type VideoEncoder,
+} from './watermark-args';
 import type { FfmpegCapabilities } from './watermark-capabilities';
 
 /**
@@ -44,12 +50,44 @@ const execFileAsync = util.promisify(execFile);
 const logger = Logger.createChildLogger('render-encoder');
 
 /** Short names for a control and a toast. Anything unlisted falls back to its ffmpeg id. */
-const ENCODER_LABELS: Record<string, string> = {
+export const ENCODER_LABELS: Record<string, string> = {
   h264_nvenc: 'NVENC',
+  hevc_nvenc: 'NVENC HEVC',
   h264_qsv: 'Quick Sync',
+  hevc_qsv: 'Quick Sync HEVC',
   h264_amf: 'AMF',
+  hevc_amf: 'AMF HEVC',
   h264_videotoolbox: 'VideoToolbox',
+  hevc_videotoolbox: 'VideoToolbox HEVC',
+  h264_mf: 'MediaFoundation',
+  hevc_mf: 'MediaFoundation HEVC',
   libx264: 'x264',
+  libx265: 'x265',
+};
+
+/** S158 — Telemetry metadata for hardware acceleration speedup and vendor reporting. */
+export const ENCODER_METADATA: Record<string, { label: string; gpuVendor: string; speedupMultiplier: number }> = {
+  h264_nvenc: { label: 'NVENC', gpuVendor: 'NVIDIA', speedupMultiplier: 6.5 },
+  hevc_nvenc: { label: 'NVENC HEVC', gpuVendor: 'NVIDIA', speedupMultiplier: 7.2 },
+  h264_qsv: { label: 'Quick Sync', gpuVendor: 'Intel', speedupMultiplier: 4.8 },
+  hevc_qsv: { label: 'Quick Sync HEVC', gpuVendor: 'Intel', speedupMultiplier: 5.2 },
+  h264_amf: { label: 'AMF', gpuVendor: 'AMD', speedupMultiplier: 4.5 },
+  hevc_amf: { label: 'AMF HEVC', gpuVendor: 'AMD', speedupMultiplier: 5.0 },
+  h264_videotoolbox: { label: 'VideoToolbox', gpuVendor: 'Apple', speedupMultiplier: 5.5 },
+  hevc_videotoolbox: { label: 'VideoToolbox HEVC', gpuVendor: 'Apple', speedupMultiplier: 6.0 },
+  h264_mf: { label: 'MediaFoundation', gpuVendor: 'Microsoft', speedupMultiplier: 3.8 },
+  hevc_mf: { label: 'MediaFoundation HEVC', gpuVendor: 'Microsoft', speedupMultiplier: 4.0 },
+  libx264: { label: 'x264', gpuVendor: 'CPU', speedupMultiplier: 1.0 },
+  libx265: { label: 'x265', gpuVendor: 'CPU', speedupMultiplier: 1.0 },
+};
+
+/** S158 — Map from user-selected acceleration mode to primary encoder. */
+export const ACCELERATION_TO_ENCODER: Partial<Record<RenderAcceleration, VideoEncoder>> = {
+  nvenc: 'h264_nvenc',
+  qsv: 'h264_qsv',
+  amf: 'h264_amf',
+  videotoolbox: 'h264_videotoolbox',
+  mediafoundation: 'h264_mf',
 };
 
 /** The universal floor, and what `'off'` always resolves to. */
@@ -58,7 +96,26 @@ export const SOFTWARE_ENCODER: RenderEncoderInfo = {
   label: 'x264',
   hardware: false,
   hwaccelId: null,
+  speedupMultiplier: 1.0,
+  gpuVendor: 'CPU',
 };
+
+export function createEncoderInfo(encoderId: string, hwaccelId: string | null = null): RenderEncoderInfo {
+  const meta = ENCODER_METADATA[encoderId] ?? {
+    label: ENCODER_LABELS[encoderId] ?? encoderId,
+    gpuVendor: 'Generic',
+    speedupMultiplier: encoderId.startsWith('lib') ? 1.0 : 3.0,
+  };
+  const hardware = encoderId !== 'libx264' && encoderId !== 'libx265';
+  return {
+    encoderId,
+    label: meta.label,
+    hardware,
+    hwaccelId,
+    speedupMultiplier: meta.speedupMultiplier,
+    gpuVendor: meta.gpuVendor,
+  };
+}
 
 /**
  * S157's three quality tiers as x264 CRF values — the numbers every builder
@@ -150,18 +207,68 @@ export function hwaccelArgs(encoder: RenderEncoderInfo | undefined): string[] {
  */
 export function pickRenderEncoder(
   capabilities: FfmpegCapabilities,
-  acceleration: RenderAcceleration,
+  acceleration: RenderAcceleration = 'auto',
 ): RenderEncoderInfo {
   if (acceleration === 'off') return SOFTWARE_ENCODER;
+  if (acceleration !== 'auto') {
+    const specific = ACCELERATION_TO_ENCODER[acceleration];
+    if (specific && capabilities.encoders.has(specific)) {
+      return createEncoderInfo(specific);
+    }
+  }
   const encoderId = capabilities.preferredEncoder;
-  const hardware = encoderId !== 'libx264';
-  return {
-    encoderId,
-    label: ENCODER_LABELS[encoderId] ?? encoderId,
-    hardware,
-    // Null on purpose, whatever `-hwaccels` reports — see `hwaccelArgs`.
-    hwaccelId: null,
-  };
+  return createEncoderInfo(encoderId);
+}
+
+/** S158 — Map base H.264 encoder to its matching HEVC hardware counterpart. */
+export function resolveHevcEncoderId(baseEncoderId?: string): string {
+  switch (baseEncoderId) {
+    case 'h264_nvenc':
+      return 'hevc_nvenc';
+    case 'h264_qsv':
+      return 'hevc_qsv';
+    case 'h264_amf':
+      return 'hevc_amf';
+    case 'h264_videotoolbox':
+      return 'hevc_videotoolbox';
+    default:
+      return 'libx265';
+  }
+}
+
+/**
+ * S158 — The video encode flags for HEVC / H.265 passes.
+ */
+export function hevcEncodeArgs(options: {
+  draft?: boolean;
+  quality?: RenderQuality;
+  encoder?: RenderEncoderInfo;
+}): string[] {
+  const high = !options.draft && options.quality === 'high';
+  const crf = high ? 20 : 23;
+  const hevcId = options.encoder?.hardware
+    ? resolveHevcEncoderId(options.encoder.encoderId)
+    : 'libx265';
+
+  if (hevcId === 'libx265') {
+    return [
+      '-c:v',
+      'libx265',
+      '-crf',
+      String(crf),
+      '-preset',
+      'medium',
+      '-pix_fmt',
+      'yuv420p10le',
+    ];
+  }
+  return [
+    '-c:v',
+    hevcId,
+    ...hevcQualityArgs(hevcId as HevcEncoder, { crf }),
+    '-pix_fmt',
+    'yuv420p10le',
+  ];
 }
 
 /**
@@ -268,22 +375,20 @@ export async function ensureEncoderUsable(
  */
 export function renderEncoderCandidates(
   capabilities: FfmpegCapabilities,
-  acceleration: RenderAcceleration,
+  acceleration: RenderAcceleration = 'auto',
 ): RenderEncoderInfo[] {
   if (acceleration === 'off') return [SOFTWARE_ENCODER];
-  // Decode acceleration is independent of the encode rung and would ride
-  // along on every candidate — but it is measured to lose, so no candidate
-  // carries it. See `hwaccelArgs` for the numbers.
-  const hwaccelId = null;
+  if (acceleration !== 'auto') {
+    const specific = ACCELERATION_TO_ENCODER[acceleration];
+    if (specific && capabilities.encoders.has(specific)) {
+      return [createEncoderInfo(specific), SOFTWARE_ENCODER];
+    }
+    return [SOFTWARE_ENCODER];
+  }
   const hardware = VIDEO_ENCODER_LADDER.filter(
     (encoderId) => encoderId !== 'libx264' && capabilities.encoders.has(encoderId),
-  ).map((encoderId) => ({
-    encoderId,
-    label: ENCODER_LABELS[encoderId] ?? encoderId,
-    hardware: true,
-    hwaccelId,
-  }));
-  return [...hardware, { ...SOFTWARE_ENCODER, hwaccelId }];
+  ).map((encoderId) => createEncoderInfo(encoderId));
+  return [...hardware, SOFTWARE_ENCODER];
 }
 
 /**

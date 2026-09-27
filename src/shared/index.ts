@@ -139,5 +139,7 @@ export * from './utils/timeline/metallic-foil-ops';
 export * from './utils/timeline/compass-divider-caliper-ops';
 export * from './utils/timeline/collaborative-crdt-ops';
 export * from './utils/timeline/spatial-audio-atmos-ops';
+export * from './types/keymap';
+export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';
 export * from './ipc/ipc-schemas';

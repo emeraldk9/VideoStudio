@@ -7,12 +7,15 @@ import {
   type ImportedMediaFile,
   type ProjectRecord,
   type RemoveImportedMediaResult,
+  type RenderAcceleration,
   type RenderEncoderInfo,
   type Sequence,
   type SequenceDocument,
   type SequenceMarker,
   type SequenceRenderProgress,
   type SequenceRenderResult,
+  type SequenceTrack,
+  type TrackFolder,
   type Veo3FlowProjectData,
   type WatermarkInpaintStatus,
   type WhiteboardTraceMapPayload,
@@ -65,8 +68,11 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_GET_FILMSTRIP, { sourcePath }) as Promise<any>,
     captureFrame: (request: { sourcePath: string; atSeconds: number; sequenceId?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_CAPTURE_FRAME, request) as Promise<{ imagePath: string; url: string } | null>,
-    getEncoder: () =>
-      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_GET_ENCODER) as Promise<RenderEncoderInfo>,
+    getEncoder: (acceleration?: RenderAcceleration) =>
+      ipcRenderer.invoke(
+        IPC_CHANNELS.SEQUENCE_GET_ENCODER,
+        acceleration ? { acceleration } : undefined,
+      ) as Promise<RenderEncoderInfo>,
     render: (request: any) =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_RENDER, request) as Promise<SequenceRenderResult>,
     cancelRender: () =>
@@ -103,6 +109,14 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_DELETE_TRACK, request) as Promise<SequenceDocument | null>,
     reorderTracks: (request: any) =>
       ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_REORDER_TRACKS, request) as Promise<SequenceDocument | null>,
+    createTrackFolder: (request: { sequenceId: string; name: string; kind: 'video' | 'audio'; color?: string | null; parentFolderId?: string | null }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_CREATE_TRACK_FOLDER, request) as Promise<TrackFolder>,
+    updateTrackFolder: (request: { sequenceId: string; folderId: string; name?: string; collapsed?: boolean; muted?: boolean; locked?: boolean; visible?: boolean; color?: string | null; parentFolderId?: string | null; audioBusId?: string | null }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_UPDATE_TRACK_FOLDER, request) as Promise<TrackFolder | null>,
+    deleteTrackFolder: (request: { sequenceId: string; folderId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_DELETE_TRACK_FOLDER, request) as Promise<boolean>,
+    setTrackFolder: (request: { sequenceId: string; trackId: string; folderId: string | null }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEQUENCE_SET_TRACK_FOLDER, request) as Promise<SequenceTrack | null>,
   },
   projects: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_LIST) as Promise<ProjectRecord[]>,

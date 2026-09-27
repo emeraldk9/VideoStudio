@@ -13,11 +13,14 @@ import {
   type RenderEncoderInfo,
   type RenderQuality,
   type AudioStemType,
+  type DnxhrProfileId,
   type SequenceRenderRequest,
   AUDIO_STEM_CONFIGS,
   ALL_STEM_TYPES,
   buildStemExportBatch,
   ASS_SUBTITLE_STYLES,
+  DNXHR_PROFILE_DETAILS,
+  PRORES_PROFILES,
 } from '@shared';
 
 import { useProjectStore } from '../../../entities/project';
@@ -238,12 +241,17 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
   const [acceleration, setAcceleration] = useState<RenderAcceleration>('auto');
   const [encoder, setEncoder] = useState<RenderEncoderInfo | null>(null);
 
-  // S68 Render Queue & Broadcast Presets
+  // S68 / S157 Render Queue & Broadcast Multi-Stem Presets
   const [exportStems, setExportStems] = useState<boolean>(false);
-  const [selectedStems, setSelectedStems] = useState<AudioStemType[]>(['dialogue', 'music', 'sfx', 'master']);
+  const [selectedStems, setSelectedStems] = useState<AudioStemType[]>(['dialogue', 'music', 'sfx', 'foley', 'master']);
   const [twoPass, setTwoPass] = useState<boolean>(false);
   const [proresProfile, setProresProfile] = useState<number>(3);
+  const [dnxhrProfile, setDnxhrProfile] = useState<DnxhrProfileId>('dnxhr_hq');
   const queueCount = useRenderQueueStore((state) => state.jobs.length);
+
+  // S157 Broadcast Loudness & Dolby Atmos ADM BWF Metadata
+  const [ebuLoudness, setEbuLoudness] = useState<'off' | 'ebu_r128' | 'streaming'>('off');
+  const [exportAdmXml, setExportAdmXml] = useState<boolean>(false);
 
   // S73 Subtitle Burn-In Teletext Options
   const [burnInSubtitles, setBurnInSubtitles] = useState<boolean>(false);
@@ -288,7 +296,7 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
     setExportedResult(null);
     let alive = true;
     void window.api.sequence
-      .getEncoder()
+      .getEncoder(acceleration)
       .then((info) => {
         if (alive) setEncoder(info);
       })
@@ -298,7 +306,7 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
     return () => {
       alive = false;
     };
-  }, [isOpen]);
+  }, [isOpen, acceleration]);
 
   useEffect(() => {
     if (projectId && isOpen) {
@@ -466,9 +474,13 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         format: format === 'mp4' ? undefined : format,
         twoPass,
         proresProfile: format === 'prores' ? proresProfile : undefined,
+        dnxhrProfile: format === 'dnxhd' ? dnxhrProfile : undefined,
         burnInSubtitles: burnInSubtitles && hasSubtitleClips,
         subtitleStylePresetId: burnInSubtitles ? subtitleStylePresetId : undefined,
         subtitleTrackId: burnInSubtitles && subtitleTrackId ? subtitleTrackId : undefined,
+        ebuTargetLufs: ebuLoudness === 'ebu_r128' ? -24 : ebuLoudness === 'streaming' ? -14 : undefined,
+        truePeakCeilingDb: ebuLoudness !== 'off' ? -1.0 : undefined,
+        exportAdmBwfXml: exportAdmXml,
       });
 
       const via = rendered.encoder?.hardware ? ` via ${rendered.encoder.label}` : '';
@@ -508,9 +520,13 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         format: format === 'mp4' ? undefined : format,
         twoPass,
         proresProfile: format === 'prores' ? proresProfile : undefined,
+        dnxhrProfile: format === 'dnxhd' ? dnxhrProfile : undefined,
         burnInSubtitles: burnInSubtitles && hasSubtitleClips,
         subtitleStylePresetId: burnInSubtitles ? subtitleStylePresetId : undefined,
         subtitleTrackId: burnInSubtitles && subtitleTrackId ? subtitleTrackId : undefined,
+        ebuTargetLufs: ebuLoudness === 'ebu_r128' ? -24 : ebuLoudness === 'streaming' ? -14 : undefined,
+        truePeakCeilingDb: ebuLoudness !== 'off' ? -1.0 : undefined,
+        exportAdmBwfXml: exportAdmXml,
       };
 
       if (exportStems) {
@@ -789,16 +805,51 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
                 </span>
               </div>
 
-              {/* Hardware Accelerator Status */}
-              <div className="flex items-center gap-2.5 rounded-xl border border-hairline bg-bg-app p-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-ai/15 text-accent-ai">
-                  <span className="material-symbols-outlined text-[18px]">memory</span>
+              {/* Hardware Accelerator Status & Mode Selector */}
+              <div className="flex flex-col gap-2 rounded-xl border border-hairline bg-bg-app p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                        encoder?.hardware ? 'bg-accent-success/15 text-accent-success' : 'bg-accent-ai/15 text-accent-ai'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">
+                        {encoder?.hardware ? 'bolt' : 'memory'}
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-xs font-semibold text-text-primary block leading-tight">Encoder Engine</span>
+                      <span className="font-mono text-[10px] text-text-secondary truncate block">
+                        {encoder?.hardware
+                          ? `${encoder.label} · ~${encoder.speedupMultiplier ?? 4.0}x speedup`
+                          : 'CPU Software (x264 / x265)'}
+                      </span>
+                    </div>
+                  </div>
+                  {encoder?.gpuVendor && encoder.gpuVendor !== 'CPU' && (
+                    <span className="rounded bg-accent-success/10 border border-accent-success/30 px-1.5 py-0.5 text-[9px] font-bold text-accent-success uppercase tracking-wider">
+                      {encoder.gpuVendor} GPU
+                    </span>
+                  )}
                 </div>
-                <div className="min-w-0">
-                  <span className="text-xs font-semibold text-text-primary block leading-tight">Encoder Engine</span>
-                  <span className="font-mono text-[10px] text-text-secondary truncate block">
-                    {encoder?.hardware ? encoder.label : 'CPU Software (x264)'}
-                  </span>
+
+                <div className="flex items-center justify-between pt-2 border-t border-hairline/60">
+                  <span className="text-[10px] text-text-disabled font-medium">Acceleration Mode</span>
+                  <Select
+                    className="w-36 text-[10px]"
+                    value={acceleration}
+                    options={[
+                      { value: 'auto', label: 'Auto (Best Probe)' },
+                      { value: 'nvenc', label: 'NVIDIA NVENC' },
+                      { value: 'qsv', label: 'Intel Quick Sync' },
+                      { value: 'amf', label: 'AMD AMF' },
+                      { value: 'videotoolbox', label: 'Apple VideoToolbox' },
+                      { value: 'mediafoundation', label: 'Media Foundation' },
+                      { value: 'off', label: 'Software (CPU Only)' },
+                    ]}
+                    onChange={(val) => setAcceleration(val as RenderAcceleration)}
+                  />
                 </div>
               </div>
 
@@ -992,15 +1043,37 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
                       <Select
                         className="mt-1"
                         value={String(proresProfile)}
-                        options={[
-                          { value: '0', label: 'ProRes 422 Proxy (~45 Mbps)' },
-                          { value: '1', label: 'ProRes 422 LT (~102 Mbps)' },
-                          { value: '2', label: 'ProRes 422 Standard (~147 Mbps)' },
-                          { value: '3', label: 'ProRes 422 HQ Broadcast Master (~220 Mbps)' },
-                        ]}
+                        options={PRORES_PROFILES.map((p) => ({
+                          value: String(p.id),
+                          label: p.label,
+                        }))}
                         onChange={(val) => setProresProfile(Number(val))}
                       />
-                      <p className="text-[11px] text-text-disabled mt-1">10-bit YUV 4:2:2 intra-frame master with 24-bit PCM audio.</p>
+                      <p className="text-[11px] text-text-disabled mt-1">
+                        {proresProfile === 4
+                          ? '10-bit YUV 4:4:4 cinema archival intra-frame master with uncompressed 24-bit PCM audio.'
+                          : '10-bit YUV 4:2:2 intra-frame broadcast master with uncompressed 24-bit PCM audio.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* DNxHR Profile dropdown */}
+                  {format === 'dnxhd' && (
+                    <div className="flex flex-col gap-1 rounded-xl border border-hairline/60 bg-bg-app p-3 mt-1">
+                      <label className="text-xs font-medium text-text-primary">Avid DNxHR Profile</label>
+                      <Select
+                        className="mt-1"
+                        value={dnxhrProfile}
+                        options={Object.entries(DNXHR_PROFILE_DETAILS).map(([id, details]) => ({
+                          value: id,
+                          label: `${details.label} (${details.bitDepth}-bit)`,
+                        }))}
+                        onChange={(val) => setDnxhrProfile(val as DnxhrProfileId)}
+                      />
+                      <p className="text-[11px] text-text-disabled mt-1">
+                        {DNXHR_PROFILE_DETAILS[dnxhrProfile]?.desc ??
+                          'SMPTE VC-3 compliant broadcast intra-frame master with uncompressed 16-bit PCM audio.'}
+                      </p>
                     </div>
                   )}
 
@@ -1142,7 +1215,7 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
 
                     {exportStems && (
                       <div className="grid grid-cols-2 gap-2 pt-2 border-t border-hairline">
-                        {(['dialogue', 'music', 'sfx', 'master'] as AudioStemType[]).map((stem) => {
+                        {ALL_STEM_TYPES.map((stem) => {
                           const cfg = AUDIO_STEM_CONFIGS[stem];
                           const isChecked = selectedStems.includes(stem);
                           return (
@@ -1177,6 +1250,47 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
                         })}
                       </div>
                     )}
+                  </div>
+
+                  {/* S157 Broadcast Loudness & Atmos ADM Metadata */}
+                  <div className="flex flex-col gap-2.5 rounded-xl border border-hairline/60 bg-bg-app p-3 mt-1">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-xs font-medium text-text-primary flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px] text-accent-ai">equalizer</span>
+                          <span>Broadcast Loudness & ADM Metadata</span>
+                        </label>
+                        <p className="text-[11px] text-text-disabled">EBU R128 / ITU-R BS.1770 integrated loudness normalization and ADM BWF XML</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-2 border-t border-hairline">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] text-text-secondary font-medium">Loudness Target</span>
+                        <Select
+                          className="mt-1"
+                          value={ebuLoudness}
+                          onChange={(val) => setEbuLoudness(val as any)}
+                          options={[
+                            { value: 'off', label: 'Off (Original Peak/Dynamics)' },
+                            { value: 'ebu_r128', label: 'EBU R128 (-24 LUFS, -1 dBTP)' },
+                            { value: 'streaming', label: 'Online / Spotify / YT (-14 LUFS, -1 dBTP)' },
+                          ]}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between p-2 rounded-lg border border-hairline bg-bg-canvas/50">
+                        <div>
+                          <span className="text-[11px] font-semibold text-text-primary block">ITU-R BS.2076 ADM XML</span>
+                          <span className="text-[10px] text-text-disabled block">Generate companion ADM metadata</span>
+                        </div>
+                        <Switch
+                          checked={exportAdmXml}
+                          label="ADM XML"
+                          onChange={() => setExportAdmXml(!exportAdmXml)}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

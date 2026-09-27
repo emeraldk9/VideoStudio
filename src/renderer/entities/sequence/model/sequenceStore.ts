@@ -16,6 +16,7 @@ import {
   type ImportedStillDurations,
   type StillDurationSource,
   type StillFrameSource,
+  type TrackFolder,
   type TrackKind,
   type TrackRole,
   type TimelineClipboardPayload,
@@ -67,6 +68,7 @@ export interface DocumentSnapshot {
   tracks: SequenceTrack[];
   clips: SequenceClip[];
   spineTrackId: string | null;
+  folders?: TrackFolder[];
 }
 
 function snapshotOf(document: SequenceDocument): DocumentSnapshot {
@@ -74,6 +76,7 @@ function snapshotOf(document: SequenceDocument): DocumentSnapshot {
     tracks: document.tracks,
     clips: document.clips,
     spineTrackId: document.sequence.spineTrackId ?? null,
+    folders: document.folders,
   };
 }
 
@@ -229,6 +232,19 @@ export interface SequenceState {
   soloTrackIds: string[];
   toggleSolo: (trackId: string) => void;
 
+  // S159 — Hierarchical track folders
+  createTrackFolder: (name: string, kind: TrackKind, color?: string | null) => Promise<void>;
+  updateTrackFolder: (
+    folderId: string,
+    updates: Partial<Pick<TrackFolder, 'name' | 'collapsed' | 'muted' | 'locked' | 'visible' | 'color' | 'parentFolderId' | 'audioBusId'>>,
+  ) => Promise<void>;
+  deleteTrackFolder: (folderId: string) => Promise<void>;
+  setTrackFolder: (trackId: string, folderId: string | null) => Promise<void>;
+  toggleFolderCollapsed: (folderId: string) => Promise<void>;
+  toggleFolderMuted: (folderId: string) => Promise<void>;
+  toggleFolderLocked: (folderId: string) => Promise<void>;
+  toggleFolderVisible: (folderId: string) => Promise<void>;
+
   /** Replaces the clip list, pushing the previous one onto the undo stack. */
   commitClips: (next: SequenceClip[]) => void;
   /** Same, without an undo entry — for a load or a re-sync the user already confirmed separately. */
@@ -373,6 +389,7 @@ function applySnapshot(document: SequenceDocument, snapshot: DocumentSnapshot): 
     sequence: { ...document.sequence, spineTrackId: snapshot.spineTrackId },
     tracks: snapshot.tracks,
     clips: snapshot.clips,
+    folders: snapshot.folders,
   };
 }
 
@@ -405,6 +422,7 @@ function persistSnapshot(get: () => SequenceState, set: (partial: Partial<Sequen
       tracks: document.tracks,
       clips: document.clips,
       spineTrackId: document.sequence.spineTrackId ?? null,
+      folders: document.folders,
     })
     .catch((error: unknown) => {
       set({ error: announceTimelineError(error, 'Could not save the timeline.') });
@@ -675,6 +693,214 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
       }
     } catch (error) {
       set({ error: announceTimelineError(error, 'Could not reorder the tracks.') });
+    }
+  },
+
+  // ------------------------------------------------- S159 — hierarchical track folders
+
+  createTrackFolder: async (name: string, kind: TrackKind, color: string | null = null) => {
+    const document = get().document;
+    if (!document) return;
+    try {
+      const folder = await window.api.sequence.createTrackFolder({
+        sequenceId: document.sequence.id,
+        name,
+        kind,
+        color,
+      });
+      if (folder) {
+        const nextFolders = [...(document.folders ?? []), folder];
+        const nextDoc = { ...document, folders: nextFolders };
+        set((state) => ({
+          document: nextDoc,
+          undoStack: [...state.undoStack, snapshotOf(document)].slice(-UNDO_LIMIT),
+          redoStack: [],
+        }));
+      }
+    } catch (error) {
+      set({ error: announceTimelineError(error, 'Could not create the track folder.') });
+    }
+  },
+
+  updateTrackFolder: async (folderId, updates) => {
+    const document = get().document;
+    if (!document) return;
+    try {
+      const updated = await window.api.sequence.updateTrackFolder({
+        sequenceId: document.sequence.id,
+        folderId,
+        ...updates,
+      });
+      if (updated) {
+        const nextFolders = (document.folders ?? []).map((f) => (f.id === folderId ? updated : f));
+        set({ document: { ...document, folders: nextFolders } });
+      }
+    } catch (error) {
+      set({ error: announceTimelineError(error, 'Could not update the track folder.') });
+    }
+  },
+
+  deleteTrackFolder: async (folderId) => {
+    const document = get().document;
+    if (!document) return;
+    try {
+      const ok = await window.api.sequence.deleteTrackFolder({
+        sequenceId: document.sequence.id,
+        folderId,
+      });
+      if (ok) {
+        const nextFolders = (document.folders ?? []).filter((f) => f.id !== folderId);
+        const nextTracks = document.tracks.map((t) => (t.folderId === folderId ? { ...t, folderId: null } : t));
+        const nextDoc = { ...document, tracks: nextTracks, folders: nextFolders };
+        set((state) => ({
+          document: nextDoc,
+          undoStack: [...state.undoStack, snapshotOf(document)].slice(-UNDO_LIMIT),
+          redoStack: [],
+        }));
+      }
+    } catch (error) {
+      set({ error: announceTimelineError(error, 'Could not delete the track folder.') });
+    }
+  },
+
+  setTrackFolder: async (trackId, folderId) => {
+    const document = get().document;
+    if (!document) return;
+    try {
+      const updatedTrack = await window.api.sequence.setTrackFolder({
+        sequenceId: document.sequence.id,
+        trackId,
+        folderId,
+      });
+      if (updatedTrack) {
+        const nextTracks = document.tracks.map((t) => (t.id === trackId ? updatedTrack : t));
+        const nextDoc = { ...document, tracks: nextTracks };
+        set((state) => ({
+          document: nextDoc,
+          undoStack: [...state.undoStack, snapshotOf(document)].slice(-UNDO_LIMIT),
+          redoStack: [],
+        }));
+      }
+    } catch (error) {
+      set({ error: announceTimelineError(error, 'Could not set track folder.') });
+    }
+  },
+
+  toggleFolderCollapsed: async (folderId) => {
+    const document = get().document;
+    if (!document) return;
+    const folder = (document.folders ?? []).find((f) => f.id === folderId);
+    if (!folder) return;
+    const nextCollapsed = !folder.collapsed;
+    const nextFolders = (document.folders ?? []).map((f) =>
+      f.id === folderId ? { ...f, collapsed: nextCollapsed } : f,
+    );
+    set({ document: { ...document, folders: nextFolders } });
+    await window.api.sequence.updateTrackFolder({
+      sequenceId: document.sequence.id,
+      folderId,
+      collapsed: nextCollapsed,
+    });
+  },
+
+  toggleFolderMuted: async (folderId) => {
+    const document = get().document;
+    if (!document) return;
+    const folder = (document.folders ?? []).find((f) => f.id === folderId);
+    if (!folder) return;
+    const nextMuted = !folder.muted;
+    const childTrackIds = document.tracks.filter((t) => t.folderId === folderId).map((t) => t.id);
+    const nextTracks = document.tracks.map((t) =>
+      childTrackIds.includes(t.id) ? { ...t, muted: nextMuted } : t,
+    );
+    const nextFolders = (document.folders ?? []).map((f) =>
+      f.id === folderId ? { ...f, muted: nextMuted } : f,
+    );
+    const nextDoc = { ...document, tracks: nextTracks, folders: nextFolders };
+    set((state) => ({
+      document: nextDoc,
+      undoStack: [...state.undoStack, snapshotOf(document)].slice(-UNDO_LIMIT),
+      redoStack: [],
+    }));
+    await window.api.sequence.updateTrackFolder({
+      sequenceId: document.sequence.id,
+      folderId,
+      muted: nextMuted,
+    });
+    for (const trackId of childTrackIds) {
+      void window.api.sequence.updateTrack({
+        sequenceId: document.sequence.id,
+        trackId,
+        muted: nextMuted,
+      });
+    }
+  },
+
+  toggleFolderLocked: async (folderId) => {
+    const document = get().document;
+    if (!document) return;
+    const folder = (document.folders ?? []).find((f) => f.id === folderId);
+    if (!folder) return;
+    const nextLocked = !folder.locked;
+    const childTrackIds = document.tracks.filter((t) => t.folderId === folderId).map((t) => t.id);
+    const nextTracks = document.tracks.map((t) =>
+      childTrackIds.includes(t.id) ? { ...t, locked: nextLocked } : t,
+    );
+    const nextFolders = (document.folders ?? []).map((f) =>
+      f.id === folderId ? { ...f, locked: nextLocked } : f,
+    );
+    const nextDoc = { ...document, tracks: nextTracks, folders: nextFolders };
+    set((state) => ({
+      document: nextDoc,
+      undoStack: [...state.undoStack, snapshotOf(document)].slice(-UNDO_LIMIT),
+      redoStack: [],
+    }));
+    await window.api.sequence.updateTrackFolder({
+      sequenceId: document.sequence.id,
+      folderId,
+      locked: nextLocked,
+    });
+    for (const trackId of childTrackIds) {
+      void window.api.sequence.updateTrack({
+        sequenceId: document.sequence.id,
+        trackId,
+        locked: nextLocked,
+      });
+    }
+  },
+
+  toggleFolderVisible: async (folderId) => {
+    const document = get().document;
+    if (!document) return;
+    const folder = (document.folders ?? []).find((f) => f.id === folderId);
+    if (!folder) return;
+    const nextVisible = !folder.visible;
+    const childVideoTrackIds = document.tracks
+      .filter((t) => t.folderId === folderId && t.kind === 'video')
+      .map((t) => t.id);
+    const nextTracks = document.tracks.map((t) =>
+      childVideoTrackIds.includes(t.id) ? { ...t, videoEnabled: nextVisible } : t,
+    );
+    const nextFolders = (document.folders ?? []).map((f) =>
+      f.id === folderId ? { ...f, visible: nextVisible } : f,
+    );
+    const nextDoc = { ...document, tracks: nextTracks, folders: nextFolders };
+    set((state) => ({
+      document: nextDoc,
+      undoStack: [...state.undoStack, snapshotOf(document)].slice(-UNDO_LIMIT),
+      redoStack: [],
+    }));
+    await window.api.sequence.updateTrackFolder({
+      sequenceId: document.sequence.id,
+      folderId,
+      visible: nextVisible,
+    });
+    for (const trackId of childVideoTrackIds) {
+      void window.api.sequence.updateTrack({
+        sequenceId: document.sequence.id,
+        trackId,
+        videoEnabled: nextVisible,
+      });
     }
   },
 

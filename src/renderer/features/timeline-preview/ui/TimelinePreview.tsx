@@ -69,6 +69,8 @@ import {
   collectActiveAdjustmentLayers,
   aggregateAdjustmentFilters,
   buildAdjustmentLayerCssStyles,
+  isAdjustmentLayerClip,
+  type ActiveAdjustmentLayer,
 } from '@shared';
 
 import {
@@ -92,6 +94,9 @@ import { stopAudioScrub, triggerAudioScrubGrain } from '../lib/audioScrubEngine'
 import { useVideoScopesStore } from '../model/videoScopesStore';
 import { VideoScopesModal } from './VideoScopesModal';
 import { MultiCamGrid } from './MultiCamGrid';
+import { useStylusCaptureStore } from '../model/stylusCaptureStore';
+import { StylusRecordingOverlay } from './StylusRecordingOverlay';
+import { TimelinePreviewTimecode } from './TimelinePreviewTimecode';
 
 function boundaryVisual(
   type: ClipTransition,
@@ -228,6 +233,10 @@ export function TimelinePreview() {
   const durationFrames = useSequenceStore(selectDurationFrames);
   const setPlayhead = useSequenceStore((state) => state.setPlayhead);
   const setPlaying = useSequenceStore((state) => state.setPlaying);
+  const isStylusActive = useStylusCaptureStore((state) => state.isStylusModeActive);
+  const openStylusMode = useStylusCaptureStore((state) => state.openStylusMode);
+  const closeStylusMode = useStylusCaptureStore((state) => state.closeStylusMode);
+  const toggleStylusMode = () => (isStylusActive ? closeStylusMode() : openStylusMode());
   const markers = useSequenceStore((state) => state.markers);
   const inPointFrame = useSequenceStore((state) => state.inPointFrame);
   const outPointFrame = useSequenceStore((state) => state.outPointFrame);
@@ -255,9 +264,9 @@ export function TimelinePreview() {
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
   const rafRef = useRef<number | null>(null);
 
-  const [liveFrame, setLiveFrame] = useState(0);
-  useEffect(() => transportClock.subscribe(setLiveFrame), []);
-  const playheadFrame = playing && transportClock.running ? liveFrame : storedFrame;
+  const [playbackCutFrame, setPlaybackCutFrame] = useState(storedFrame);
+  const activeClipIdRef = useRef<string | null>(null);
+  const lastGainReductionRef = useRef<number>(0);
 
   // Studio Safe Areas & Guide Overlays
   const [safeAreas, setSafeAreas] = useState(false);
@@ -274,11 +283,37 @@ export function TimelinePreview() {
   const clips = useMemo(() => document?.clips ?? [], [document]);
   const soloTrackIds = useSequenceStore((state) => state.soloTrackIds);
   const spineTrack = document ? spineTrackOf(document) : null;
+
+  // S162: Pre-compute and memoize trackLayoutMap once per document/clips change
+  // to eliminate redundant layoutTrack loops across all tracks and frames.
+  const trackLayoutMap = useMemo(() => {
+    if (!document) return new Map<string, PlacedClip[]>();
+    const map = new Map<string, PlacedClip[]>();
+    for (const track of document.tracks) {
+      map.set(track.id, layoutTrack(clips, track));
+    }
+    return map;
+  }, [clips, document]);
+
   const videoLane = useMemo(
-    () => (spineTrack?.videoEnabled ? layoutTrack(clips, spineTrack) : []),
-    [clips, spineTrack],
+    () => (spineTrack?.videoEnabled ? trackLayoutMap.get(spineTrack.id) ?? [] : []),
+    [spineTrack, trackLayoutMap],
   );
+
+  // Sync playbackCutFrame to storedFrame on pause / seek
+  useEffect(() => {
+    if (!playing) {
+      setPlaybackCutFrame(storedFrame);
+      const placed = clipAtFrame(videoLane, storedFrame);
+      activeClipIdRef.current = placed?.clip.id ?? '__gap__';
+    }
+  }, [playing, storedFrame, videoLane]);
+
+  const playheadFrame = playing && transportClock.running ? playbackCutFrame : storedFrame;
   const current: PlacedClip | null = clipAtFrame(videoLane, playheadFrame);
+  const currentRef = useRef<PlacedClip | null>(current);
+  currentRef.current = current;
+  const audioPlacedRef = useRef<PlacedClip[]>([]);
 
   // S65 — Resolve current active MultiCam clip under playhead on spine track
   const currentMultiCamClip = useMemo(() => {
@@ -376,16 +411,35 @@ export function TimelinePreview() {
       )
       .sort((a, b) => a.orderIndex - b.orderIndex);
     return overlayTracks
-      .map((track) => clipAtFrame(layoutTrack(clips, track), playheadFrame))
+      .map((track) => clipAtFrame(trackLayoutMap.get(track.id) ?? [], playheadFrame))
       .filter((placed): placed is PlacedClip => placed !== null)
       .filter((placed) => placed.clip.sourceKind !== 'effect');
-  }, [clips, document, playheadFrame]);
+  }, [document, trackLayoutMap, playheadFrame]);
 
-  // S62 — Adjustment Layers
+  // S62 — Adjustment Layers with layout map caching
   const activeAdjustmentLayers = useMemo(() => {
     if (!document) return [];
-    return collectActiveAdjustmentLayers(clips, document.tracks, playheadFrame);
-  }, [clips, document, playheadFrame]);
+    const videoTracks = document.tracks.filter((t) => t.kind === 'video' && t.videoEnabled !== false);
+    const active: ActiveAdjustmentLayer[] = [];
+    for (const track of videoTracks) {
+      const placedClips = trackLayoutMap.get(track.id) ?? [];
+      for (const placed of placedClips) {
+        if (
+          isAdjustmentLayerClip(placed.clip) &&
+          playheadFrame >= placed.startFrames &&
+          playheadFrame < placed.endFrames
+        ) {
+          active.push({
+            clip: placed.clip,
+            track,
+            startFrames: placed.startFrames,
+            endFrames: placed.endFrames,
+          });
+        }
+      }
+    }
+    return active.sort((a, b) => (a.track.orderIndex ?? 0) - (b.track.orderIndex ?? 0));
+  }, [document, trackLayoutMap, playheadFrame]);
 
   const frameFilter = useMemo(() => {
     if (activeAdjustmentLayers.length === 0) return undefined;
@@ -423,8 +477,33 @@ export function TimelinePreview() {
         !track.muted &&
         (soloTrackIds.length === 0 || soloTrackIds.includes(track.id)),
     );
-    return audioTracks.flatMap((track) => layoutTrack(clips, track));
-  }, [clips, document, soloTrackIds]);
+    return audioTracks.flatMap((track) => trackLayoutMap.get(track.id) ?? []);
+  }, [document, soloTrackIds, trackLayoutMap]);
+
+  audioPlacedRef.current = audioPlaced;
+
+  // Pre-calculate all visual cut and clip boundaries across all video tracks
+  const visualBoundaryFrames = useMemo(() => {
+    const frames = new Set<number>([0, durationFrames]);
+    if (!document) return [0, durationFrames];
+    for (const track of document.tracks) {
+      if (track.kind !== 'video' || !track.videoEnabled) continue;
+      const trackClips = trackLayoutMap.get(track.id) ?? [];
+      for (const placed of trackClips) {
+        frames.add(placed.startFrames);
+        frames.add(placed.endFrames);
+        if (placed.clip.transitionIn !== 'cut' && placed.clip.transitionFrames > 0) {
+          frames.add(placed.startFrames + placed.clip.transitionFrames);
+        }
+      }
+    }
+    return Array.from(frames).sort((a, b) => a - b);
+  }, [document, trackLayoutMap, durationFrames]);
+
+  const visualBoundariesRef = useRef<number[]>(visualBoundaryFrames);
+  visualBoundariesRef.current = visualBoundaryFrames;
+  const currentSegmentIdxRef = useRef<number>(-1);
+  const lastSyncedClipIdRef = useRef<string | null>(null);
 
   // Transport clock rAF loop
   useEffect(() => {
@@ -434,9 +513,21 @@ export function TimelinePreview() {
       return;
     }
 
-    const startedAt = performance.now();
     const startFrame = useSequenceStore.getState().playheadFrame;
     transportClock.start(startFrame);
+    activeClipIdRef.current = currentRef.current?.clip.id ?? '__gap__';
+
+    let anchorFrame = startFrame;
+    let anchorPerf = performance.now();
+    let lastWbFrame = startFrame;
+
+    // Reset boundary segment index
+    const boundaries = visualBoundariesRef.current;
+    let initialSeg = 0;
+    while (initialSeg < boundaries.length - 1 && startFrame >= boundaries[initialSeg + 1]) {
+      initialSeg++;
+    }
+    currentSegmentIdxRef.current = initialSeg;
 
     const finish = (frame: number) => {
       transportClock.stop();
@@ -445,13 +536,39 @@ export function TimelinePreview() {
     };
 
     const tick = () => {
-      const elapsedSeconds = (performance.now() - startedAt) / 1000;
-      const frame = startFrame + elapsedSeconds * fps * playbackRate;
+      const now = performance.now();
+      const video = videoRef.current;
+      let frame: number;
+
+      // S162: Derive playback frame from hardware video element when actively playing to eliminate jitter/drift
+      const activePlaced = currentRef.current;
+      if (video && activePlaced?.clip.sourceKind === 'video' && !video.paused && video.readyState >= 2) {
+        const speed = clipSpeed(activePlaced.clip.effects);
+        const sourceInSec = framesToSeconds(activePlaced.clip.sourceInFrames ?? 0, fps);
+        const intoClipSec = (video.currentTime - sourceInSec) / speed;
+        const videoFrame = activePlaced.startFrames + intoClipSec * fps;
+        anchorFrame = videoFrame;
+        anchorPerf = now;
+        frame = videoFrame;
+      } else {
+        frame = anchorFrame + ((now - anchorPerf) / 1000) * fps * playbackRate;
+      }
+
       if (frame >= durationFrames) {
         if (looping) {
           const restartFrame = inPointFrame ?? 0;
           transportClock.start(restartFrame);
           setPlayhead(restartFrame);
+          anchorFrame = restartFrame;
+          anchorPerf = performance.now();
+          if (video && currentRef.current?.clip.sourceKind === 'video') {
+            const restartPlaced = clipAtFrame(videoLane, restartFrame);
+            if (restartPlaced?.clip.sourceKind === 'video') {
+              const speed = clipSpeed(restartPlaced.clip.effects);
+              const target = framesToSeconds(restartPlaced.clip.sourceInFrames ?? 0, fps);
+              video.currentTime = target;
+            }
+          }
           rafRef.current = requestAnimationFrame(tick);
           return;
         }
@@ -462,7 +579,75 @@ export function TimelinePreview() {
         finish(0);
         return;
       }
+
+      // Check if any visual boundary is crossed across all video tracks
+      const currentBoundaries = visualBoundariesRef.current;
+      let segIdx = 0;
+      while (segIdx < currentBoundaries.length - 1 && frame >= currentBoundaries[segIdx + 1]) {
+        segIdx++;
+      }
+      if (segIdx !== currentSegmentIdxRef.current) {
+        currentSegmentIdxRef.current = segIdx;
+        setPlaybackCutFrame(Math.round(frame));
+      } else {
+        const currentPlaced = currentRef.current;
+        const isWb = Boolean(currentPlaced?.clip.effects?.whiteboard);
+        const isTransition = Boolean(
+          currentPlaced &&
+            currentPlaced.clip.transitionIn !== 'cut' &&
+            currentPlaced.clip.transitionFrames > 0 &&
+            frame < currentPlaced.startFrames + currentPlaced.clip.transitionFrames,
+        );
+        if ((isWb || isTransition) && Math.abs(frame - lastWbFrame) >= 2) {
+          lastWbFrame = frame;
+          setPlaybackCutFrame(Math.round(frame));
+        }
+      }
+
       transportClock.publish(frame);
+
+      // Direct zero-delay audio playback synchronization from rAF loop
+      const audible = playbackRate === 1;
+      for (const placed of audioPlacedRef.current) {
+        const el = audioRefs.current[placed.clip.id];
+        if (!el) continue;
+        const inside = frame >= placed.startFrames && frame < placed.endFrames;
+        if (!inside || !audible) {
+          if (!el.paused) el.pause();
+        } else {
+          const tempo = clipSpeed(placed.clip.effects);
+          const target = framesToSeconds(
+            (placed.clip.sourceInFrames ?? 0) + (frame - placed.startFrames) * tempo,
+            fps,
+          );
+          if (el.paused) {
+            el.currentTime = target;
+            void el.play().catch(() => undefined);
+          } else if (Math.abs(el.currentTime - target) > 0.4) {
+            el.currentTime = target;
+          }
+        }
+      }
+
+      // S33 — Throttled Ducking calculation to prevent Zustand cascade during playback
+      if (ducking.enabled) {
+        const duckingResult = calculateDuckingEnvelopeGain(
+          document,
+          frame,
+          fps,
+          ducking,
+          trackMixer,
+          soloTrackIds,
+        );
+        if (
+          useAudioMixerStore.getState().isOpen &&
+          Math.abs(duckingResult.gainDb - lastGainReductionRef.current) > 0.3
+        ) {
+          lastGainReductionRef.current = duckingResult.gainDb;
+          setCurrentGainReductionDb(duckingResult.gainDb);
+        }
+      }
+
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -475,7 +660,22 @@ export function TimelinePreview() {
         setPlayhead(transportClock.frame);
       }
     };
-  }, [playing, playbackRate, fps, durationFrames, looping, inPointFrame, setPlayhead, setPlaying]);
+  }, [
+    playing,
+    playbackRate,
+    fps,
+    durationFrames,
+    looping,
+    inPointFrame,
+    setPlayhead,
+    setPlaying,
+    videoLane,
+    document,
+    ducking,
+    trackMixer,
+    soloTrackIds,
+    setCurrentGainReductionDb,
+  ]);
 
   // Video element sync
   useEffect(() => {
@@ -485,17 +685,28 @@ export function TimelinePreview() {
     const speed = clipSpeed(current.clip.effects);
     const target = framesToSeconds((current.clip.sourceInFrames ?? 0) + intoClip * speed, fps);
 
-    const realtime = playing && playbackRate === 1;
-    video.volume = sourceAudioVolume(current, trackById.get(current.clip.trackId), realtime);
-    if (realtime) {
-      if (video.playbackRate !== speed) video.playbackRate = speed;
-      if (Math.abs(video.currentTime - target) > 0.25) video.currentTime = target;
-      if (video.paused) void video.play().catch(() => undefined);
+    if (!playing) {
+      if (!video.paused) video.pause();
+      if (Math.abs(video.currentTime - target) > 0.04) {
+        video.currentTime = target;
+      }
+      lastSyncedClipIdRef.current = current.clip.id;
       return;
     }
-    if (!video.paused) video.pause();
-    if (Math.abs(video.currentTime - target) > 0.08) {
+
+    const realtime = playing && playbackRate === 1;
+    video.volume = sourceAudioVolume(current, trackById.get(current.clip.trackId), realtime);
+    if (video.playbackRate !== speed * playbackRate) {
+      video.playbackRate = speed * playbackRate;
+    }
+    const isNewClip = lastSyncedClipIdRef.current !== current.clip.id;
+    lastSyncedClipIdRef.current = current.clip.id;
+    // Prevent seek death spiral: only hard seek on new clip cut or severe drift (> 1.0s)
+    if (isNewClip || Math.abs(video.currentTime - target) > 1.0) {
       video.currentTime = target;
+    }
+    if (video.paused) {
+      void video.play().catch(() => undefined);
     }
   }, [current, playheadFrame, playing, playbackRate, fps, sourceAudioVolume, trackById]);
 
@@ -510,12 +721,12 @@ export function TimelinePreview() {
       const target = framesToSeconds((placed.clip.sourceInFrames ?? 0) + intoClip, fps);
       element.volume = sourceAudioVolume(placed, trackById.get(placed.clip.trackId), realtime);
       if (realtime) {
-        if (Math.abs(element.currentTime - target) > 0.25) element.currentTime = target;
+        if (Math.abs(element.currentTime - target) > 0.8) element.currentTime = target;
         if (element.paused) void element.play().catch(() => undefined);
         continue;
       }
       if (!element.paused) element.pause();
-      if (Math.abs(element.currentTime - target) > 0.08) element.currentTime = target;
+      if (Math.abs(element.currentTime - target) > 0.06) element.currentTime = target;
     }
   }, [overlayStack, playheadFrame, playing, playbackRate, fps, sourceAudioVolume, trackById]);
 
@@ -531,7 +742,13 @@ export function TimelinePreview() {
       trackMixer,
       soloTrackIds,
     );
-    setCurrentGainReductionDb(duckingResult.gainDb);
+    if (
+      useAudioMixerStore.getState().isOpen &&
+      Math.abs(duckingResult.gainDb - lastGainReductionRef.current) > 0.3
+    ) {
+      lastGainReductionRef.current = duckingResult.gainDb;
+      setCurrentGainReductionDb(duckingResult.gainDb);
+    }
 
     for (const placed of audioPlaced) {
       const element = audioRefs.current[placed.clip.id];
@@ -565,7 +782,7 @@ export function TimelinePreview() {
         (placed.clip.sourceInFrames ?? 0) + (playheadFrame - placed.startFrames) * tempo,
         fps,
       );
-      if (Math.abs(element.currentTime - target) > 0.25) element.currentTime = target;
+      if (Math.abs(element.currentTime - target) > 0.6) element.currentTime = target;
       if (element.paused) void element.play().catch(() => undefined);
     }
   }, [
@@ -1050,7 +1267,10 @@ export function TimelinePreview() {
 
   const [glEnabled, setGlEnabled] = useState(true);
   const [mediaTick, setMediaTick] = useState(0);
-  const bumpMedia = useCallback(() => setMediaTick((tick) => tick + 1), []);
+  const bumpMedia = useCallback(() => {
+    if (useSequenceStore.getState().playing) return;
+    setMediaTick((tick) => tick + 1);
+  }, []);
 
   const glActive =
     glEnabled &&
@@ -1081,7 +1301,7 @@ export function TimelinePreview() {
       (document?.tracks ?? [])
         .filter((track) => track.kind === 'video' && track.videoEnabled)
         .flatMap((track) =>
-          layoutTrack(clips, track).filter(
+          (trackLayoutMap.get(track.id) ?? []).filter(
             (placed) =>
               placed.clip.sourceKind === 'effect' &&
               playheadFrame >= placed.startFrames &&
@@ -1089,7 +1309,7 @@ export function TimelinePreview() {
           ),
         )
         .map((placed) => resolveFilterValues(placed.clip.effects)),
-    [clips, document, playheadFrame],
+    [document, trackLayoutMap, playheadFrame],
   );
 
   useEffect(() => {
@@ -1212,7 +1432,7 @@ export function TimelinePreview() {
     return (document?.tracks ?? [])
       .filter((track) => track.kind === 'video' && track.videoEnabled)
       .flatMap((track) =>
-        layoutTrack(clips, track).filter(
+        (trackLayoutMap.get(track.id) ?? []).filter(
           (placed) =>
             placed.clip.sourceKind === 'effect' &&
             playheadFrame >= placed.startFrames &&
@@ -1220,7 +1440,7 @@ export function TimelinePreview() {
             Boolean(placed.clip.effects?.videoEffect && !placed.clip.effects.videoEffect.disabled),
         ),
       )[0]?.clip ?? null;
-  }, [clips, document, playheadFrame]);
+  }, [document, trackLayoutMap, playheadFrame]);
 
   const effectiveVfxPreset = activeVfxClip?.effects?.videoEffect
     ? videoEffectPresetById(activeVfxClip.effects.videoEffect.presetId)
@@ -1262,22 +1482,25 @@ export function TimelinePreview() {
       {/* Monitor Header HUD */}
       <div className="flex items-center justify-between px-1 text-[11px] text-text-secondary select-none">
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 font-mono rounded-md bg-bg-app border border-hairline px-2.5 py-0.5 text-text-secondary text-[11px]">
+          <span className="flex items-center gap-1.5 font-mono rounded-md bg-bg-app border border-hairline px-2.5 py-1 text-text-secondary text-[11px] shadow-xs">
             <span className="material-symbols-outlined text-[13px] text-accent-ai">aspect_ratio</span>
-            {seqWidth}×{seqHeight}
+            <span className="text-text-primary font-medium">{seqWidth}×{seqHeight}</span>
             <span className="text-text-disabled">·</span>
-            {seqWidth > seqHeight ? '16:9' : seqWidth === seqHeight ? '1:1' : '9:16'}
+            <span>{seqWidth > seqHeight ? '16:9' : seqWidth === seqHeight ? '1:1' : '9:16'}</span>
+            <span className="text-text-disabled">·</span>
+            <span>{fps} fps</span>
           </span>
-          <span className="font-mono text-text-disabled text-[11px]">{fps} fps</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {/* Studio Guides & MultiCam Controls */}
-          <div className="flex items-center bg-bg-app border border-hairline rounded-md p-0.5 mr-1 gap-0.5">
+          <div className="flex items-center bg-bg-app border border-hairline rounded-md p-0.5 gap-0.5 shadow-xs">
             <button
               type="button"
               onClick={() => setSafeAreas((prev) => !prev)}
-              className={`p-1 rounded text-[11px] flex items-center justify-center transition-colors ${
-                safeAreas ? 'bg-accent-ai/20 text-accent-ai font-medium' : 'text-text-disabled hover:text-text-secondary'
+              className={`h-6 w-6 rounded text-[11px] flex items-center justify-center transition-all ${
+                safeAreas
+                  ? 'bg-accent-ai/20 text-accent-ai font-medium'
+                  : 'text-text-disabled hover:text-text-primary hover:bg-bg-hover'
               }`}
               title="Toggle Safe Areas (Title 90% / Action 93%)"
             >
@@ -1286,8 +1509,10 @@ export function TimelinePreview() {
             <button
               type="button"
               onClick={() => setThirdsGrid((prev) => !prev)}
-              className={`p-1 rounded text-[11px] flex items-center justify-center transition-colors ${
-                thirdsGrid ? 'bg-accent-ai/20 text-accent-ai font-medium' : 'text-text-disabled hover:text-text-secondary'
+              className={`h-6 w-6 rounded text-[11px] flex items-center justify-center transition-all ${
+                thirdsGrid
+                  ? 'bg-accent-ai/20 text-accent-ai font-medium'
+                  : 'text-text-disabled hover:text-text-primary hover:bg-bg-hover'
               }`}
               title="Toggle Rule of Thirds (3x3 Grid)"
             >
@@ -1296,31 +1521,49 @@ export function TimelinePreview() {
             <button
               type="button"
               onClick={() => setSocialZones((prev) => !prev)}
-              className={`p-1 rounded text-[11px] flex items-center justify-center transition-colors ${
-                socialZones ? 'bg-accent-ai/20 text-accent-ai font-medium' : 'text-text-disabled hover:text-text-secondary'
+              className={`h-6 w-6 rounded text-[11px] flex items-center justify-center transition-all ${
+                socialZones
+                  ? 'bg-accent-ai/20 text-accent-ai font-medium'
+                  : 'text-text-disabled hover:text-text-primary hover:bg-bg-hover'
               }`}
               title="Toggle Social UI Safe Zones (TikTok/Reels UI)"
             >
               <span className="material-symbols-outlined text-[14px]">stay_current_portrait</span>
             </button>
+            <span className="h-3 w-px bg-hairline mx-0.5" />
             {/* S65 — MultiCam 4-Up Live Quad Switcher HUD button */}
             <button
               type="button"
               onClick={() => setMultiCamViewEnabled((prev) => !prev)}
-              className={`p-1 rounded text-[11px] flex items-center justify-center transition-colors ${
+              className={`h-6 w-6 rounded text-[11px] flex items-center justify-center transition-all ${
                 multiCamViewEnabled
                   ? 'bg-accent-ai text-text-on-accent font-medium shadow-xs'
-                  : 'text-text-disabled hover:text-text-secondary'
+                  : 'text-text-disabled hover:text-text-primary hover:bg-bg-hover'
               }`}
               title="Toggle MultiCam 4-Up Live Switcher (Shift+0)"
             >
               <span className="material-symbols-outlined text-[14px]">grid_view</span>
             </button>
+            {/* S160 — Live Stylus Vector Recording & Canvas Annotations */}
+            <button
+              type="button"
+              onClick={toggleStylusMode}
+              className={`h-6 w-6 rounded text-[11px] flex items-center justify-center transition-all ${
+                isStylusActive
+                  ? 'bg-accent-ai text-text-on-accent font-medium shadow-xs'
+                  : 'text-text-disabled hover:text-text-primary hover:bg-bg-hover'
+              }`}
+              title="Toggle Live Stylus Recording & Vector Whiteboard Capture (P)"
+            >
+              <span className="material-symbols-outlined text-[14px]">gesture</span>
+            </button>
           </div>
 
           <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors ${
-              playing ? 'bg-accent-success/15 text-accent-success' : 'bg-bg-app border border-hairline text-text-secondary'
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium transition-all shadow-xs ${
+              playing
+                ? 'bg-accent-success/15 border border-accent-success/30 text-accent-success'
+                : 'bg-bg-app border border-hairline text-text-secondary'
             }`}
           >
             <span
@@ -1335,7 +1578,7 @@ export function TimelinePreview() {
 
       <div
         ref={boxRef}
-        className="relative mx-auto w-full overflow-hidden rounded-[var(--radius-card)] bg-[#07080b] shadow-inner border border-hairline/60"
+        className="relative mx-auto w-full overflow-hidden rounded-[var(--radius-card)] bg-bg-canvas shadow-inner border border-hairline/60"
         style={{
           aspectRatio: sequenceAspect,
           maxHeight: 'calc(100vh - 350px)',
@@ -1741,19 +1984,15 @@ export function TimelinePreview() {
             }}
           />
         )}
+
+        {/* S160 — Real-Time Stylus Capture Canvas & HUD Overlay */}
+        <StylusRecordingOverlay />
       </div>
 
       {/* Transport bar */}
       <div className="shrink-0 grid grid-cols-3 items-center gap-2 pt-1 select-none">
-        <div className="justify-self-start flex items-center gap-1.5 rounded-md border border-hairline bg-bg-app px-2.5 py-1">
-          <span className="material-symbols-outlined text-[14px] text-accent-ai">schedule</span>
-          <span className="font-mono text-xs font-semibold text-text-primary">
-            {formatTimecode(playheadFrame, fps)}
-          </span>
-          <span className="font-mono text-xs text-text-disabled">/</span>
-          <span className="font-mono text-xs text-text-secondary">
-            {formatTimecode(durationFrames, fps)}
-          </span>
+        <div className="justify-self-start">
+          <TimelinePreviewTimecode fps={fps} durationFrames={durationFrames} />
         </div>
 
         <div className="flex items-center gap-1 justify-self-center">

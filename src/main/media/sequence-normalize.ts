@@ -18,12 +18,13 @@ import {
   XFADE_NAME,
   type ClipTransition,
   type ClipTransitionParams,
+  type DnxhrProfileId,
   type RenderDeliveryFormat,
   type RenderEncoderInfo,
   type RenderQuality,
 } from '@shared';
 
-import { hwaccelArgs, videoEncodeArgs } from './render-encoder';
+import { hevcEncodeArgs, hwaccelArgs, videoEncodeArgs } from './render-encoder';
 
 function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
@@ -545,10 +546,14 @@ export interface TranscodeOptions {
   audioBitrateKbps?: number;
   /** Encode quality tier for HEVC or VBR rate control. */
   quality?: RenderQuality;
-  /** S68: ProRes profile: 0=Proxy, 1=LT, 2=Standard, 3=HQ (default 3). */
+  /** S68 / S158: ProRes profile: 0=Proxy, 1=LT, 2=Standard, 3=HQ, 4=4444 (default 3). */
   proresProfile?: number;
+  /** S158: Avid DNxHR profile: dnxhr_lb, dnxhr_sq, dnxhr_hq, dnxhr_hqx, dnxhr_444 (default dnxhr_hq). */
+  dnxhrProfile?: DnxhrProfileId;
   /** S68: Two-pass rate-control encoding. */
   twoPass?: boolean;
+  /** S158: Hardware / resolved render encoder info for acceleration. */
+  encoder?: RenderEncoderInfo;
 }
 
 /** S286 — GIF pass 1: the whole master distilled into one 256-colour palette. */
@@ -572,7 +577,7 @@ export function pngSequenceFirstFrame(outputPath: string): string {
 }
 
 /**
- * S286 / S68 — master mp4 → delivery container. Pure args, like every builder in
+ * S286 / S68 / S158 — master mp4 → delivery container. Pure args, like every builder in
  * this file. GIF/APNG/PNG are silent by nature; WebM re-encodes the bed to Opus;
  * ProRes and DNxHD produce broadcast uncompressed PCM audio; WAV outputs 24-bit 48kHz audio.
  */
@@ -617,7 +622,10 @@ export function buildTranscodeArgs(
         `${options.audioBitrateKbps ?? 192}k`,
         outputPath,
       ];
-    case 'prores':
+    case 'prores': {
+      const profile = options.proresProfile ?? 3;
+      // ProRes 4444 (profile 4) uses 10-bit 4:4:4 (yuv444p10le); profiles 0..3 use 10-bit 4:2:2 (yuv422p10le)
+      const pixFmt = profile === 4 ? 'yuv444p10le' : 'yuv422p10le';
       return [
         '-y',
         '-i',
@@ -625,14 +633,26 @@ export function buildTranscodeArgs(
         '-c:v',
         'prores_ks',
         '-profile:v',
-        String(options.proresProfile ?? 3),
+        String(profile),
         '-pix_fmt',
-        'yuv422p10le',
+        pixFmt,
         '-c:a',
         'pcm_s24le',
         outputPath,
       ];
-    case 'dnxhd':
+    }
+    case 'dnxhd': {
+      const profile = options.dnxhrProfile ?? 'dnxhr_hq';
+      // Profile determines pixel format:
+      // dnxhr_lb, dnxhr_sq, dnxhr_hq: yuv422p (8-bit 4:2:2)
+      // dnxhr_hqx: yuv422p10le (10-bit 4:2:2)
+      // dnxhr_444: yuv444p10le (10-bit 4:4:4)
+      let pixFmt = 'yuv422p';
+      if (profile === 'dnxhr_hqx') {
+        pixFmt = 'yuv422p10le';
+      } else if (profile === 'dnxhr_444') {
+        pixFmt = 'yuv444p10le';
+      }
       return [
         '-y',
         '-i',
@@ -640,26 +660,20 @@ export function buildTranscodeArgs(
         '-c:v',
         'dnxhd',
         '-profile:v',
-        'dnxhr_hq',
+        profile,
         '-pix_fmt',
-        'yuv422p',
+        pixFmt,
         '-c:a',
         'pcm_s16le',
         outputPath,
       ];
+    }
     case 'hevc':
       return [
         '-y',
         '-i',
         masterPath,
-        '-c:v',
-        'libx265',
-        '-crf',
-        options.quality === 'high' ? '20' : '23',
-        '-preset',
-        'medium',
-        '-pix_fmt',
-        'yuv420p10le',
+        ...hevcEncodeArgs({ quality: options.quality, encoder: options.encoder }),
         '-c:a',
         'aac',
         '-b:a',

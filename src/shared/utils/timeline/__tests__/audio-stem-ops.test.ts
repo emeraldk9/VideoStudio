@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SequenceClip, SequenceRenderRequest, SequenceTrack } from '../../../types/sequence';
 import { BUS_DIALOGUE, BUS_MUSIC, BUS_SFX } from '../audio-bus-ops';
 import {
+  ALL_STEM_TYPES,
   AUDIO_STEM_CONFIGS,
   buildStemExportBatch,
   filterClipsForStem,
@@ -208,6 +209,133 @@ describe('Milestone S68: Audio Stem Operations', () => {
 
       expect(batch[2].outputPath).toBe('C:/Exports/MyProject_SFX.wav');
       expect(batch[2].stemType).toBe('sfx');
+    });
+  });
+
+  describe('Milestone S157: Multi-Stem & Atmos Offline Render Synthesis', () => {
+    it('defines ALL_STEM_TYPES with complete 7-stem catalog', () => {
+      expect(ALL_STEM_TYPES).toEqual([
+        'master',
+        'dialogue',
+        'music',
+        'sfx',
+        'foley',
+        'binaural3d',
+        'atmos714',
+      ]);
+    });
+
+    it('contains comprehensive configurations for foley, binaural3d, and atmos714', () => {
+      expect(AUDIO_STEM_CONFIGS.foley).toBeDefined();
+      expect(AUDIO_STEM_CONFIGS.foley.suffix).toBe('_FOLEY');
+      expect(AUDIO_STEM_CONFIGS.foley.shortLabel).toBe('FOL');
+
+      expect(AUDIO_STEM_CONFIGS.binaural3d).toBeDefined();
+      expect(AUDIO_STEM_CONFIGS.binaural3d.suffix).toBe('_BINAURAL3D');
+      expect(AUDIO_STEM_CONFIGS.binaural3d.shortLabel).toBe('3D');
+
+      expect(AUDIO_STEM_CONFIGS.atmos714).toBeDefined();
+      expect(AUDIO_STEM_CONFIGS.atmos714.suffix).toBe('_ATMOS714');
+      expect(AUDIO_STEM_CONFIGS.atmos714.shortLabel).toBe('ATMOS');
+    });
+
+    it('matches tracks appropriately for foley, binaural3d, and atmos714', () => {
+      // Spatial stems match all tracks (soundstage encompasses entire composition)
+      expect(isTrackMatchingStem(narrationTrack, 'binaural3d')).toBe(true);
+      expect(isTrackMatchingStem(musicTrack, 'binaural3d')).toBe(true);
+      expect(isTrackMatchingStem(sfxTrack, 'binaural3d')).toBe(true);
+
+      expect(isTrackMatchingStem(narrationTrack, 'atmos714')).toBe(true);
+      expect(isTrackMatchingStem(musicTrack, 'atmos714')).toBe(true);
+      expect(isTrackMatchingStem(sfxTrack, 'atmos714')).toBe(true);
+
+      // Foley stem matches explicit foley bus or role, but not narration or music
+      expect(isTrackMatchingStem(narrationTrack, 'foley')).toBe(false);
+      expect(isTrackMatchingStem(musicTrack, 'foley')).toBe(false);
+
+      const foleyRoleTrack: SequenceTrack = {
+        ...sfxTrack,
+        id: 'track-foley-role',
+        role: 'foley' as any,
+      };
+      expect(isTrackMatchingStem(foleyRoleTrack, 'foley')).toBe(true);
+
+      // Explicit routing to foley bus
+      const routingMap = { [sfxTrack.id]: 'bus_foley' };
+      expect(isTrackMatchingStem(sfxTrack, 'foley', routingMap)).toBe(true);
+      expect(isTrackMatchingStem(sfxTrack, 'dialogue', routingMap)).toBe(false);
+    });
+
+    it('filters procedural whiteboard foley clips (foley-*) for foley and sfx stems', () => {
+      const foleyClip: SequenceClip = {
+        id: 'foley-clip-123',
+        sequenceId: 'seq-1',
+        trackId: 'track-sfx',
+        orderIndex: 0,
+        sourceKind: 'audio',
+        filePath: 'c:/audio/whiteboard-foley.wav',
+        durationFrames: 60,
+        transitionIn: 'cut',
+        transitionFrames: 0,
+        motionPreset: 'none',
+        gainDb: 0,
+        fadeInFrames: 0,
+        fadeOutFrames: 0,
+        label: 'Stylus Foley',
+        overrides: [],
+      };
+
+      const tracks = [narrationTrack, musicTrack, sfxTrack, videoTrack];
+      const clips = [foleyClip];
+
+      // Matches foley stem
+      const foleyResult = filterClipsForStem(clips, tracks, 'foley');
+      expect(foleyResult).toHaveLength(1);
+      expect(foleyResult[0].id).toBe('foley-clip-123');
+
+      // Also matches sfx stem for backward compatibility
+      const sfxResult = filterClipsForStem(clips, tracks, 'sfx');
+      expect(sfxResult).toHaveLength(1);
+
+      // Does not match dialogue or music
+      expect(filterClipsForStem(clips, tracks, 'dialogue')).toHaveLength(0);
+      expect(filterClipsForStem(clips, tracks, 'music')).toHaveLength(0);
+
+      // Matches spatial stems
+      expect(filterClipsForStem(clips, tracks, 'binaural3d')).toHaveLength(1);
+      expect(filterClipsForStem(clips, tracks, 'atmos714')).toHaveLength(1);
+    });
+
+    it('generates standardized file paths for new stem formats', () => {
+      const base = 'C:/Output/FilmProject.mov';
+      expect(generateStemFilePath(base, 'foley', 'wav')).toBe('C:/Output/FilmProject_FOLEY.wav');
+      expect(generateStemFilePath(base, 'binaural3d', 'wav')).toBe('C:/Output/FilmProject_BINAURAL3D.wav');
+      expect(generateStemFilePath(base, 'atmos714', 'wav')).toBe('C:/Output/FilmProject_ATMOS714.wav');
+    });
+
+    it('builds export batch with all 7 stems including spatial Atmos and Binaural', () => {
+      const baseReq: SequenceRenderRequest = {
+        sequenceId: 'seq-1',
+        outputPath: 'C:/Exports/Master.mp4',
+        ebuTargetLufs: -24,
+        truePeakCeilingDb: -1.0,
+        exportAdmBwfXml: true,
+      };
+
+      const batch = buildStemExportBatch(baseReq, ALL_STEM_TYPES, undefined, 'wav');
+      expect(batch).toHaveLength(7);
+      expect(batch.map((b) => b.stemType)).toEqual([
+        'master',
+        'dialogue',
+        'music',
+        'sfx',
+        'foley',
+        'binaural3d',
+        'atmos714',
+      ]);
+      expect(batch.every((b) => b.audioOnly === true)).toBe(true);
+      expect(batch.every((b) => b.ebuTargetLufs === -24)).toBe(true);
+      expect(batch.every((b) => b.exportAdmBwfXml === true)).toBe(true);
     });
   });
 });

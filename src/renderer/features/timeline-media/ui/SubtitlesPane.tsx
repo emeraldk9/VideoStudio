@@ -105,25 +105,38 @@ export function SubtitlesPane() {
   const [duplicateSequenceFirst, setDuplicateSequenceFirst] = useState(true);
   const [isExecutingCut, setIsExecutingCut] = useState(false);
 
+  // Real-time active cue tracking without thrashing React state on every frame
+  const [activeCueId, setActiveCueId] = useState<string | null>(null);
+  const subtitleClipsRef = useRef<SequenceClip[]>([]);
+
   // Hidden file input for SRT/VTT import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Subscribe to transportClock for live active cue tracking
   useEffect(() => {
-    let lastFrame = -1;
+    let lastCueId: string | null = null;
     const unsub = transportClock.subscribe((f) => {
-      if (Math.abs(f - lastFrame) >= 2) {
-        lastFrame = f;
-        setLivePlayhead(f);
+      const clips = subtitleClipsRef.current;
+      const active = clips.find(
+        (c) => f >= (c.startFrames ?? 0) && f < (c.startFrames ?? 0) + c.durationFrames,
+      );
+      const activeId = active?.id ?? null;
+      if (activeId !== lastCueId) {
+        lastCueId = activeId;
+        setActiveCueId(activeId);
       }
     });
     return unsub;
   }, []);
 
-  // Update playhead on store changes
+  // Update playhead and active cue on store changes (when paused or scrubbing)
   const storePlayhead = useSequenceStore((state) => state.playheadFrame);
   useEffect(() => {
     setLivePlayhead(storePlayhead);
+    const active = subtitleClipsRef.current.find(
+      (c) => storePlayhead >= (c.startFrames ?? 0) && storePlayhead < (c.startFrames ?? 0) + c.durationFrames,
+    );
+    setActiveCueId(active?.id ?? null);
   }, [storePlayhead]);
 
   // Video / Text tracks in sequence
@@ -149,6 +162,10 @@ export function SubtitlesPane() {
       )
       .sort((a, b) => (a.startFrames ?? 0) - (b.startFrames ?? 0));
   }, [document, selectedTrackId]);
+
+  useEffect(() => {
+    subtitleClipsRef.current = subtitleClips;
+  }, [subtitleClips]);
 
   // Search matches count
   const searchMatchesCount = useMemo(() => {
@@ -1633,7 +1650,7 @@ export function SubtitlesPane() {
             const durationFrames = clip.durationFrames;
             const endFrames = startFrames + durationFrames;
 
-            const isCurrent = livePlayhead >= startFrames && livePlayhead < endFrames;
+            const isCurrent = activeCueId ? clip.id === activeCueId : livePlayhead >= startFrames && livePlayhead < endFrames;
             const isSelected = selectedClipIds.includes(clip.id);
 
             const text = clip.effects?.text?.text ?? clip.label;

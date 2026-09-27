@@ -36,6 +36,12 @@ import { LoudnessRadarModal } from './LoudnessRadarModal';
 
 export function AudioMixerDock() {
   const isOpen = useAudioMixerStore((state) => state.isOpen);
+  if (!isOpen) return null;
+  return <AudioMixerDockContent />;
+}
+
+function AudioMixerDockContent() {
+  const isOpen = useAudioMixerStore((state) => state.isOpen);
   const setIsOpen = useAudioMixerStore((state) => state.setIsOpen);
 
   const document = useSequenceStore((state) => state.document);
@@ -1572,7 +1578,9 @@ export function AudioMixerDock() {
         </div>
       </div>
 
-      <LoudnessRadarModal open={showLoudnessRadar} onClose={() => setShowLoudnessRadar(false)} />
+      {showLoudnessRadar && (
+        <LoudnessRadarModal open={showLoudnessRadar} onClose={() => setShowLoudnessRadar(false)} />
+      )}
     </div>
   );
 }

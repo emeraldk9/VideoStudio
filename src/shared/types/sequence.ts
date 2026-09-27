@@ -170,6 +170,28 @@ export interface SequenceTrack {
    * `text` on video (never the spine), `null` is a plain track of its kind.
    */
   role: TrackRole | null;
+  /** S159 — ID of parent track folder if this track is grouped inside one. */
+  folderId?: string | null;
+}
+
+/**
+ * Milestone S159 — Hierarchical Track Folder (Track Group).
+ *
+ * Provides logical grouping, bulk muting, soloing, locking, and visibility
+ * for collections of tracks, plus folder collapse state in the timeline lane view.
+ */
+export interface TrackFolder {
+  id: string;
+  sequenceId: string;
+  name: string;
+  kind: TrackKind;
+  collapsed: boolean;
+  muted: boolean;
+  locked: boolean;
+  visible: boolean;
+  color?: string | null;
+  parentFolderId?: string | null;
+  audioBusId?: string | null;
 }
 
 /**
@@ -644,6 +666,8 @@ export interface SequenceDocument {
   /** Ordered by `(kind, orderIndex)` — see {@link tracksInDisplayOrder} for the visual order. */
   tracks: SequenceTrack[];
   clips: SequenceClip[];
+  /** S159 — Hierarchical track folders / groups. */
+  folders?: TrackFolder[];
 }
 
 /**
@@ -849,20 +873,25 @@ export const RENDER_QUALITIES = ['good', 'high'] as const;
 export type RenderQuality = (typeof RENDER_QUALITIES)[number];
 
 /**
- * Beta S248 — whether an export may use the machine's video hardware.
+ * Beta S248 / S158 — whether an export may use the machine's video hardware.
  *
- * Two states, not a menu of encoder names: which hardware encoder is best is
- * a fact about the machine that a probe already answers better than a person
- * can, and offering `h264_qsv` on a box that has no Intel GPU is a control
- * that cannot work. `'auto'` (the default, and what an absent field means)
- * takes the best encoder the bundled ffmpeg reports **and can actually open**;
- * `'off'` pins the render to libx264, which is the pre-S248 behaviour exactly.
+ * Offers `'auto'` (default, best probed GPU encoder), vendor-specific modes
+ * (`'nvenc'`, `'qsv'`, `'amf'`, `'videotoolbox'`, `'mediafoundation'`), or
+ * `'off'` (pins render to CPU software libx264/libx265).
  */
-export const RENDER_ACCELERATIONS = ['auto', 'off'] as const;
+export const RENDER_ACCELERATIONS = [
+  'auto',
+  'nvenc',
+  'qsv',
+  'amf',
+  'videotoolbox',
+  'mediafoundation',
+  'off',
+] as const;
 export type RenderAcceleration = (typeof RENDER_ACCELERATIONS)[number];
 
 /**
- * Beta S248 — the encoder a render resolved to, named so the UI can say it.
+ * Beta S248 / S158 — the encoder a render resolved to, named so the UI can say it.
  *
  * A plain `string` id rather than the main process's `VideoEncoder` union on
  * purpose: `@shared` must not learn about `src/main/media/watermark-args.ts`,
@@ -871,9 +900,9 @@ export type RenderAcceleration = (typeof RENDER_ACCELERATIONS)[number];
  * an error state.
  */
 export interface RenderEncoderInfo {
-  /** The ffmpeg encoder name: `'h264_nvenc'`, `'h264_videotoolbox'`, `'libx264'`, … */
+  /** The ffmpeg encoder name: `'h264_nvenc'`, `'h264_videotoolbox'`, `'h264_mf'`, `'libx264'`, … */
   encoderId: string;
-  /** Short human name for a control or a toast: `'NVENC'`, `'VideoToolbox'`, `'x264'`. */
+  /** Short human name for a control or a toast: `'NVENC'`, `'VideoToolbox'`, `'MediaFoundation'`, `'x264'`. */
   label: string;
   hardware: boolean;
   /**
@@ -882,6 +911,10 @@ export interface RenderEncoderInfo {
    * names are deliberately not used.
    */
   hwaccelId: string | null;
+  /** S158 — estimated hardware encoding speedup multiplier relative to libx264 (e.g. 3.5x - 7.0x). */
+  speedupMultiplier?: number;
+  /** S158 — detected GPU vendor or platform subsystem (e.g. 'NVIDIA', 'Intel', 'AMD', 'Apple', 'Microsoft'). */
+  gpuVendor?: string;
 }
 
 /** S157 — AAC bitrates offered at the mux. 192 is the pre-S157 hardcoded value. */
@@ -909,7 +942,47 @@ export const RENDER_DELIVERY_FORMATS = [
 ] as const;
 export type RenderDeliveryFormat = (typeof RENDER_DELIVERY_FORMATS)[number];
 
-export type AudioStemType = 'master' | 'dialogue' | 'music' | 'sfx';
+/** S158 — Apple ProRes profile ladder and metadata. */
+export const PRORES_PROFILES = [
+  { id: 0, name: 'Proxy', label: 'Apple ProRes 422 Proxy (~45 Mbps)', pixFmt: 'yuv422p10le' },
+  { id: 1, name: 'LT', label: 'Apple ProRes 422 LT (~102 Mbps)', pixFmt: 'yuv422p10le' },
+  { id: 2, name: 'Standard', label: 'Apple ProRes 422 Standard (~147 Mbps)', pixFmt: 'yuv422p10le' },
+  { id: 3, name: 'HQ', label: 'Apple ProRes 422 HQ Broadcast Master (~220 Mbps)', pixFmt: 'yuv422p10le' },
+  { id: 4, name: '4444', label: 'Apple ProRes 4444 Cinema Archival Master (~330 Mbps)', pixFmt: 'yuv444p10le' },
+] as const;
+export type ProresProfileId = (typeof PRORES_PROFILES)[number]['id'];
+
+/** S158 — Avid DNxHR intra-frame mastering profiles. */
+export const DNXHR_PROFILES = [
+  'dnxhr_lb',
+  'dnxhr_sq',
+  'dnxhr_hq',
+  'dnxhr_hqx',
+  'dnxhr_444',
+] as const;
+export type DnxhrProfileId = (typeof DNXHR_PROFILES)[number];
+
+export const DNXHR_PROFILE_DETAILS: Record<
+  DnxhrProfileId,
+  { label: string; desc: string; bitDepth: number; pixFmt: string }
+> = {
+  dnxhr_lb: { label: 'DNxHR LB (Low Bandwidth)', desc: '8-bit offline draft / proxy editing', bitDepth: 8, pixFmt: 'yuv422p' },
+  dnxhr_sq: { label: 'DNxHR SQ (Standard Quality)', desc: '8-bit standard editorial quality', bitDepth: 8, pixFmt: 'yuv422p' },
+  dnxhr_hq: { label: 'DNxHR HQ (High Quality)', desc: '8-bit broadcast delivery master', bitDepth: 8, pixFmt: 'yuv422p' },
+  dnxhr_hqx: { label: 'DNxHR HQX (High Quality 10-bit)', desc: '10-bit UHD / HDR master delivery', bitDepth: 10, pixFmt: 'yuv422p10le' },
+  dnxhr_444: { label: 'DNxHR 444 (Cinema 10-bit)', desc: '10-bit 4:4:4 RGB cinema archival master', bitDepth: 10, pixFmt: 'yuv444p10le' },
+};
+
+export const AUDIO_STEM_TYPES = [
+  'master',
+  'dialogue',
+  'music',
+  'sfx',
+  'foley',
+  'binaural3d',
+  'atmos714',
+] as const;
+export type AudioStemType = (typeof AUDIO_STEM_TYPES)[number];
 
 export interface SequenceRenderRequest {
   sequenceId: string;
@@ -928,7 +1001,7 @@ export interface SequenceRenderRequest {
   quality?: RenderQuality;
   /** S157 — the mux's AAC bitrate. Absent = 192, the pre-S157 value. */
   audioBitrateKbps?: RenderAudioBitrate;
-  /** S248 — hardware encode/decode. Absent = `'auto'`. */
+  /** S248 / S158 — hardware encode/decode. Absent = `'auto'`. */
   acceleration?: RenderAcceleration;
   /**
    * S157 — write the mixed audio bed alone (`.m4a`), no picture. Duck and
@@ -939,10 +1012,12 @@ export interface SequenceRenderRequest {
   format?: RenderDeliveryFormat;
   /** S68 — two-pass VBR encoding for maximum rate-control quality. */
   twoPass?: boolean;
-  /** S68 — isolated audio stem render (dialogue, music, sfx, master). */
+  /** S68 / S157 — isolated audio stem render (dialogue, music, sfx, foley, binaural3d, atmos714, master). */
   stemType?: AudioStemType;
-  /** S68 — optional ProRes profile: 0=Proxy, 1=LT, 2=Standard, 3=HQ (default 3). */
+  /** S68 / S158 — optional ProRes profile: 0=Proxy, 1=LT, 2=Standard, 3=HQ, 4=4444 (default 3). */
   proresProfile?: number;
+  /** S158 — optional Avid DNxHR profile: dnxhr_lb, dnxhr_sq, dnxhr_hq, dnxhr_hqx, dnxhr_444 (default dnxhr_hq). */
+  dnxhrProfile?: DnxhrProfileId;
   /** S68 — submix bus routing map (trackId -> busId) for stem filtering. */
   stemRoutingMap?: Record<string, string>;
   /** S73 — hard-coded subtitle / closed caption burn-in. */
@@ -951,6 +1026,12 @@ export interface SequenceRenderRequest {
   subtitleStylePresetId?: string;
   /** S73 — optional target subtitle track id to burn in (if not specified, all subtitle/text tracks are included). */
   subtitleTrackId?: string;
+  /** S157 — EBU R128 integrated loudness target in LUFS (e.g. -24 or -14). When set, applies loudnorm filter. */
+  ebuTargetLufs?: number;
+  /** S157 — True peak ceiling in dBTP (default -1.0 dBTP). Used when ebuTargetLufs is set. */
+  truePeakCeilingDb?: number;
+  /** S157 — Export ITU-R BS.2076 Audio Definition Model (ADM) companion BWF XML metadata. */
+  exportAdmBwfXml?: boolean;
 }
 
 export interface SequenceRenderResult {

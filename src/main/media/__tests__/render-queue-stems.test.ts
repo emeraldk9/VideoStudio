@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ALL_STEM_TYPES,
   AUDIO_STEM_CONFIGS,
   buildStemExportBatch,
   generateStemFilePath,
   isTrackMatchingStem,
+  buildAtmos714PanFilter,
+  buildBinauralHrtfFilter,
+  computeAtmos714Pan,
+  computeBinauralHrtfCues,
+  generateAdmBwfXml,
   type AudioStemType,
   type SequenceClip,
   type SequenceRenderRequest,
   type SequenceTrack,
+  type SpatialSource,
 } from '../../../shared';
 import { buildMuxArgs, buildTranscodeArgs } from '../sequence-normalize';
 
@@ -42,6 +49,21 @@ describe('Milestone S68: Render Queue & Multi-Format Batch Stem Exporter', () =>
       expect(args).toContain('yuv422p10le');
     });
 
+    it('synthesizes Apple ProRes 4444 cinema mastering arguments', () => {
+      const args = buildTranscodeArgs('input.mp4', 'output.mov', {
+        format: 'prores',
+        proresProfile: 4,
+      });
+
+      expect(args).toContain('prores_ks');
+      expect(args).toContain('-profile:v');
+      expect(args).toContain('4');
+      expect(args).toContain('-pix_fmt');
+      expect(args).toContain('yuv444p10le');
+      expect(args).toContain('-c:a');
+      expect(args).toContain('pcm_s24le');
+    });
+
     it('synthesizes Avid DNxHD / DNxHR arguments with uncompressed audio', () => {
       const args = buildTranscodeArgs('input.mp4', 'output.mov', {
         format: 'dnxhd',
@@ -55,6 +77,54 @@ describe('Milestone S68: Render Queue & Multi-Format Batch Stem Exporter', () =>
       expect(args).toContain('yuv422p');
       expect(args).toContain('-c:a');
       expect(args).toContain('pcm_s16le');
+    });
+
+    it('synthesizes Avid DNxHR LB draft proxy profile', () => {
+      const args = buildTranscodeArgs('input.mp4', 'output.mov', {
+        format: 'dnxhd',
+        dnxhrProfile: 'dnxhr_lb',
+      });
+
+      expect(args).toContain('-profile:v');
+      expect(args).toContain('dnxhr_lb');
+      expect(args).toContain('-pix_fmt');
+      expect(args).toContain('yuv422p');
+    });
+
+    it('synthesizes Avid DNxHR SQ standard quality profile', () => {
+      const args = buildTranscodeArgs('input.mp4', 'output.mov', {
+        format: 'dnxhd',
+        dnxhrProfile: 'dnxhr_sq',
+      });
+
+      expect(args).toContain('-profile:v');
+      expect(args).toContain('dnxhr_sq');
+      expect(args).toContain('-pix_fmt');
+      expect(args).toContain('yuv422p');
+    });
+
+    it('synthesizes Avid DNxHR HQX 10-bit broadcast mastering profile', () => {
+      const args = buildTranscodeArgs('input.mp4', 'output.mov', {
+        format: 'dnxhd',
+        dnxhrProfile: 'dnxhr_hqx',
+      });
+
+      expect(args).toContain('-profile:v');
+      expect(args).toContain('dnxhr_hqx');
+      expect(args).toContain('-pix_fmt');
+      expect(args).toContain('yuv422p10le');
+    });
+
+    it('synthesizes Avid DNxHR 444 cinema archival 10-bit RGB profile', () => {
+      const args = buildTranscodeArgs('input.mp4', 'output.mov', {
+        format: 'dnxhd',
+        dnxhrProfile: 'dnxhr_444',
+      });
+
+      expect(args).toContain('-profile:v');
+      expect(args).toContain('dnxhr_444');
+      expect(args).toContain('-pix_fmt');
+      expect(args).toContain('yuv444p10le');
     });
 
     it('synthesizes HEVC / H.265 arguments with 10-bit color & high fidelity audio', () => {
@@ -267,6 +337,120 @@ describe('Milestone S68: Render Queue & Multi-Format Batch Stem Exporter', () =>
       expect(args).not.toContain('-vf');
       expect(args).toContain('-c:v');
       expect(args).toContain('copy');
+    });
+  });
+
+  describe('Milestone S157: Offline Multi-Stem Audio & Atmos Synthesis Pipeline', () => {
+    it('creates batch requests for all 7 audio stems with EBU R128 and ADM XML settings', () => {
+      const baseReq: SequenceRenderRequest = {
+        sequenceId: 'seq-master',
+        outputPath: 'C:/Production/FeatureDoc.mp4',
+        ebuTargetLufs: -24,
+        truePeakCeilingDb: -1.0,
+        exportAdmBwfXml: true,
+      };
+
+      const batch = buildStemExportBatch(baseReq, ALL_STEM_TYPES, undefined, 'wav');
+      expect(batch).toHaveLength(7);
+
+      const stemNames = batch.map((b) => b.stemType);
+      expect(stemNames).toEqual([
+        'master',
+        'dialogue',
+        'music',
+        'sfx',
+        'foley',
+        'binaural3d',
+        'atmos714',
+      ]);
+
+      const expectedPaths = [
+        'C:/Production/FeatureDoc_FULLMIX.wav',
+        'C:/Production/FeatureDoc_DIA.wav',
+        'C:/Production/FeatureDoc_MUS.wav',
+        'C:/Production/FeatureDoc_SFX.wav',
+        'C:/Production/FeatureDoc_FOLEY.wav',
+        'C:/Production/FeatureDoc_BINAURAL3D.wav',
+        'C:/Production/FeatureDoc_ATMOS714.wav',
+      ];
+      expect(batch.map((b) => b.outputPath)).toEqual(expectedPaths);
+
+      batch.forEach((req) => {
+        expect(req.audioOnly).toBe(true);
+        expect(req.format).toBe('wav');
+        expect(req.ebuTargetLufs).toBe(-24);
+        expect(req.truePeakCeilingDb).toBe(-1.0);
+        expect(req.exportAdmBwfXml).toBe(true);
+      });
+    });
+
+    it('generates energy-conserving Dolby Atmos 7.1.4 filter string with 12 output channels', () => {
+      const gains = computeAtmos714Pan([0.0, 2.0, 1.35]);
+      const panFilter = buildAtmos714PanFilter(gains, true);
+
+      expect(panFilter).toContain('pan=7.1.4');
+      const channels = panFilter.split('|').slice(1);
+      expect(channels).toHaveLength(12);
+
+      // Verify each channel identifier c0..c11 is present
+      for (let i = 0; i < 12; i++) {
+        expect(panFilter).toContain(`c${i}=`);
+      }
+    });
+
+    it('generates 3D Binaural HRTF filter chain containing pan, adelay, and pinna notch equalizer', () => {
+      const cues = computeBinauralHrtfCues([1.0, 2.0, 1.35]);
+      const filterChain = buildBinauralHrtfFilter(cues, true);
+
+      expect(filterChain).toContain('pan=stereo|');
+      expect(filterChain).toContain('adelay=');
+      expect(filterChain).toContain('equalizer=f=');
+      expect(filterChain.split(',')).toHaveLength(3);
+    });
+
+    it('generates valid ITU-R BS.2076 ADM BWF XML metadata for multi-track sequence', () => {
+      const sources: SpatialSource[] = [
+        {
+          sourceId: 'src_host',
+          name: 'Host Narration',
+          stemBus: 'speech',
+          position: [0.0, 1.8, 1.35],
+          gainDb: 0,
+          spreadDeg: 15,
+          sizeM: 0.1,
+          priority: 1,
+        },
+        {
+          sourceId: 'src_foley',
+          name: 'Pen Nib Foley',
+          stemBus: 'tool_foley',
+          position: [-0.5, 2.0, 1.4],
+          gainDb: -2,
+          spreadDeg: 25,
+          sizeM: 0.1,
+          priority: 2,
+        },
+        {
+          sourceId: 'src_music',
+          name: 'Soundtrack Bed',
+          stemBus: 'music_bed',
+          position: [0.0, 3.0, 1.5],
+          gainDb: -6,
+          spreadDeg: 120,
+          sizeM: 0.2,
+          priority: 3,
+        },
+      ];
+
+      const xml = generateAdmBwfXml(sources, 'Master_Documentary');
+
+      expect(xml).toContain('<?xml version="1.0" encoding="utf-8"?>');
+      expect(xml).toContain('<ituBS2076:audioFormatExtended');
+      expect(xml).toContain('audioProgrammeName="Master_Documentary"');
+      expect(xml).toContain('audioObjectName="Host Narration"');
+      expect(xml).toContain('audioObjectName="Pen Nib Foley"');
+      expect(xml).toContain('audioObjectName="Soundtrack Bed"');
+      expect(xml).toContain('</ituBS2076:audioFormatExtended>');
     });
   });
 });

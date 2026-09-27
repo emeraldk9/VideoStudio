@@ -19,8 +19,12 @@ import {
   rippleTrimToPlayhead,
   toggleDefaultTransition,
   createAdjustmentLayerClip,
+  resolveActionForEvent,
+  isCompoundClip,
+  isOverlayTrack,
 } from '@shared';
 
+import { KeymapModal, useKeymapStore } from '../../../features/settings';
 import { useProjectStore } from '../../../entities/project';
 import { currentPlayheadFrame, useSequenceStore } from '../../../entities/sequence';
 import { useModalStore } from '../../../shared/model/modalStore';
@@ -33,7 +37,7 @@ import {
 } from '../../../features/timeline-edit';
 import { MediaPanel } from '../../../features/timeline-media';
 import { ensureOverlayTrack } from '../../../features/timeline-media/lib/ensure-free-track';
-import { TimelinePreview } from '../../../features/timeline-preview';
+import { TimelinePreview, useStylusCaptureStore } from '../../../features/timeline-preview';
 import { useVideoScopesStore } from '../../../features/timeline-preview/model/videoScopesStore';
 import { WatermarkBatchModal } from '../../../features/watermark-removal';
 import { Spinner } from '../../../shared/ui/Spinner';
@@ -70,6 +74,9 @@ export function TimelineScreen() {
   const setPlayhead = useSequenceStore((state) => state.setPlayhead);
   const setPlaybackRate = useSequenceStore((state) => state.setPlaybackRate);
   const requestFit = useSequenceStore((state) => state.requestFit);
+  const setZoom = useSequenceStore((state) => state.setZoom);
+  const isKeymapOpen = useKeymapStore((state) => state.isModalOpen);
+  const closeKeymap = useKeymapStore((state) => state.closeModal);
 
   /**
    * Guards the auto-create against firing twice: `loadSequences` +
@@ -138,6 +145,315 @@ export function TimelineScreen() {
         ? transportDurationFrames(state.document.tracks, state.document.clips)
         : 0;
       const key = event.key.toLowerCase();
+
+      // S159 — Keymap Modal shortcut: F1 or Ctrl+/ / Cmd+/
+      if (((event.ctrlKey || event.metaKey) && event.key === '/') || event.key === 'F1') {
+        event.preventDefault();
+        useKeymapStore.getState().openModal();
+        return;
+      }
+
+      // S159 — Industry-standard NLE keymap action resolution
+      const effectiveBindings = useKeymapStore.getState().effectiveBindings;
+      const action = resolveActionForEvent(event, effectiveBindings);
+
+      if (action) {
+        event.preventDefault();
+        switch (action) {
+          case 'play_pause':
+            setPlaying(!state.playing);
+            return;
+          case 'undo':
+            undo();
+            return;
+          case 'redo':
+            redo();
+            return;
+          case 'tool_select':
+            state.setToolMode('select');
+            return;
+          case 'tool_split':
+            state.setToolMode('split');
+            return;
+          case 'tool_ripple':
+            state.setToolMode('ripple');
+            return;
+          case 'tool_roll':
+            state.setToolMode('roll');
+            return;
+          case 'tool_select_right':
+            state.setToolMode('select-right');
+            return;
+          case 'tool_select_left':
+            state.setToolMode('select-left');
+            return;
+          case 'tool_escape':
+            state.setToolMode('select');
+            state.select([]);
+            return;
+          case 'split_at_playhead':
+            if (state.document) {
+              const split = splitAtFrame(
+                state.document.clips,
+                state.document.tracks,
+                currentPlayheadFrame(),
+                state.selectedClipIds,
+                () => crypto.randomUUID(),
+              );
+              if (split) state.commitClips(split);
+            }
+            return;
+          case 'delete_selection':
+            if (state.selectedClipIds.length > 0) {
+              removeClips(state.selectedClipIds);
+            }
+            return;
+          case 'ripple_delete':
+            if (state.document && state.selectedClipIds.length > 0) {
+              state.commitClips(
+                rippleDelete(state.document.clips, state.document.tracks, state.selectedClipIds),
+              );
+              state.select([]);
+            }
+            return;
+          case 'ripple_trim_head':
+            if (state.document) {
+              const next = rippleTrimToPlayhead(
+                state.document.clips,
+                state.document.tracks,
+                currentPlayheadFrame(),
+                'head',
+                state.selectedClipIds,
+              );
+              if (next !== state.document.clips) state.commitClips(next);
+            }
+            return;
+          case 'ripple_trim_tail':
+            if (state.document) {
+              const next = rippleTrimToPlayhead(
+                state.document.clips,
+                state.document.tracks,
+                currentPlayheadFrame(),
+                'tail',
+                state.selectedClipIds,
+              );
+              if (next !== state.document.clips) state.commitClips(next);
+            }
+            return;
+          case 'lift_work_area':
+            state.liftWorkArea();
+            return;
+          case 'extract_work_area':
+            state.extractWorkArea();
+            return;
+          case 'slip_left':
+          case 'slip_right':
+          case 'slip_left_large':
+          case 'slip_right_large': {
+            if (state.selectedClipIds.length === 1 && state.document) {
+              const selectedId = state.selectedClipIds[0];
+              const targetClip = state.document.clips.find((c) => c.id === selectedId);
+              if (
+                targetClip &&
+                (targetClip.sourceKind === 'video' || targetClip.sourceKind === 'audio') &&
+                targetClip.filePath
+              ) {
+                const delta =
+                  action === 'slip_left'
+                    ? -1
+                    : action === 'slip_right'
+                    ? 1
+                    : action === 'slip_left_large'
+                    ? -10
+                    : 10;
+                const next = slipClipMedia(targetClip, delta);
+                state.patchClip(targetClip.id, {
+                  sourceInFrames: next.sourceInFrames,
+                  sourceOutFrames: next.sourceOutFrames,
+                });
+              }
+            }
+            return;
+          }
+          case 'shuttle_left': {
+            const current = state.playing ? state.playbackRate : 0;
+            const next = current <= -1 ? current * 2 : -1;
+            setPlaybackRate(next);
+            setPlaying(true);
+            return;
+          }
+          case 'shuttle_stop':
+            setPlaying(false);
+            return;
+          case 'shuttle_right': {
+            const current = state.playing ? state.playbackRate : 0;
+            const next = current >= 1 ? current * 2 : 1;
+            setPlaybackRate(next);
+            setPlaying(true);
+            return;
+          }
+          case 'step_backward': {
+            const from = currentPlayheadFrame();
+            setPlaying(false);
+            setPlayhead(Math.max(0, from - 1));
+            return;
+          }
+          case 'step_forward': {
+            const from = currentPlayheadFrame();
+            setPlaying(false);
+            setPlayhead(Math.min(duration, from + 1));
+            return;
+          }
+          case 'step_backward_second': {
+            const from = currentPlayheadFrame();
+            setPlaying(false);
+            setPlayhead(Math.max(0, from - Math.round(fps)));
+            return;
+          }
+          case 'step_forward_second': {
+            const from = currentPlayheadFrame();
+            setPlaying(false);
+            setPlayhead(Math.min(duration, from + Math.round(fps)));
+            return;
+          }
+          case 'jump_start':
+            setPlaying(false);
+            setPlayhead(state.inPointFrame ?? 0);
+            return;
+          case 'jump_end':
+            setPlaying(false);
+            setPlayhead(state.outPointFrame ?? duration);
+            return;
+          case 'jump_prev_cut': {
+            if (state.document) {
+              const clipTargets = snapTargets(state.document.tracks, state.document.clips);
+              const markerFrames = state.markers.map((m) => m.frame);
+              const allTargets = timelineSnapTargets({
+                base: clipTargets,
+                markerFrames,
+                playheadFrame: null,
+                sequenceEndFrame: duration,
+              });
+              const from = currentPlayheadFrame();
+              setPlaying(false);
+              setPlayhead(findPreviousCut(allTargets, from));
+            }
+            return;
+          }
+          case 'jump_next_cut': {
+            if (state.document) {
+              const clipTargets = snapTargets(state.document.tracks, state.document.clips);
+              const markerFrames = state.markers.map((m) => m.frame);
+              const allTargets = timelineSnapTargets({
+                base: clipTargets,
+                markerFrames,
+                playheadFrame: null,
+                sequenceEndFrame: duration,
+              });
+              const from = currentPlayheadFrame();
+              setPlaying(false);
+              setPlayhead(findNextCut(allTargets, from, duration));
+            }
+            return;
+          }
+          case 'toggle_loop':
+            state.toggleLooping();
+            return;
+          case 'mark_in': {
+            const frame = currentPlayheadFrame();
+            state.setInPoint(frame);
+            return;
+          }
+          case 'mark_out': {
+            const frame = currentPlayheadFrame();
+            state.setOutPoint(frame);
+            return;
+          }
+          case 'clear_in':
+            state.setInPoint(null);
+            return;
+          case 'clear_out':
+            state.setOutPoint(null);
+            return;
+          case 'clear_in_out':
+            state.clearInOutPoints();
+            return;
+          case 'add_marker': {
+            const frame = currentPlayheadFrame();
+            const existing = state.markers.find((m) => m.frame === frame);
+            if (existing) {
+              state.setEditingMarkerId(existing.id);
+            } else {
+              void state.addMarker(frame);
+            }
+            return;
+          }
+          case 'audio_gain_dialog':
+            if (state.selectedClipIds.length > 0) {
+              useModalStore.getState().openModal('audio-gain');
+            }
+            return;
+          case 'nudge_gain_up':
+          case 'nudge_gain_down': {
+            if (state.selectedClipIds.length > 0) {
+              const deltaDb = action === 'nudge_gain_up' ? 1 : -1;
+              state.patchClipsWith(state.selectedClipIds, (clip) => {
+                const currentGain = clip.gainDb ?? 0;
+                return { gainDb: Math.min(12, Math.max(-60, currentGain + deltaDb)) };
+              });
+            }
+            return;
+          }
+          case 'zoom_in':
+            setZoom(Math.min(200, state.pixelsPerSecond * 1.25));
+            return;
+          case 'zoom_out':
+            setZoom(Math.max(5, state.pixelsPerSecond / 1.25));
+            return;
+          case 'zoom_fit':
+            requestFit();
+            return;
+          case 'toggle_snapping':
+            state.setSnapEnabled(!state.snapEnabled);
+            return;
+          case 'create_compound_clip':
+            if (state.selectedClipIds.length > 0) {
+              void state.createCompoundClipFromSelection();
+            }
+            return;
+          case 'decompose_compound_clip': {
+            const selIds = state.selectedClipIds;
+            if (selIds.length === 1 && state.document) {
+              const c = state.document.clips.find((item) => item.id === selIds[0]);
+              if (c && isCompoundClip(c)) {
+                void state.decomposeCompoundClip(c.id);
+              }
+            }
+            return;
+          }
+          case 'add_adjustment_layer': {
+            const doc = state.document;
+            if (!doc) return;
+            const fps = doc.sequence.fps;
+            const startFrames = currentPlayheadFrame();
+            const durationFrames = Math.max(1, Math.round(fps * 5));
+            void ensureOverlayTrack('Adjustment Layers', startFrames, durationFrames).then((trackId) => {
+              const fresh = useSequenceStore.getState();
+              if (!trackId || !fresh.document) return;
+              const newClip = createAdjustmentLayerClip({
+                sequenceId: fresh.document.sequence.id,
+                trackId,
+                startFrames,
+                durationFrames,
+                orderIndex: fresh.document.clips.filter((c) => c.trackId === trackId).length,
+              });
+              fresh.commitClips([...fresh.document.clips, newClip]);
+              fresh.select([newClip.id]);
+            });
+            return;
+          }
+        }
+      }
 
       if (event.key === ' ') {
         event.preventDefault();
@@ -455,6 +771,17 @@ export function TimelineScreen() {
             state.setEditingMarkerId(existing.id);
           } else {
             void state.addMarker(frame);
+          }
+          return;
+        }
+        // S160 — `P`: Toggle Live Stylus Drawing & Recording Mode
+        if (key === 'p' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault();
+          const stylusStore = useStylusCaptureStore.getState();
+          if (stylusStore.isStylusModeActive) {
+            stylusStore.closeStylusMode();
+          } else {
+            stylusStore.openStylusMode();
           }
           return;
         }
@@ -776,6 +1103,7 @@ export function TimelineScreen() {
         reason.
       */}
       <WatermarkBatchModal />
+      <KeymapModal isOpen={isKeymapOpen} onClose={closeKeymap} />
     </div>
   );
 }

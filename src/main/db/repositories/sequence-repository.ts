@@ -40,6 +40,7 @@ import {
   type StillDurationSource,
   type StillFrameSource,
   type StillMotionPreset,
+  type TrackFolder,
   type TrackKind,
   type TrackRole,
 } from '@shared';
@@ -86,6 +87,23 @@ interface TrackRow {
   video_enabled: number;
   height_px: number;
   role: string | null;
+  folder_id: string | null;
+}
+
+interface TrackFolderRow {
+  id: string;
+  sequence_id: string;
+  name: string;
+  kind: string;
+  collapsed: number;
+  muted: number;
+  locked: number;
+  visible: number;
+  color: string | null;
+  parent_folder_id: string | null;
+  audio_bus_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface ClipRow {
@@ -318,6 +336,23 @@ function toTrack(row: TrackRow): SequenceTrack {
     heightPx: row.height_px,
     // S165 — 'text' joined the value set; the mapper must not launder it to null.
     role: TRACK_ROLES.includes(row.role as TrackRole) ? (row.role as TrackRole) : null,
+    folderId: row.folder_id ?? null,
+  };
+}
+
+function toTrackFolder(row: TrackFolderRow): TrackFolder {
+  return {
+    id: row.id,
+    sequenceId: row.sequence_id,
+    name: row.name,
+    kind: row.kind as TrackKind,
+    collapsed: row.collapsed === 1,
+    muted: row.muted === 1,
+    locked: row.locked === 1,
+    visible: row.visible === 1,
+    color: row.color,
+    parentFolderId: row.parent_folder_id,
+    audioBusId: row.audio_bus_id,
   };
 }
 
@@ -409,6 +444,7 @@ export class SequenceRepository {
       sequence: toSequence(row),
       tracks: this.listTracks(sequenceId),
       clips: this.listClips(sequenceId),
+      folders: this.listFolders(sequenceId),
     };
   }
 
@@ -704,10 +740,122 @@ export class SequenceRepository {
       this.db.prepare('DELETE FROM sequence_clip_keyframes WHERE sequence_id = ?').run(sequenceId);
       this.db.prepare('DELETE FROM sequence_clips WHERE sequence_id = ?').run(sequenceId);
       this.db.prepare('DELETE FROM sequence_tracks WHERE sequence_id = ?').run(sequenceId);
+      this.db.prepare('DELETE FROM sequence_track_folders WHERE sequence_id = ?').run(sequenceId);
       this.db.prepare('DELETE FROM sequence_markers WHERE sequence_id = ?').run(sequenceId);
       this.db.prepare('DELETE FROM sequences WHERE id = ?').run(sequenceId);
     });
     run();
+  }
+
+  // ---------------------------------------------------------------- track folders (S159)
+
+  listFolders(sequenceId: string): TrackFolder[] {
+    const rows = this.db
+      .prepare('SELECT * FROM sequence_track_folders WHERE sequence_id = ? ORDER BY created_at ASC')
+      .all(sequenceId) as TrackFolderRow[];
+    return rows.map(toTrackFolder);
+  }
+
+  getFolder(folderId: string): TrackFolder | null {
+    const row = this.db
+      .prepare('SELECT * FROM sequence_track_folders WHERE id = ?')
+      .get(folderId) as TrackFolderRow | undefined;
+    return row ? toTrackFolder(row) : null;
+  }
+
+  createFolder(input: {
+    id?: string;
+    sequenceId: string;
+    name: string;
+    kind: TrackKind;
+    color?: string | null;
+    parentFolderId?: string | null;
+  }): TrackFolder {
+    const id = input.id ?? randomUUID();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO sequence_track_folders (
+          id, sequence_id, name, kind, collapsed, muted, locked, visible, color, parent_folder_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, 1, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.sequenceId,
+        input.name,
+        input.kind,
+        input.color ?? null,
+        input.parentFolderId ?? null,
+        now,
+        now,
+      );
+    return this.getFolder(id)!;
+  }
+
+  updateFolder(
+    folderId: string,
+    updates: Partial<Pick<TrackFolder, 'name' | 'collapsed' | 'muted' | 'locked' | 'visible' | 'color' | 'parentFolderId' | 'audioBusId'>>,
+  ): TrackFolder | null {
+    const existing = this.getFolder(folderId);
+    if (!existing) return null;
+
+    const fields: string[] = ['updated_at = ?'];
+    const values: (string | number | null)[] = [new Date().toISOString()];
+
+    if (updates.name !== undefined) {
+      fields.push('name = ?');
+      values.push(updates.name);
+    }
+    if (updates.collapsed !== undefined) {
+      fields.push('collapsed = ?');
+      values.push(updates.collapsed ? 1 : 0);
+    }
+    if (updates.muted !== undefined) {
+      fields.push('muted = ?');
+      values.push(updates.muted ? 1 : 0);
+    }
+    if (updates.locked !== undefined) {
+      fields.push('locked = ?');
+      values.push(updates.locked ? 1 : 0);
+    }
+    if (updates.visible !== undefined) {
+      fields.push('visible = ?');
+      values.push(updates.visible ? 1 : 0);
+    }
+    if (updates.color !== undefined) {
+      fields.push('color = ?');
+      values.push(updates.color);
+    }
+    if (updates.parentFolderId !== undefined) {
+      fields.push('parent_folder_id = ?');
+      values.push(updates.parentFolderId);
+    }
+    if (updates.audioBusId !== undefined) {
+      fields.push('audio_bus_id = ?');
+      values.push(updates.audioBusId);
+    }
+
+    values.push(folderId);
+    this.db.prepare(`UPDATE sequence_track_folders SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.getFolder(folderId);
+  }
+
+  deleteFolder(folderId: string): boolean {
+    const run = this.db.transaction(() => {
+      // Clear folder_id on child tracks
+      this.db.prepare('UPDATE sequence_tracks SET folder_id = NULL WHERE folder_id = ?').run(folderId);
+      // Clear parent_folder_id on child folders
+      this.db.prepare('UPDATE sequence_track_folders SET parent_folder_id = NULL WHERE parent_folder_id = ?').run(folderId);
+      this.db.prepare('DELETE FROM sequence_track_folders WHERE id = ?').run(folderId);
+    });
+    run();
+    return true;
+  }
+
+  setTrackFolder(trackId: string, folderId: string | null): SequenceTrack | null {
+    this.db.prepare('UPDATE sequence_tracks SET folder_id = ? WHERE id = ?').run(folderId, trackId);
+    const row = this.db.prepare('SELECT * FROM sequence_tracks WHERE id = ?').get(trackId) as TrackRow | undefined;
+    return row ? toTrack(row) : null;
   }
 
   // ---------------------------------------------------------------- markers
@@ -1033,6 +1181,7 @@ export class SequenceRepository {
       tracks: (Omit<SequenceTrack, 'videoEnabled'> & { videoEnabled?: boolean })[];
       clips: SequenceClip[];
       spineTrackId: string | null;
+      folders?: TrackFolder[];
     },
     now: string,
   ): SequenceDocument | null {
@@ -1101,6 +1250,39 @@ export class SequenceRepository {
       } else {
         this.db.prepare('DELETE FROM sequence_tracks WHERE sequence_id = ?').run(sequenceId);
       }
+      if (snapshot.folders !== undefined) {
+        this.db.prepare('UPDATE sequence_tracks SET folder_id = NULL WHERE sequence_id = ?').run(sequenceId);
+        this.db.prepare('DELETE FROM sequence_track_folders WHERE sequence_id = ?').run(sequenceId);
+        const insertFolder = this.db.prepare(
+          `INSERT INTO sequence_track_folders (
+            id, sequence_id, name, kind, collapsed, muted, locked, visible, color, parent_folder_id, audio_bus_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const f of snapshot.folders) {
+          insertFolder.run(
+            f.id,
+            sequenceId,
+            f.name,
+            f.kind,
+            f.collapsed ? 1 : 0,
+            f.muted ? 1 : 0,
+            f.locked ? 1 : 0,
+            f.visible ? 1 : 0,
+            f.color ?? null,
+            f.parentFolderId ?? null,
+            f.audioBusId ?? null,
+            now,
+            now,
+          );
+        }
+      }
+
+      const validFolderIds = new Set(
+        snapshot.folders !== undefined
+          ? snapshot.folders.map((f) => f.id)
+          : (this.db.prepare('SELECT id FROM sequence_track_folders WHERE sequence_id = ?').all(sequenceId) as { id: string }[]).map((r) => r.id),
+      );
+
       // Two passes over the unique (sequence_id, kind, order_index) index,
       // the `reorderTracks` convention: shift survivors out of range first so
       // upserted positions cannot collide mid-transaction.
@@ -1108,14 +1290,15 @@ export class SequenceRepository {
         .prepare('UPDATE sequence_tracks SET order_index = order_index + 10000 WHERE sequence_id = ?')
         .run(sequenceId);
       const upsertTrack = this.db.prepare(
-        `INSERT INTO sequence_tracks (id, sequence_id, kind, order_index, name, magnetic, locked, muted, video_enabled, height_px, role, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sequence_tracks (id, sequence_id, kind, order_index, name, magnetic, locked, muted, video_enabled, height_px, role, folder_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            order_index = excluded.order_index, name = excluded.name, magnetic = excluded.magnetic,
            locked = excluded.locked, muted = excluded.muted, video_enabled = excluded.video_enabled,
-           height_px = excluded.height_px, role = excluded.role`,
+           height_px = excluded.height_px, role = excluded.role, folder_id = excluded.folder_id`,
       );
       for (const track of snapshot.tracks) {
+        const resolvedFolderId = track.folderId && validFolderIds.has(track.folderId) ? track.folderId : null;
         upsertTrack.run(
           track.id,
           // The channel's id wins over the payload's, the `replaceClips` rule.
@@ -1131,9 +1314,11 @@ export class SequenceRepository {
           (track.videoEnabled ?? true) ? 1 : 0,
           track.heightPx,
           track.role,
+          resolvedFolderId,
           now,
         );
       }
+
       this.db
         .prepare('UPDATE sequences SET spine_track_id = ?, updated_at = ? WHERE id = ?')
         .run(snapshot.spineTrackId, now, sequenceId);

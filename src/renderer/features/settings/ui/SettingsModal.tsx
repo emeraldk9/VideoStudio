@@ -469,6 +469,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     value={hardwareAcceleration}
                     options={[
                       { value: 'auto', label: 'Auto (Best Detected Hardware)' },
+                      { value: 'nvenc', label: 'NVIDIA NVENC (GPU)' },
+                      { value: 'qsv', label: 'Intel Quick Sync (QSV)' },
+                      { value: 'amf', label: 'AMD AMF (GPU)' },
+                      { value: 'videotoolbox', label: 'Apple VideoToolbox' },
+                      { value: 'mediafoundation', label: 'Media Foundation (Windows)' },
                       { value: 'off', label: 'Disabled (Software libx264)' },
                     ]}
                     onChange={(val) => updateSettings({ hardwareAcceleration: val as RenderAcceleration })}

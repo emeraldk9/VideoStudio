@@ -38,6 +38,13 @@ import {
   type SequenceTrack,
   resolveWhiteboardDrawSeconds,
   resolveWhiteboardEraseSeconds,
+  buildAtmos714PanFilter,
+  buildBinauralHrtfFilter,
+  computeAtmos714Pan,
+  computeBinauralHrtfCues,
+  generateAdmBwfXml,
+  type SpatialSource,
+  type StemBusType,
 } from '@shared';
 
 import type { ChildLogger } from '../logging/logger';
@@ -609,7 +616,9 @@ export class SequenceRenderService {
           audioBitrateKbps: request.audioBitrateKbps,
           quality: request.quality,
           proresProfile: request.proresProfile,
+          dnxhrProfile: request.dnxhrProfile,
           twoPass: request.twoPass,
+          encoder: this.encoder,
         }),
         durationSeconds,
         (fraction) =>
@@ -622,6 +631,10 @@ export class SequenceRenderService {
       );
     }
     this.report({ sequenceId: sequence.id, stage: 'transcode', completed: 100, total: 100 });
+
+    if (request.exportAdmBwfXml) {
+      await this.writeAdmBwfXmlCompanion(document, request.outputPath);
+    }
 
     return { outputPath, durationSeconds, skipped, encoder: this.encoder };
   }
@@ -660,13 +673,109 @@ export class SequenceRenderService {
     await fs.promises.mkdir(path.dirname(request.outputPath), { recursive: true });
 
     const isWav = request.format === 'wav' || request.outputPath.toLowerCase().endsWith('.wav');
+    const isAtmos = request.stemType === 'atmos714';
     const audioArgs = isWav
       ? ['-y', '-i', audioPath, '-vn', '-c:a', 'pcm_s24le', '-ar', '48000', request.outputPath]
-      : ['-y', '-i', audioPath, '-c:a', 'aac', '-b:a', `${request.audioBitrateKbps ?? 192}k`, request.outputPath];
+      : isAtmos
+        ? ['-y', '-i', audioPath, '-c:a', 'aac', '-channel_layout', '7.1.4', '-b:a', `${request.audioBitrateKbps ?? 384}k`, request.outputPath]
+        : ['-y', '-i', audioPath, '-c:a', 'aac', '-b:a', `${request.audioBitrateKbps ?? 192}k`, request.outputPath];
 
     await this.runFfmpeg(audioArgs);
+
+    // S157: Companion ITU-R BS.2076 ADM BWF XML Metadata export
+    if (request.exportAdmBwfXml) {
+      await this.writeAdmBwfXmlCompanion(document, request.outputPath);
+    }
+
     this.report({ sequenceId: sequence.id, stage: 'mux', completed: 1, total: 1 });
     return { outputPath: request.outputPath, durationSeconds, skipped: [] };
+  }
+
+  /**
+   * S157 — Writes companion ITU-R BS.2076 ADM BWF XML metadata package.
+   */
+  private async writeAdmBwfXmlCompanion(
+    document: SequenceDocument,
+    outputPath: string,
+  ): Promise<string> {
+    const extMatch = outputPath.match(/\.[^./\\]+$/);
+    const ext = extMatch ? extMatch[0] : '';
+    const dirAndBase = ext ? outputPath.slice(0, -ext.length) : outputPath;
+    const admXmlPath = `${dirAndBase}_ADM.xml`;
+
+    const sources = this.extractSoundstageSources(document);
+    const xml = generateAdmBwfXml(sources, document.sequence.name || 'WhiteboardMasterSequence');
+    await fs.promises.writeFile(admXmlPath, xml, 'utf-8');
+    return admXmlPath;
+  }
+
+  /**
+   * S157 — Extracts soundstage spatial sources from sequence tracks and clips.
+   */
+  private extractSoundstageSources(document: SequenceDocument): SpatialSource[] {
+    const { tracks, clips } = document;
+    const sources: SpatialSource[] = [];
+    let idx = 1;
+
+    for (const track of tracks) {
+      if (track.muted) continue;
+      const trackClips = clips.filter((c) => c.trackId === track.id);
+      if (trackClips.length === 0) continue;
+
+      let bus: StemBusType = 'speech';
+      let pos: [number, number, number] = [0.0, 1.8, 1.35];
+      let spread = 15;
+      let gainDb = 0;
+
+      if (track.role === 'narration' || track.kind === 'video') {
+        bus = 'speech';
+        pos = [0.0, 1.8, 1.35];
+        spread = 15;
+      } else if (track.role === 'music') {
+        bus = 'music_bed';
+        pos = [0.0, 3.0, 1.5];
+        spread = 120;
+        gainDb = -3.0;
+      } else {
+        const hasWhiteboard = trackClips.some((c) => c.effects?.whiteboard);
+        if (hasWhiteboard) {
+          bus = 'tool_foley';
+          pos = [-0.5, 2.0, 1.4];
+          spread = 25;
+        } else {
+          bus = 'ambience';
+          pos = [0.5, 2.5, 1.2];
+          spread = 60;
+        }
+      }
+
+      sources.push({
+        sourceId: `src_${idx}_${track.id}`,
+        name: track.name || `Track_${track.id}`,
+        stemBus: bus,
+        position: pos,
+        gainDb,
+        spreadDeg: spread,
+        sizeM: 0.1,
+        priority: idx,
+      });
+      idx++;
+    }
+
+    if (sources.length === 0) {
+      sources.push({
+        sourceId: 'src_default_master',
+        name: 'Master Bed',
+        stemBus: 'speech',
+        position: [0.0, 2.0, 1.35],
+        gainDb: 0,
+        spreadDeg: 30,
+        sizeM: 0.1,
+        priority: 1,
+      });
+    }
+
+    return sources;
   }
 
   /**
@@ -1434,13 +1543,16 @@ export class SequenceRenderService {
     narration.push(...exempt);
     music.push(...ducked, ...whiteboardFoley);
 
-    // S68 — Audio Stem Isolation (dialogue, music, sfx, master)
+    // S68 / S157 — Audio Stem Isolation (dialogue, music, sfx, foley, binaural3d, atmos714, master)
     if (request?.stemType && request.stemType !== 'master') {
       const stem = request.stemType;
       const trackMap = new Map(tracks.map((t) => [t.id, t]));
       const matchesStem = (placed: PlacedClip) => {
         if (placed.clip.id.startsWith('foley-')) {
-          return stem === 'sfx';
+          return stem === 'foley' || stem === 'sfx';
+        }
+        if (stem === 'binaural3d' || stem === 'atmos714') {
+          return true;
         }
         const track = trackMap.get(placed.clip.trackId);
         return track ? isTrackMatchingStem(track, stem, request.stemRoutingMap) : false;
@@ -1456,8 +1568,8 @@ export class SequenceRenderService {
 
     // Ducking needs both signals; with one lane empty there is nothing to
     // duck under (or nothing to duck), so the flat bed is already correct.
+    let bedPath = path.join(workDir, 'audio.wav');
     if (!duck || narration.length === 0 || music.length === 0) {
-      const bedPath = path.join(workDir, 'audio.wav');
       await this.runFfmpeg(
         buildAudioTimelineArgs(this.toSegments([...narration, ...music], fps, document.tracks), bedPath, {
           durationSeconds: Math.max(0.001, durationSeconds),
@@ -1465,37 +1577,71 @@ export class SequenceRenderService {
         }),
       );
       onProgress(total, total);
-      return bedPath;
+    } else {
+      const narrationBed = path.join(workDir, 'audio-narration.wav');
+      await this.runFfmpeg(
+        buildAudioTimelineArgs(this.toSegments(narration, fps, document.tracks), narrationBed, {
+          durationSeconds: Math.max(0.001, durationSeconds),
+          format: 'wav',
+        }),
+      );
+      onProgress(narration.length, total);
+      this.throwIfCancelled();
+
+      const musicBed = path.join(workDir, 'audio-music.wav');
+      await this.runFfmpeg(
+        buildAudioTimelineArgs(this.toSegments(music, fps, document.tracks), musicBed, {
+          durationSeconds: Math.max(0.001, durationSeconds),
+          format: 'wav',
+        }),
+      );
+      onProgress(total, total);
+      this.throwIfCancelled();
+
+      const mixedPath = path.join(workDir, 'audio-mixed.wav');
+      // S251 — the bed's length is pinned here, not left to whatever
+      // `sidechaincompress` emits: the mux's `-shortest` cuts the picture to
+      // this file, so a short mix is a short export.
+      await this.runFfmpeg(
+        buildDuckMixArgs(narrationBed, musicBed, mixedPath, { durationSeconds }),
+      );
+      bedPath = mixedPath;
     }
 
-    const narrationBed = path.join(workDir, 'audio-narration.wav');
-    await this.runFfmpeg(
-      buildAudioTimelineArgs(this.toSegments(narration, fps, document.tracks), narrationBed, {
-        durationSeconds: Math.max(0.001, durationSeconds),
-        format: 'wav',
-      }),
-    );
-    onProgress(narration.length, total);
-    this.throwIfCancelled();
+    // S157 — Audio Spatialization (Binaural 3D HRTF, Dolby Atmos 7.1.4) & EBU R128 Loudness Normalization
+    const postFilters: string[] = [];
+    if (request?.stemType === 'binaural3d') {
+      const cues = computeBinauralHrtfCues([0.0, 2.0, 1.35]);
+      postFilters.push(buildBinauralHrtfFilter(cues, true));
+    } else if (request?.stemType === 'atmos714') {
+      const gains = computeAtmos714Pan([0.0, 2.0, 1.35]);
+      postFilters.push(buildAtmos714PanFilter(gains, true));
+    }
 
-    const musicBed = path.join(workDir, 'audio-music.wav');
-    await this.runFfmpeg(
-      buildAudioTimelineArgs(this.toSegments(music, fps, document.tracks), musicBed, {
-        durationSeconds: Math.max(0.001, durationSeconds),
-        format: 'wav',
-      }),
-    );
-    onProgress(total, total);
-    this.throwIfCancelled();
+    if (request?.ebuTargetLufs !== undefined) {
+      const targetLufs = request.ebuTargetLufs;
+      const peakCeiling = request.truePeakCeilingDb ?? -1.0;
+      postFilters.push(`loudnorm=I=${targetLufs}:TP=${peakCeiling}:LRA=11`);
+    }
 
-    const mixedPath = path.join(workDir, 'audio.wav');
-    // S251 — the bed's length is pinned here, not left to whatever
-    // `sidechaincompress` emits: the mux's `-shortest` cuts the picture to
-    // this file, so a short mix is a short export.
-    await this.runFfmpeg(
-      buildDuckMixArgs(narrationBed, musicBed, mixedPath, { durationSeconds }),
-    );
-    return mixedPath;
+    if (postFilters.length > 0) {
+      const processedPath = path.join(workDir, 'audio-processed.wav');
+      await this.runFfmpeg([
+        '-y',
+        '-i',
+        bedPath,
+        '-af',
+        postFilters.join(','),
+        '-c:a',
+        'pcm_s24le',
+        '-ar',
+        '48000',
+        processedPath,
+      ]);
+      return processedPath;
+    }
+
+    return bedPath;
   }
 
   /**

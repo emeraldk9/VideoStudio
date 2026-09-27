@@ -10,6 +10,8 @@ import {
   generateSpatialStageSvgMarkup,
   DEFAULT_SPATIAL_AUDIO_CONFIG,
   SpatialSource,
+  buildAtmos714PanFilter,
+  buildBinauralHrtfFilter,
 } from '../spatial-audio-atmos-ops';
 
 describe('spatial-audio-atmos-ops', () => {
@@ -172,5 +174,62 @@ describe('spatial-audio-atmos-ops', () => {
     expect(svg).toContain('Whiteboard Surface');
     expect(svg).toContain('Listener');
     expect(svg).toContain('Pen Nib');
+  });
+
+  describe('Milestone S157: FFmpeg Filter Synthesis for Atmos 7.1.4 & Binaural HRTF', () => {
+    it('synthesizes mono FFmpeg pan filter for 7.1.4 speaker bed layout', () => {
+      const gains = computeAtmos714Pan([-1.5, 2.0, 1.35]);
+      const filter = buildAtmos714PanFilter(gains, false);
+
+      expect(filter).toContain('pan=7.1.4');
+      expect(filter).toContain(`c0=${Number(gains.L.toFixed(5))}*c0`);
+      expect(filter).toContain(`c1=${Number(gains.R.toFixed(5))}*c0`);
+      expect(filter).toContain(`c2=${Number(gains.C.toFixed(5))}*c0`);
+      expect(filter).toContain(`c3=${Number(gains.LFE.toFixed(5))}*c0`);
+      expect(filter).toContain(`c6=${Number(gains.Ls.toFixed(5))}*c0`);
+      expect(filter).toContain(`c7=${Number(gains.Rs.toFixed(5))}*c0`);
+      expect(filter).toContain(`c8=${Number(gains.Tfl.toFixed(5))}*c0`);
+      expect(filter).toContain(`c9=${Number(gains.Tfr.toFixed(5))}*c0`);
+      expect(filter).toContain(`c10=${Number(gains.Tbl.toFixed(5))}*c0`);
+      expect(filter).toContain(`c11=${Number(gains.Tbr.toFixed(5))}*c0`);
+    });
+
+    it('synthesizes stereo FFmpeg pan filter for 7.1.4 speaker bed layout with split channel routing', () => {
+      const gains = computeAtmos714Pan([1.5, 2.0, 1.35]);
+      const filter = buildAtmos714PanFilter(gains, true);
+
+      expect(filter).toContain('pan=7.1.4');
+      // Left speaker driven by c0, right by c1
+      expect(filter).toContain(`c0=${Number(gains.L.toFixed(5))}*c0`);
+      expect(filter).toContain(`c1=${Number(gains.R.toFixed(5))}*c1`);
+      // Center and LFE sum both c0 and c1
+      const halfC = Number((gains.C * 0.5).toFixed(5));
+      expect(filter).toContain(`c2=${halfC}*c0+${halfC}*c1`);
+      expect(filter).toContain(`c8=${Number(gains.Tfl.toFixed(5))}*c0`);
+      expect(filter).toContain(`c9=${Number(gains.Tfr.toFixed(5))}*c1`);
+    });
+
+    it('synthesizes binaural HRTF filter chain with pan, adelay, and pinna notch equalizer', () => {
+      const cues = computeBinauralHrtfCues([-1.5, 2.0, 1.35]);
+      const filter = buildBinauralHrtfFilter(cues, false);
+
+      expect(filter).toContain('pan=stereo');
+      expect(filter).toContain(`c0=${Number(cues.gainLeft.toFixed(5))}*c0`);
+      expect(filter).toContain(`c1=${Number(cues.gainRight.toFixed(5))}*c0`);
+      expect(filter).toContain('adelay=');
+      expect(filter).toContain('equalizer=f=');
+      expect(filter).toContain(':t=q:w=2.0:g=-6');
+    });
+
+    it('synthesizes stereo input binaural HRTF filter chain', () => {
+      const cues = computeBinauralHrtfCues([1.5, 2.0, 1.35]);
+      const filter = buildBinauralHrtfFilter(cues, true);
+
+      expect(filter).toContain('pan=stereo');
+      expect(filter).toContain(`c0=${Number(cues.gainLeft.toFixed(5))}*c0`);
+      expect(filter).toContain(`c1=${Number(cues.gainRight.toFixed(5))}*c1`);
+      expect(filter).toContain('adelay=');
+      expect(filter).toContain(`equalizer=f=${Math.round(cues.pinnaNotchHz)}`);
+    });
   });
 });

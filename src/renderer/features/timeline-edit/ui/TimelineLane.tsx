@@ -198,6 +198,9 @@ export function TimelineTrackRow({
   const removeTrack = useSequenceStore((state) => state.removeTrack);
   const toggleSolo = useSequenceStore((state) => state.toggleSolo);
   const soloTrackIds = useSequenceStore((state) => state.soloTrackIds);
+  const folders = useSequenceStore((state) => state.document?.folders ?? []);
+  const setTrackFolder = useSequenceStore((state) => state.setTrackFolder);
+  const createTrackFolder = useSequenceStore((state) => state.createTrackFolder);
   // S160 — spine-ness decides the video glyph; the entity is this slice's
   // legal read, and a prop would thread it through the panel for no gain.
   const spineTrackId = useSequenceStore(
@@ -572,6 +575,73 @@ export function TimelineTrackRow({
                         <span>Large</span>
                         <span className="font-mono text-[10px] text-text-disabled">140px</span>
                       </button>
+                      {/* S159 — Track Folder assignment */}
+                      {!isSpine && (
+                        <>
+                          <span aria-hidden="true" className="my-0.5 h-px w-full bg-hairline" />
+                          <span className="px-2 py-0.5 text-[10px] font-semibold text-text-disabled uppercase tracking-wider">
+                            Folder / Group
+                          </span>
+                          {folders
+                            .filter((f) => f.kind === track.kind)
+                            .map((f) => (
+                              <button
+                                key={f.id}
+                                type="button"
+                                role="menuitem"
+                                className="flex w-full items-center justify-between rounded-[var(--radius-button)] px-2 py-1 text-left text-xs text-text-primary transition-colors duration-100 hover:bg-bg-hover"
+                                onClick={() => {
+                                  setMenuPosition(null);
+                                  void setTrackFolder(track.id, track.folderId === f.id ? null : f.id);
+                                }}
+                              >
+                                <span className="truncate">{f.name}</span>
+                                {track.folderId === f.id && (
+                                  <span className="material-symbols-outlined text-[14px] text-accent-ai">check</span>
+                                )}
+                              </button>
+                            ))}
+                          {track.folderId && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="flex w-full items-center px-2 py-1 text-left text-xs text-warning transition-colors duration-100 hover:bg-bg-hover rounded"
+                              onClick={() => {
+                                setMenuPosition(null);
+                                void setTrackFolder(track.id, null);
+                              }}
+                            >
+                              Remove from folder
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs text-accent-ai transition-colors duration-100 hover:bg-bg-hover rounded"
+                            onClick={() => {
+                              setMenuPosition(null);
+                              const folderName = window.prompt(
+                                'New Folder Name:',
+                                `${track.kind === 'video' ? 'Video' : 'Audio'} Group`,
+                              );
+                              if (folderName && folderName.trim()) {
+                                void createTrackFolder(folderName.trim(), track.kind).then(() => {
+                                  const updatedDoc = useSequenceStore.getState().document;
+                                  const created = (updatedDoc?.folders ?? []).find(
+                                    (f) => f.name === folderName.trim(),
+                                  );
+                                  if (created) {
+                                    void setTrackFolder(track.id, created.id);
+                                  }
+                                });
+                              }
+                            }}
+                          >
+                            <span className="material-symbols-outlined text-[14px]">create_new_folder</span>
+                            <span>New folder with track</span>
+                          </button>
+                        </>
+                      )}
                       {/* S170 fix — the spine is the sequence's default
                           track: no Delete item, and the repository refuses
                           the call anyway. */}

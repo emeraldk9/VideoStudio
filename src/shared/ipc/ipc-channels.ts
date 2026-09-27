@@ -36,6 +36,10 @@ export const IPC_CHANNELS = {
   SEQUENCE_DELETE_TRACK: 'sequence:deleteTrack',
   SEQUENCE_REORDER_TRACKS: 'sequence:reorderTracks',
   SEQUENCE_CAPTURE_FRAME: 'sequence:captureFrame',
+  SEQUENCE_CREATE_TRACK_FOLDER: 'sequence:createTrackFolder',
+  SEQUENCE_UPDATE_TRACK_FOLDER: 'sequence:updateTrackFolder',
+  SEQUENCE_DELETE_TRACK_FOLDER: 'sequence:deleteTrackFolder',
+  SEQUENCE_SET_TRACK_FOLDER: 'sequence:setTrackFolder',
 
   // Projects
   PROJECT_LIST: 'projects:list',

@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
 import {
+  AUDIO_STEM_TYPES,
   CLIP_COLOR_LABELS,
   CLIP_OVERRIDABLE_FIELDS,
   CLIP_TRANSITIONS,
+  DNXHR_PROFILES,
   MARKER_COLORS,
   RENDER_ACCELERATIONS,
   RENDER_AUDIO_BITRATES,
@@ -47,6 +49,21 @@ export const sequenceTrackSchema = z.object({
   videoEnabled: z.boolean().optional(),
   heightPx: z.number().int().min(24).max(400),
   role: z.enum(TRACK_ROLES).nullable(),
+  folderId: z.string().nullable().optional(),
+});
+
+export const trackFolderSchema = z.object({
+  id: z.string().min(1),
+  sequenceId: z.string().min(1),
+  name: z.string().min(1).max(MAX_SEQUENCE_NAME_LENGTH),
+  kind: z.enum(TRACK_KINDS),
+  collapsed: z.boolean(),
+  muted: z.boolean(),
+  locked: z.boolean(),
+  visible: z.boolean(),
+  color: z.string().nullable().optional(),
+  parentFolderId: z.string().nullable().optional(),
+  audioBusId: z.string().nullable().optional(),
 });
 
 export const sequenceClipSchema = z.object({
@@ -156,6 +173,7 @@ export const IPC_SCHEMAS = {
     tracks: z.array(sequenceTrackSchema).max(MAX_SEQUENCE_TRACKS),
     clips: z.array(sequenceClipSchema).max(MAX_SEQUENCE_CLIPS),
     spineTrackId: z.string().min(1).nullable(),
+    folders: z.array(trackFolderSchema).optional(),
   }),
   [IPC_CHANNELS.SEQUENCE_LIST_MARKERS]: z.object({ sequenceId: z.string().min(1) }),
   [IPC_CHANNELS.SEQUENCE_ADD_MARKER]: z.object({
@@ -196,7 +214,11 @@ export const IPC_SCHEMAS = {
     frameHeight: z.number().int().min(16).max(7680),
   }),
   [IPC_CHANNELS.SEQUENCE_GET_FILMSTRIP]: z.object({ sourcePath: z.string().min(1) }),
-  [IPC_CHANNELS.SEQUENCE_GET_ENCODER]: z.void(),
+  [IPC_CHANNELS.SEQUENCE_GET_ENCODER]: z
+    .object({
+      acceleration: z.enum(RENDER_ACCELERATIONS).optional(),
+    })
+    .optional(),
   [IPC_CHANNELS.SEQUENCE_RENDER]: z.object({
     sequenceId: z.string().min(1),
     outputPath: z.string().min(1),
@@ -214,12 +236,23 @@ export const IPC_SCHEMAS = {
     audioOnly: z.boolean().optional(),
     acceleration: z.enum(RENDER_ACCELERATIONS).optional(),
     format: z.enum(RENDER_DELIVERY_FORMATS).optional(),
+    twoPass: z.boolean().optional(),
+    stemType: z.enum(AUDIO_STEM_TYPES).optional(),
+    proresProfile: z.number().int().min(0).max(4).optional(),
+    dnxhrProfile: z.enum(DNXHR_PROFILES).optional(),
+    stemRoutingMap: z.record(z.string(), z.string()).optional(),
+    burnInSubtitles: z.boolean().optional(),
+    subtitleStylePresetId: z.string().optional(),
+    subtitleTrackId: z.string().optional(),
+    ebuTargetLufs: z.number().min(-70).max(0).optional(),
+    truePeakCeilingDb: z.number().min(-20).max(0).optional(),
+    exportAdmBwfXml: z.boolean().optional(),
   }),
   [IPC_CHANNELS.SEQUENCE_CANCEL_RENDER]: z.void(),
   [IPC_CHANNELS.SEQUENCE_ACTIVE_RENDER]: z.void(),
   [IPC_CHANNELS.SEQUENCE_CHOOSE_EXPORT_PATH]: z.object({
     suggestedName: z.string().min(1).max(MAX_SEQUENCE_NAME_LENGTH),
-    format: z.enum(['mp4', 'm4a', 'gif', 'webm', 'apng', 'png']).optional(),
+    format: z.enum(['mp4', 'm4a', 'wav', 'gif', 'webm', 'apng', 'png', 'prores', 'dnxhd', 'hevc']).optional(),
   }),
   [IPC_CHANNELS.SEQUENCE_EXPORT_OTIO]: z.object({ sequenceId: z.string().min(1) }),
   [IPC_CHANNELS.SEQUENCE_EXPORT_TIMELINE_SETUP]: z.object({ sequenceId: z.string().min(1) }),
@@ -275,6 +308,34 @@ export const IPC_SCHEMAS = {
     sourcePath: z.string().min(1),
     atSeconds: z.number().min(0),
     sequenceId: z.string().optional(),
+  }),
+  [IPC_CHANNELS.SEQUENCE_CREATE_TRACK_FOLDER]: z.object({
+    sequenceId: z.string().min(1),
+    name: z.string().min(1).max(MAX_SEQUENCE_NAME_LENGTH),
+    kind: z.enum(TRACK_KINDS),
+    color: z.string().nullable().optional(),
+    parentFolderId: z.string().nullable().optional(),
+  }),
+  [IPC_CHANNELS.SEQUENCE_UPDATE_TRACK_FOLDER]: z.object({
+    sequenceId: z.string().min(1),
+    folderId: z.string().min(1),
+    name: z.string().min(1).max(MAX_SEQUENCE_NAME_LENGTH).optional(),
+    collapsed: z.boolean().optional(),
+    muted: z.boolean().optional(),
+    locked: z.boolean().optional(),
+    visible: z.boolean().optional(),
+    color: z.string().nullable().optional(),
+    parentFolderId: z.string().nullable().optional(),
+    audioBusId: z.string().nullable().optional(),
+  }),
+  [IPC_CHANNELS.SEQUENCE_DELETE_TRACK_FOLDER]: z.object({
+    sequenceId: z.string().min(1),
+    folderId: z.string().min(1),
+  }),
+  [IPC_CHANNELS.SEQUENCE_SET_TRACK_FOLDER]: z.object({
+    sequenceId: z.string().min(1),
+    trackId: z.string().min(1),
+    folderId: z.string().nullable(),
   }),
 
   // Projects

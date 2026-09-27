@@ -462,3 +462,102 @@ export function generateSpatialStageSvgMarkup(
 
   return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${elements.join('')}</svg>`;
 }
+
+/**
+ * Synthesizes an FFmpeg `pan=7.1.4|...` audio filter string from Atmos 7.1.4 bed gains.
+ *
+ * Maps spatial speaker bed gains to standard 12-channel 7.1.4 layout:
+ * c0=FL, c1=FR, c2=FC, c3=LFE, c4=BL, c5=BR, c6=SL, c7=SR, c8=TFL, c9=TFR, c10=TBL, c11=TBR.
+ *
+ * @param gains Partial or complete Atmos 7.1.4 gains for each speaker channel.
+ * @param isStereo If true, routes left input (c0) to left speakers, right input (c1) to right speakers,
+ *                 and sums/halves for center and LFE. If false, treats input as mono (c0).
+ */
+export function buildAtmos714PanFilter(
+  gains: Partial<Atmos714PanGains>,
+  isStereo: boolean = false
+): string {
+  const g = {
+    L: Number((gains.L ?? 0).toFixed(5)),
+    R: Number((gains.R ?? 0).toFixed(5)),
+    C: Number((gains.C ?? 0).toFixed(5)),
+    LFE: Number((gains.LFE ?? 0).toFixed(5)),
+    Lb: Number((gains.Lb ?? 0).toFixed(5)),
+    Rb: Number((gains.Rb ?? 0).toFixed(5)),
+    Ls: Number((gains.Ls ?? 0).toFixed(5)),
+    Rs: Number((gains.Rs ?? 0).toFixed(5)),
+    Tfl: Number((gains.Tfl ?? 0).toFixed(5)),
+    Tfr: Number((gains.Tfr ?? 0).toFixed(5)),
+    Tbl: Number((gains.Tbl ?? 0).toFixed(5)),
+    Tbr: Number((gains.Tbr ?? 0).toFixed(5)),
+  };
+
+  if (!isStereo) {
+    return [
+      `pan=7.1.4`,
+      `c0=${g.L}*c0`,
+      `c1=${g.R}*c0`,
+      `c2=${g.C}*c0`,
+      `c3=${g.LFE}*c0`,
+      `c4=${g.Lb}*c0`,
+      `c5=${g.Rb}*c0`,
+      `c6=${g.Ls}*c0`,
+      `c7=${g.Rs}*c0`,
+      `c8=${g.Tfl}*c0`,
+      `c9=${g.Tfr}*c0`,
+      `c10=${g.Tbl}*c0`,
+      `c11=${g.Tbr}*c0`,
+    ].join('|');
+  }
+
+  // Stereo input: c0 is Left, c1 is Right
+  const halfC = Number((g.C * 0.5).toFixed(5));
+  const halfLFE = Number((g.LFE * 0.5).toFixed(5));
+
+  return [
+    `pan=7.1.4`,
+    `c0=${g.L}*c0`,
+    `c1=${g.R}*c1`,
+    `c2=${halfC}*c0+${halfC}*c1`,
+    `c3=${halfLFE}*c0+${halfLFE}*c1`,
+    `c4=${g.Lb}*c0`,
+    `c5=${g.Rb}*c1`,
+    `c6=${g.Ls}*c0`,
+    `c7=${g.Rs}*c1`,
+    `c8=${g.Tfl}*c0`,
+    `c9=${g.Tfr}*c1`,
+    `c10=${g.Tbl}*c0`,
+    `c11=${g.Tbr}*c1`,
+  ].join('|');
+}
+
+/**
+ * Synthesizes an FFmpeg binaural HRTF filter chain (`pan`, `adelay`, `equalizer`).
+ *
+ * Implements Woodworth-Schlosser interaural time delay (ITD), interaural level difference (ILD),
+ * and pinna elevation spectral notch filtering for headphone spatialization.
+ *
+ * @param cues Calculated binaural cues containing delays, gains, and pinna notch frequency.
+ * @param isStereo If true, treats input as stereo (c0=L, c1=R); if false, treats input as mono (c0).
+ */
+export function buildBinauralHrtfFilter(
+  cues: BinauralCues,
+  isStereo: boolean = false
+): string {
+  const gL = Number(cues.gainLeft.toFixed(5));
+  const gR = Number(cues.gainRight.toFixed(5));
+  const panFilter = isStereo
+    ? `pan=stereo|c0=${gL}*c0|c1=${gR}*c1`
+    : `pan=stereo|c0=${gL}*c0|c1=${gR}*c0`;
+
+  // adelay takes delay in milliseconds per channel: delayL|delayR
+  const delayL = Math.max(0, Math.round(cues.delayLeftS * 1000 * 100) / 100);
+  const delayR = Math.max(0, Math.round(cues.delayRightS * 1000 * 100) / 100);
+  const delayFilter = `adelay=${delayL}|${delayR}`;
+
+  // Pinna notch filter at elevation center frequency
+  const notchHz = Math.round(cues.pinnaNotchHz);
+  const eqFilter = `equalizer=f=${notchHz}:t=q:w=2.0:g=-6`;
+
+  return `${panFilter},${delayFilter},${eqFilter}`;
+}
