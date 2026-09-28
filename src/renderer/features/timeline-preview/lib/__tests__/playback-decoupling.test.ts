@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   clipAtFrame,
   clipSpeed,
+  DEFAULT_FILM_EMULATION_SETTINGS,
   framesToSeconds,
   layoutTrack,
   type PlacedClip,
@@ -398,17 +399,8 @@ describe('Milestone S162: Playback Decoupling, Hardware Video Clock & Anti-Seek 
           ...clipA,
           effects: {
             filmEmulation: {
+              ...DEFAULT_FILM_EMULATION_SETTINGS,
               enabled: true,
-              stock: 'kodak_portra_400' as const,
-              grainIntensity: 0.5,
-              grainSize: 1.0,
-              halationSpread: 0.3,
-              halationColor: [1, 0, 0] as [number, number, number],
-              bloomIntensity: 0.2,
-              halationEnabled: true,
-              bloomEnabled: true,
-              filmGateWeave: 0.1,
-              gateWeaveSpeed: 1.0,
             },
           },
         },

@@ -36,6 +36,7 @@ import { Switch } from '../../../shared/ui/Switch';
 import { useAudioMixerStore } from '../model/audioMixerStore';
 import { LoudnessRadarModal } from './LoudnessRadarModal';
 import { ParametricEqEditor } from './ParametricEqEditor';
+import { SpatialPannerModal } from './SpatialPannerModal';
 
 export function AudioMixerDock() {
   const isOpen = useAudioMixerStore((state) => state.isOpen);
@@ -106,6 +107,13 @@ function AudioMixerDockContent() {
   const resetMasterCompressor = useAudioMixerStore((state) => state.resetMasterCompressor);
   const showMasterCompressor = useAudioMixerStore((state) => state.showMasterCompressor);
   const setShowMasterCompressor = useAudioMixerStore((state) => state.setShowMasterCompressor);
+
+  // S172 — Studio Spatial 3D Audio Store Selectors
+  const trackSpatial = useAudioMixerStore((state) => state.trackSpatial);
+  const activeSpatialTrackId = useAudioMixerStore((state) => state.activeSpatialTrackId);
+  const setActiveSpatialTrackId = useAudioMixerStore((state) => state.setActiveSpatialTrackId);
+  const showSpatialPanner = useAudioMixerStore((state) => state.showSpatialPanner);
+  const setShowSpatialPanner = useAudioMixerStore((state) => state.setShowSpatialPanner);
 
   // Active solos check
   const mixerSolos = useMemo(
@@ -358,6 +366,21 @@ function AudioMixerDockContent() {
           >
             <span className="material-symbols-outlined text-[13px]">radar</span>
             <span>Loudness Radar</span>
+          </Button>
+
+          {/* S172 — Studio Spatial 3D Audio & Binaural Soundstage Panner */}
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-5 px-2 text-[10px] font-mono flex items-center gap-1 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10"
+            onClick={() => {
+              setActiveSpatialTrackId(tracks[0]?.id ?? null);
+              setShowSpatialPanner(true);
+            }}
+            title="Open Studio Spatial 3D Audio & Binaural Soundstage Panner"
+          >
+            <span className="material-symbols-outlined text-[13px]">spatial_audio</span>
+            <span>3D Spatial</span>
           </Button>
 
           <Button
@@ -1184,8 +1207,8 @@ function AudioMixerDockContent() {
                 />
               </div>
 
-              {/* Mute, Solo, EQ & Dynamics Buttons */}
-              <div className="grid grid-cols-4 gap-1 mt-1">
+              {/* Mute, Solo, EQ, Dynamics & 3D Spatial Buttons */}
+              <div className="grid grid-cols-5 gap-0.5 mt-1">
                 <button
                   type="button"
                   onClick={() => toggleTrackMute(track.id)}
@@ -1237,6 +1260,21 @@ function AudioMixerDockContent() {
                   title="Open Dynamics Processor (Compressor & Limiter)"
                 >
                   DYN
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveSpatialTrackId(track.id);
+                    setShowSpatialPanner(true);
+                  }}
+                  className={`rounded py-0.5 text-center font-mono text-[8.5px] font-bold transition-all ${
+                    trackSpatial[track.id]?.enabled
+                      ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50 shadow-xs'
+                      : 'border border-hairline bg-bg-app text-text-disabled hover:text-text-primary'
+                  }`}
+                  title={`Open 3D Spatial Panner for ${track.name} (${trackSpatial[track.id]?.enabled ? `${trackSpatial[track.id].azimuthDeg}°` : 'Stereo'})`}
+                >
+                  3D
                 </button>
               </div>
             </div>
@@ -1576,6 +1614,14 @@ function AudioMixerDockContent() {
 
       {showLoudnessRadar && (
         <LoudnessRadarModal open={showLoudnessRadar} onClose={() => setShowLoudnessRadar(false)} />
+      )}
+
+      {showSpatialPanner && (
+        <SpatialPannerModal
+          open={showSpatialPanner}
+          onClose={() => setShowSpatialPanner(false)}
+          initialTrackId={activeSpatialTrackId}
+        />
       )}
     </div>
   );

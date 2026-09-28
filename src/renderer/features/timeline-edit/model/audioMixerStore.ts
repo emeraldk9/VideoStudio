@@ -9,6 +9,11 @@ import {
   COMPRESSOR_PRESETS,
   type SubmixBusState,
   createDefaultSubmixBusState,
+  type SpatialAudioConfig,
+  DEFAULT_SPATIAL_AUDIO_CONFIG,
+  type TrackSpatialSettings,
+  DEFAULT_TRACK_SPATIAL_SETTINGS,
+  validateSpatialAudioConfig,
 } from '@shared';
 
 export interface TrackMixerState {
@@ -74,6 +79,18 @@ export interface AudioMixerState {
   resetMasterCompressor: () => void;
   showMasterCompressor: boolean;
   setShowMasterCompressor: (show: boolean) => void;
+
+  // S172 — Studio Spatial 3D Audio & Binaural Soundstage Panner
+  spatialConfig: SpatialAudioConfig;
+  setSpatialConfig: (patch: Partial<SpatialAudioConfig>) => void;
+  resetSpatialConfig: () => void;
+  trackSpatial: Record<string, TrackSpatialSettings>;
+  setTrackSpatial: (trackId: string, patch: Partial<TrackSpatialSettings>) => void;
+  resetTrackSpatial: (trackId: string) => void;
+  activeSpatialTrackId: string | null;
+  setActiveSpatialTrackId: (trackId: string | null) => void;
+  showSpatialPanner: boolean;
+  setShowSpatialPanner: (show: boolean) => void;
 }
 
 export const useAudioMixerStore = create<AudioMixerState>((set) => ({
@@ -347,4 +364,45 @@ export const useAudioMixerStore = create<AudioMixerState>((set) => ({
     }),
   showMasterCompressor: false,
   setShowMasterCompressor: (showMasterCompressor) => set({ showMasterCompressor }),
+
+  // S172 — Studio Spatial 3D Audio & Binaural Soundstage Panner
+  spatialConfig: { ...DEFAULT_SPATIAL_AUDIO_CONFIG },
+  setSpatialConfig: (patch) =>
+    set((state) => ({
+      spatialConfig: validateSpatialAudioConfig({ ...state.spatialConfig, ...patch }),
+    })),
+  resetSpatialConfig: () =>
+    set({
+      spatialConfig: { ...DEFAULT_SPATIAL_AUDIO_CONFIG },
+    }),
+
+  trackSpatial: {},
+  setTrackSpatial: (trackId, patch) =>
+    set((state) => {
+      const current = state.trackSpatial[trackId] ?? { ...DEFAULT_TRACK_SPATIAL_SETTINGS };
+      return {
+        trackSpatial: {
+          ...state.trackSpatial,
+          [trackId]: {
+            ...current,
+            ...patch,
+            azimuthDeg: patch.azimuthDeg !== undefined ? Math.max(-180, Math.min(180, patch.azimuthDeg)) : current.azimuthDeg,
+            elevationDeg: patch.elevationDeg !== undefined ? Math.max(-90, Math.min(90, patch.elevationDeg)) : current.elevationDeg,
+            distanceM: patch.distanceM !== undefined ? Math.max(0.2, Math.min(20, patch.distanceM)) : current.distanceM,
+            spreadDeg: patch.spreadDeg !== undefined ? Math.max(0, Math.min(180, patch.spreadDeg)) : current.spreadDeg,
+          },
+        },
+      };
+    }),
+  resetTrackSpatial: (trackId) =>
+    set((state) => {
+      const next = { ...state.trackSpatial };
+      delete next[trackId];
+      return { trackSpatial: next };
+    }),
+
+  activeSpatialTrackId: null,
+  setActiveSpatialTrackId: (activeSpatialTrackId) => set({ activeSpatialTrackId }),
+  showSpatialPanner: false,
+  setShowSpatialPanner: (showSpatialPanner) => set({ showSpatialPanner }),
 }));

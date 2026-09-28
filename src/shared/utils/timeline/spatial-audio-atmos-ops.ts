@@ -81,6 +81,44 @@ export function validateSpatialAudioConfig(
   };
 }
 
+export interface TrackSpatialSettings {
+  enabled: boolean;
+  azimuthDeg: number;   // -180 to +180 deg (0 = center front, 90 = right, -90 = left, 180 = rear)
+  elevationDeg: number; // -90 to +90 deg (0 = ear-level, >0 = overhead)
+  distanceM: number;    // 0.5m to 20m (default 2.0m)
+  spreadDeg: number;    // 0 to 180 deg (radiation angle / beamwidth)
+}
+
+export const DEFAULT_TRACK_SPATIAL_SETTINGS: TrackSpatialSettings = {
+  enabled: false,
+  azimuthDeg: 0,
+  elevationDeg: 0,
+  distanceM: 2.0,
+  spreadDeg: 30,
+};
+
+/**
+ * Converts spherical coordinates (azimuth, elevation, distance) to 3D Cartesian coordinates [x, y, z] relative to listener.
+ */
+export function sphericalToCartesian3D(
+  azimuthDeg: number,
+  elevationDeg: number,
+  distanceM: number,
+  listenerPos: [number, number, number] = [0, 0, 1.2]
+): [number, number, number] {
+  const theta = (azimuthDeg * Math.PI) / 180;
+  const phi = (elevationDeg * Math.PI) / 180;
+  const cosPhi = Math.cos(phi);
+  const x = listenerPos[0] + distanceM * Math.sin(theta) * cosPhi;
+  const y = listenerPos[1] + distanceM * Math.cos(theta) * cosPhi;
+  const z = listenerPos[2] + distanceM * Math.sin(phi);
+  return [
+    Math.round(x * 10000) / 10000,
+    Math.round(y * 10000) / 10000,
+    Math.round(z * 10000) / 10000,
+  ];
+}
+
 export interface SpatialSource {
   sourceId: string;
   name: string;
@@ -284,6 +322,74 @@ export function computeAtmos714Pan(
   }
 
   return result as Atmos714PanGains;
+}
+
+export type Surround51SpeakerName = 'L' | 'R' | 'C' | 'LFE' | 'Ls' | 'Rs';
+export type Surround51PanGains = Record<Surround51SpeakerName, number>;
+
+export const SURROUND_51_SPEAKER_COORDS: Record<Surround51SpeakerName, [number, number]> = {
+  L: [-30.0, 0.0],
+  R: [30.0, 0.0],
+  C: [0.0, 0.0],
+  LFE: [0.0, -10.0],
+  Ls: [-110.0, 0.0],
+  Rs: [110.0, 0.0],
+};
+
+/**
+ * Computes energy-normalized 5.1 surround speaker gains for a given 3D source position.
+ */
+export function computeSurround51Pan(
+  sourcePos: [number, number, number],
+  config?: SpatialAudioConfig,
+  spreadDeg: number = 0.0
+): Surround51PanGains {
+  const cfg = config || DEFAULT_SPATIAL_AUDIO_CONFIG;
+  const { theta, phi, dist } = computeRelativeAnglesAndDistance(sourcePos, cfg.listenerPos);
+
+  const srcAzDeg = (theta * 180.0) / Math.PI;
+  const srcElDeg = (phi * 180.0) / Math.PI;
+
+  const refD = Math.max(0.1, cfg.referenceDistanceM);
+  const distClamped = Math.max(refD, dist);
+  const distanceGain = 1.0 / Math.pow(distClamped / refD, cfg.distanceFalloffExponent);
+
+  const weights: Record<string, number> = {};
+  const effectiveSpread = Math.max(20.0, spreadDeg + 35.0);
+
+  for (const [chName, [spkAz, spkEl]] of Object.entries(SURROUND_51_SPEAKER_COORDS)) {
+    if (chName === 'LFE') {
+      weights[chName] = 0.05;
+      continue;
+    }
+
+    const dAz = ((srcAzDeg - spkAz + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
+    const dEl = srcElDeg - spkEl;
+    const angDist = Math.sqrt(dAz * dAz + dEl * dEl);
+
+    const w = Math.exp(-0.5 * Math.pow(angDist / effectiveSpread, 2));
+    weights[chName] = Math.max(1e-6, w);
+  }
+
+  let sumSq = 0.0;
+  for (const [ch, w] of Object.entries(weights)) {
+    if (ch !== 'LFE') {
+      sumSq += w * w;
+    }
+  }
+  const normFactor = 1.0 / Math.sqrt(Math.max(1e-9, sumSq));
+
+  const result: Partial<Surround51PanGains> = {};
+  for (const [ch, w] of Object.entries(weights)) {
+    const key = ch as Surround51SpeakerName;
+    if (key === 'LFE') {
+      result[key] = Math.round(w * distanceGain * 100000) / 100000;
+    } else {
+      result[key] = Math.round(w * normFactor * distanceGain * 100000) / 100000;
+    }
+  }
+
+  return result as Surround51PanGains;
 }
 
 /**
@@ -560,4 +666,40 @@ export function buildBinauralHrtfFilter(
   const eqFilter = `equalizer=f=${notchHz}:t=q:w=2.0:g=-6`;
 
   return `${panFilter},${delayFilter},${eqFilter}`;
+}
+
+/**
+ * Synthesizes an FFmpeg 5.1 surround pan filter expression.
+ */
+export function buildSurround51PanFilter(
+  gains: Surround51PanGains,
+  isStereo: boolean = false
+): string {
+  const g = gains;
+  if (!isStereo) {
+    // Mono input: c0
+    return [
+      `pan=5.1`,
+      `c0=${g.L}*c0`,
+      `c1=${g.R}*c0`,
+      `c2=${g.C}*c0`,
+      `c3=${g.LFE}*c0`,
+      `c4=${g.Ls}*c0`,
+      `c5=${g.Rs}*c0`,
+    ].join('|');
+  }
+
+  // Stereo input: c0 is Left, c1 is Right
+  const halfC = Number((g.C * 0.5).toFixed(5));
+  const halfLFE = Number((g.LFE * 0.5).toFixed(5));
+
+  return [
+    `pan=5.1`,
+    `c0=${g.L}*c0`,
+    `c1=${g.R}*c1`,
+    `c2=${halfC}*c0+${halfC}*c1`,
+    `c3=${halfLFE}*c0+${halfLFE}*c1`,
+    `c4=${g.Ls}*c0`,
+    `c5=${g.Rs}*c1`,
+  ].join('|');
 }

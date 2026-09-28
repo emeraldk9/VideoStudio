@@ -4,3 +4,4 @@ export { TimelineToolbar } from './ui/TimelineToolbar';
 export { AudioMixerDock } from './ui/AudioMixerDock';
 export { useAudioMixerStore } from './model/audioMixerStore';
 export { chooseTickSeconds } from './ui/TimelineRuler';
+export { SpatialPannerModal } from './ui/SpatialPannerModal';
