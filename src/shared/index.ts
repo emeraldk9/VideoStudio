@@ -149,6 +149,7 @@ export * from './utils/timeline/marker-navigation-ops';
 export * from './utils/timeline/scopes-customization-ops';
 export * from './utils/timeline/marquee-selection-ops';
 export * from './utils/timeline/audio-deesser-notch-ops';
+export * from './utils/timeline/rhythmic-beat-grid-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

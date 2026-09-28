@@ -26,6 +26,7 @@ import {
   splitAtFrame,
   timelineSnapTargets,
   buildSnapTargetsWithMeta,
+  buildRhythmicSnapTargetEntries,
   executeRippleTrim,
   executeRollingEdit,
   slipClipMedia,
@@ -234,6 +235,7 @@ export function TimelinePanel() {
   const soloTrackIds = useSequenceStore((state) => state.soloTrackIds);
   const snapEnabled = useSequenceStore((state) => state.snapEnabled);
   const snapToBeats = useSequenceStore((state) => state.snapToBeats);
+  const rhythmicGrid = useSequenceStore((state) => state.rhythmicGrid);
   const markersForTargets = useSequenceStore((state) => state.markers);
   const inPointFrame = useSequenceStore((state) => state.inPointFrame);
   const outPointFrame = useSequenceStore((state) => state.outPointFrame);
@@ -242,6 +244,19 @@ export function TimelinePanel() {
   const selectionSummary = useMemo(
     () => calculateSelectionSummary(selectedClipIds, clips, fps),
     [selectedClipIds, clips, fps],
+  );
+
+  /** S184: Rhythmic musical beat grid snap targets */
+  const rhythmicSnapTargets = useMemo(() => {
+    if (!rhythmicGrid?.enabled || rhythmicGrid.resolution === 'off') {
+      return [];
+    }
+    return buildRhythmicSnapTargetEntries(rhythmicGrid, 0, Math.max(durationFrames, 300), fps);
+  }, [rhythmicGrid, durationFrames, fps]);
+
+  const rhythmicFrames = useMemo(
+    () => rhythmicSnapTargets.map((t) => t.frame),
+    [rhythmicSnapTargets],
   );
 
   /**
@@ -255,43 +270,47 @@ export function TimelinePanel() {
     () => markersForTargets.map((marker) => marker.frame),
     [markersForTargets],
   );
+  const allMarkerFrames = useMemo(
+    () => (rhythmicFrames.length > 0 ? [...markerFrames, ...rhythmicFrames] : markerFrames),
+    [markerFrames, rhythmicFrames],
+  );
   const staticTargets = useMemo(
     () =>
       timelineSnapTargets({
         base: clipTargets,
-        markerFrames,
+        markerFrames: allMarkerFrames,
         playheadFrame: null,
         sequenceEndFrame: durationFrames,
         inPointFrame,
         outPointFrame,
       }),
-    [clipTargets, markerFrames, durationFrames, inPointFrame, outPointFrame],
+    [clipTargets, allMarkerFrames, durationFrames, inPointFrame, outPointFrame],
   );
   const moveTargets = useMemo(
     () =>
       timelineSnapTargets({
         base: clipTargets,
-        markerFrames,
+        markerFrames: allMarkerFrames,
         playheadFrame,
         sequenceEndFrame: durationFrames,
         inPointFrame,
         outPointFrame,
       }),
-    [clipTargets, markerFrames, playheadFrame, durationFrames, inPointFrame, outPointFrame],
+    [clipTargets, allMarkerFrames, playheadFrame, durationFrames, inPointFrame, outPointFrame],
   );
-  const metaSnapTargets = useMemo(
-    () =>
-      buildSnapTargetsWithMeta({
-        tracks,
-        clips,
-        markers: markersForTargets,
-        playheadFrame,
-        inPointFrame,
-        outPointFrame,
-        sequenceEndFrame: durationFrames,
-      }),
-    [tracks, clips, markersForTargets, playheadFrame, inPointFrame, outPointFrame, durationFrames],
-  );
+  const metaSnapTargets = useMemo(() => {
+    const base = buildSnapTargetsWithMeta({
+      tracks,
+      clips,
+      markers: markersForTargets,
+      playheadFrame,
+      inPointFrame,
+      outPointFrame,
+      sequenceEndFrame: durationFrames,
+    });
+    if (rhythmicSnapTargets.length === 0) return base;
+    return [...base, ...rhythmicSnapTargets].sort((a, b) => a.frame - b.frame);
+  }, [tracks, clips, markersForTargets, playheadFrame, inPointFrame, outPointFrame, durationFrames, rhythmicSnapTargets]);
 
   /**
    * `Shift`+`Z` — fit the sequence to the panel.
@@ -2510,6 +2529,7 @@ export function TimelinePanel() {
                 fps={fps}
                 pixelsPerSecond={pixelsPerSecond}
                 widthPx={widthPx}
+                rhythmicGrid={rhythmicGrid}
               />
 
               {/* S20 — Work Area highlight band on ruler */}

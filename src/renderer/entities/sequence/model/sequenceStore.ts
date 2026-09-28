@@ -42,6 +42,10 @@ import {
   estimateBpmFromOnsets,
   generateSyntheticBeatWaveform,
   type BeatMarkerOptions,
+  type RhythmicGridConfig,
+  type RhythmicGridResolution,
+  DEFAULT_RHYTHMIC_GRID_CONFIG,
+  clampRhythmicGridConfig,
 } from '@shared';
 
 import { readLocalSetting, writeLocalSetting } from '../../../shared/lib/localSetting';
@@ -273,6 +277,11 @@ export interface SequenceState {
   snapToBeats: boolean;
   toggleSnapToBeats: () => void;
   setSnapToBeats: (enabled: boolean) => void;
+  /** S184 — Audio Transient Beat Snap & Rhythmic Grid Alignment Engine */
+  rhythmicGrid: RhythmicGridConfig;
+  setRhythmicGrid: (patch: Partial<RhythmicGridConfig>) => void;
+  setRhythmicResolution: (resolution: RhythmicGridResolution) => void;
+  setRhythmicBpm: (bpm: number) => void;
   runSceneCutDetectionOnClip: (
     clipId: string,
     settings?: Partial<SceneCutDetectionSettings>,
@@ -1071,8 +1080,51 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
   },
 
   snapToBeats: false,
-  toggleSnapToBeats: () => set((state) => ({ snapToBeats: !state.snapToBeats })),
-  setSnapToBeats: (enabled) => set({ snapToBeats: enabled }),
+  toggleSnapToBeats: () =>
+    set((state) => {
+      const nextSnap = !state.snapToBeats;
+      return {
+        snapToBeats: nextSnap,
+        rhythmicGrid: {
+          ...state.rhythmicGrid,
+          enabled: nextSnap,
+        },
+      };
+    }),
+  setSnapToBeats: (enabled) =>
+    set((state) => ({
+      snapToBeats: enabled,
+      rhythmicGrid: {
+        ...state.rhythmicGrid,
+        enabled,
+      },
+    })),
+
+  /** S184 — Audio Transient Beat Snap & Rhythmic Grid Alignment Engine */
+  rhythmicGrid: { ...DEFAULT_RHYTHMIC_GRID_CONFIG },
+  setRhythmicGrid: (patch) =>
+    set((state) => ({
+      rhythmicGrid: clampRhythmicGridConfig({ ...state.rhythmicGrid, ...patch }),
+    })),
+  setRhythmicResolution: (resolution) =>
+    set((state) => {
+      const enabled = resolution !== 'off';
+      return {
+        snapToBeats: enabled,
+        rhythmicGrid: {
+          ...state.rhythmicGrid,
+          resolution,
+          enabled,
+        },
+      };
+    }),
+  setRhythmicBpm: (bpm) =>
+    set((state) => ({
+      rhythmicGrid: {
+        ...state.rhythmicGrid,
+        bpm: Math.max(20, Math.min(320, bpm)),
+      },
+    })),
 
   runSceneCutDetectionOnClip: async (clipId, settings) => {
     const { document } = get();
@@ -1144,6 +1196,13 @@ export const useSequenceStore = create<SequenceState>((set, get) => ({
     });
 
     const bpmResult = estimateBpmFromOnsets(detected, fps);
+    set((state) => ({
+      rhythmicGrid: {
+        ...state.rhythmicGrid,
+        bpm: bpmResult.bpm,
+      },
+    }));
+
     const markers = generateBeatGridMarkers(document.sequence.id, detected, fps, {
       ...options,
       bpm: bpmResult.bpm,

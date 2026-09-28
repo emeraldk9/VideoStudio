@@ -1,19 +1,12 @@
-import { formatTimecode } from '@shared';
+import { formatTimecode, generateRhythmicGridPoints, type RhythmicGridConfig } from '@shared';
 
 export interface TimelineRulerProps {
   durationFrames: number;
   fps: number;
   pixelsPerSecond: number;
-  /**
-   * Beta S154 (B4) — the width the lanes render at, so the scale and the
-   * troughs are one surface. The ruler used to size itself from the sequence
-   * duration while the lanes clamped to `Math.max(600, …)`, so on a short
-   * sequence the ruler ended at 0:02, the troughs at 600px, and neither
-   * reached the panel's edge. Ticks continue past the sequence end — empty
-   * timeline is still addressable time, which is what makes dropping a clip
-   * out there feel sane.
-   */
   widthPx: number;
+  /** S184 — Optional musical rhythmic quantization grid. */
+  rhythmicGrid?: RhythmicGridConfig;
 }
 
 /**
@@ -80,7 +73,13 @@ export function chooseSubTickSeconds(pixelsPerSecond: number, fps: number): numb
   return minor * pixelsPerSecond >= MIN_SUBTICK_SPACING_PX ? minor : null;
 }
 
-export function TimelineRuler({ durationFrames, fps, pixelsPerSecond, widthPx }: TimelineRulerProps) {
+export function TimelineRuler({
+  durationFrames,
+  fps,
+  pixelsPerSecond,
+  widthPx,
+  rhythmicGrid,
+}: TimelineRulerProps) {
   // Ticks span the rendered width, not just the sequence — see `widthPx`.
   const totalSeconds = Math.max(1, durationFrames / fps, widthPx / pixelsPerSecond);
   const tickSeconds = chooseTickSeconds(pixelsPerSecond);
@@ -131,6 +130,32 @@ export function TimelineRuler({ durationFrames, fps, pixelsPerSecond, widthPx }:
                 className="absolute bottom-0 h-1.5 w-px bg-hairline opacity-60"
                 style={{ left: seconds * pixelsPerSecond }}
               />
+            );
+          })
+        : null}
+
+      {/* S184 — Musical Rhythmic Beat Grid Ticks on Ruler */}
+      {rhythmicGrid?.enabled && rhythmicGrid.resolution !== 'off' && rhythmicGrid.showGridLines
+        ? generateRhythmicGridPoints(rhythmicGrid, 0, totalSeconds * fps, fps, 300).map((pt) => {
+            const leftPx = (pt.frame / fps) * pixelsPerSecond;
+            if (leftPx > widthPx) return null;
+            return (
+              <div
+                key={`rhythm-${pt.frame}`}
+                className="pointer-events-none absolute top-0 flex flex-col items-center select-none"
+                style={{ left: leftPx }}
+              >
+                {pt.isDownbeat ? (
+                  <span className="h-2 w-[1.5px] bg-cyan-400 shadow-[0_0_4px_rgba(6,182,212,0.6)]" />
+                ) : (
+                  <span className="h-1 w-px bg-cyan-400/40" />
+                )}
+                {pt.isDownbeat && (
+                  <span className="font-mono text-[8px] font-bold text-cyan-400/90 leading-none mt-0.5">
+                    {pt.bar}
+                  </span>
+                )}
+              </div>
             );
           })
         : null}

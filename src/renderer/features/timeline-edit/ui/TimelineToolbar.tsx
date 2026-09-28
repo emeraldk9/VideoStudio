@@ -27,6 +27,7 @@ import {
   computeSubmixBusLevels,
   computeMasterWithBuses,
   type StereoMeterLevels,
+  type RhythmicGridResolution,
 } from '@shared';
 
 import { currentPlayheadFrame, useSequenceStore } from '../../../entities/sequence';
@@ -208,6 +209,9 @@ export function TimelineToolbar() {
   const setSnapEnabled = useSequenceStore((state) => state.setSnapEnabled);
   const snapToBeats = useSequenceStore((state) => state.snapToBeats);
   const toggleSnapToBeats = useSequenceStore((state) => state.toggleSnapToBeats);
+  const rhythmicGrid = useSequenceStore((state) => state.rhythmicGrid);
+  const setRhythmicResolution = useSequenceStore((state) => state.setRhythmicResolution);
+  const setRhythmicBpm = useSequenceStore((state) => state.setRhythmicBpm);
   const magneticTimelineEnabled = useSequenceStore((state) => state.magneticTimelineEnabled);
   const toggleMagneticTimeline = useSequenceStore((state) => state.toggleMagneticTimeline);
   const requestFit = useSequenceStore((state) => state.requestFit);
@@ -817,6 +821,44 @@ export function TimelineToolbar() {
         size="sm"
         onClick={() => toggleSnapToBeats()}
       />
+
+      {/* S184 — Rhythmic Beat Grid & Quantization Resolution Selector */}
+      <div className="flex items-center gap-1 rounded border border-hairline bg-bg-surface/80 px-1.5 py-0.5 text-[11px] font-mono">
+        <span className="text-[10px] text-text-disabled pl-0.5 select-none" title="Musical Quantization Grid">Grid:</span>
+        <select
+          value={rhythmicGrid?.resolution ?? '1_4'}
+          onChange={(e) => setRhythmicResolution(e.target.value as RhythmicGridResolution)}
+          title="Timeline Rhythmic Beat Grid Quantization Resolution"
+          aria-label="Timeline Rhythmic Beat Grid Quantization Resolution"
+          className="bg-transparent text-text-primary text-[10px] cursor-pointer outline-none hover:text-cyan-400 focus:text-cyan-400"
+        >
+          <option value="off" className="bg-bg-app text-text-primary">Off (Free)</option>
+          <option value="1_bar" className="bg-bg-app text-text-primary">1 Bar (Measure)</option>
+          <option value="1_2" className="bg-bg-app text-text-primary">1/2 Note</option>
+          <option value="1_4" className="bg-bg-app text-text-primary">1/4 Note (Beat)</option>
+          <option value="1_8" className="bg-bg-app text-text-primary">1/8 Note</option>
+          <option value="1_16" className="bg-bg-app text-text-primary">1/16 Note</option>
+          <option value="1_32" className="bg-bg-app text-text-primary">1/32 Note</option>
+          <option value="1_8_triplet" className="bg-bg-app text-text-primary">1/8 Triplet</option>
+          <option value="1_16_triplet" className="bg-bg-app text-text-primary">1/16 Triplet</option>
+        </select>
+
+        {rhythmicGrid?.enabled && rhythmicGrid.resolution !== 'off' && (
+          <div className="flex items-center gap-1 pl-1 border-l border-hairline">
+            <input
+              type="number"
+              min={30}
+              max={300}
+              value={rhythmicGrid.bpm}
+              onChange={(e) => setRhythmicBpm(Number(e.target.value))}
+              title="Tempo (BPM)"
+              aria-label="Tempo (BPM)"
+              className="w-8 bg-transparent text-[10px] text-cyan-400 font-mono text-center outline-none hover:bg-bg-app/50 focus:bg-bg-app rounded"
+            />
+            <span className="text-[9px] text-text-disabled pr-0.5 select-none">BPM</span>
+          </div>
+        )}
+      </div>
 
       {/* S169 — Multi-Track Magnetic Timeline Mode */}
       <IconButton

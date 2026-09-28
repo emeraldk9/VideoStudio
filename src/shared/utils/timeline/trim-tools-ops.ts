@@ -22,6 +22,7 @@ export interface SnapTargetEntry {
   frame: number;
   type: SnapTargetType;
   label: string;
+  priority?: number;
 }
 
 export interface SnapMetaResult {
