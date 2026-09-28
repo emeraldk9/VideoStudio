@@ -1042,6 +1042,8 @@ export interface SequenceRenderRequest {
   ebuTargetLufs?: number;
   /** S157 — True peak ceiling in dBTP (default -1.0 dBTP). Used when ebuTargetLufs is set. */
   truePeakCeilingDb?: number;
+  /** S186 — Target Loudness Range (LRA) in LU (default 11.0 LU). Used when ebuTargetLufs is set. */
+  ebuTargetLra?: number;
   /** S157 — Export ITU-R BS.2076 Audio Definition Model (ADM) companion BWF XML metadata. */
   exportAdmBwfXml?: boolean;
 }

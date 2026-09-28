@@ -28,6 +28,8 @@ import {
   calculateBatchEstimatedDuration,
   formatBatchSummary,
   type MultiFormatProfileId,
+  LOUDNESS_TARGET_PRESETS,
+  type StandardLoudnessPresetKey,
 } from '@shared';
 
 import { useProjectStore } from '../../../entities/project';
@@ -261,8 +263,12 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
   ]);
   const queueCount = useRenderQueueStore((state) => state.jobs.length);
 
-  // S157 Broadcast Loudness & Dolby Atmos ADM BWF Metadata
-  const [ebuLoudness, setEbuLoudness] = useState<'off' | 'ebu_r128' | 'streaming'>('off');
+  // S157 & S186 Broadcast Loudness & Dolby Atmos ADM BWF Metadata
+  const [ebuLoudness, setEbuLoudness] = useState<StandardLoudnessPresetKey | 'off'>('off');
+  const selectedTargetConfig = useMemo(
+    () => (ebuLoudness !== 'off' ? LOUDNESS_TARGET_PRESETS[ebuLoudness] : undefined),
+    [ebuLoudness]
+  );
   const [exportAdmXml, setExportAdmXml] = useState<boolean>(false);
 
   // S73 Subtitle Burn-In Teletext Options
@@ -497,9 +503,9 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         dnxhrProfile: format === 'dnxhd' ? dnxhrProfile : undefined,
         burnInSubtitles: burnInSubtitles && hasSubtitleClips,
         subtitleStylePresetId: burnInSubtitles ? subtitleStylePresetId : undefined,
-        subtitleTrackId: burnInSubtitles && subtitleTrackId ? subtitleTrackId : undefined,
-        ebuTargetLufs: ebuLoudness === 'ebu_r128' ? -24 : ebuLoudness === 'streaming' ? -14 : undefined,
-        truePeakCeilingDb: ebuLoudness !== 'off' ? -1.0 : undefined,
+        ebuTargetLufs: selectedTargetConfig?.integratedLufs,
+        truePeakCeilingDb: selectedTargetConfig?.truePeakLimitDbTP,
+        ebuTargetLra: selectedTargetConfig?.maxLraLu,
         exportAdmBwfXml: exportAdmXml,
       });
 
@@ -543,9 +549,9 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         dnxhrProfile: format === 'dnxhd' ? dnxhrProfile : undefined,
         burnInSubtitles: burnInSubtitles && hasSubtitleClips,
         subtitleStylePresetId: burnInSubtitles ? subtitleStylePresetId : undefined,
-        subtitleTrackId: burnInSubtitles && subtitleTrackId ? subtitleTrackId : undefined,
-        ebuTargetLufs: ebuLoudness === 'ebu_r128' ? -24 : ebuLoudness === 'streaming' ? -14 : undefined,
-        truePeakCeilingDb: ebuLoudness !== 'off' ? -1.0 : undefined,
+        ebuTargetLufs: selectedTargetConfig?.integratedLufs,
+        truePeakCeilingDb: selectedTargetConfig?.truePeakLimitDbTP,
+        ebuTargetLra: selectedTargetConfig?.maxLraLu,
         exportAdmBwfXml: exportAdmXml,
       };
 
@@ -1381,17 +1387,28 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
 
                     <div className="grid grid-cols-2 gap-3 pt-2 border-t border-hairline">
                       <div className="flex flex-col gap-1">
-                        <span className="text-[11px] text-text-secondary font-medium">Loudness Target</span>
+                        <span className="text-[11px] text-text-secondary font-medium">Loudness Target Normalization</span>
                         <Select
                           className="mt-1"
                           value={ebuLoudness}
                           onChange={(val) => setEbuLoudness(val as any)}
                           options={[
-                            { value: 'off', label: 'Off (Original Peak/Dynamics)' },
-                            { value: 'ebu_r128', label: 'EBU R128 (-24 LUFS, -1 dBTP)' },
-                            { value: 'streaming', label: 'Online / Spotify / YT (-14 LUFS, -1 dBTP)' },
+                            { value: 'off', label: 'Off (Original Peak / Dynamic Range)' },
+                            ...Object.entries(LOUDNESS_TARGET_PRESETS).map(([k, cfg]) => ({
+                              value: k,
+                              label: `${cfg.label} (${cfg.integratedLufs} LUFS, ${cfg.truePeakLimitDbTP} dBTP)`,
+                            })),
                           ]}
                         />
+                        {selectedTargetConfig && (
+                          <div className="flex items-center gap-1.5 text-[10px] font-mono text-accent-ai bg-accent-ai/10 px-2 py-1 rounded border border-accent-ai/30 mt-1">
+                            <span>Target: {selectedTargetConfig.integratedLufs} LUFS</span>
+                            <span className="text-text-disabled">·</span>
+                            <span>Ceiling: {selectedTargetConfig.truePeakLimitDbTP} dBTP</span>
+                            <span className="text-text-disabled">·</span>
+                            <span>Max LRA: {selectedTargetConfig.maxLraLu} LU</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between p-2 rounded-lg border border-hairline bg-bg-canvas/50">

@@ -1621,7 +1621,8 @@ export class SequenceRenderService {
     if (request?.ebuTargetLufs !== undefined) {
       const targetLufs = request.ebuTargetLufs;
       const peakCeiling = request.truePeakCeilingDb ?? -1.0;
-      postFilters.push(`loudnorm=I=${targetLufs}:TP=${peakCeiling}:LRA=11`);
+      const targetLra = request.ebuTargetLra ?? 11.0;
+      postFilters.push(`loudnorm=I=${targetLufs.toFixed(1)}:TP=${peakCeiling.toFixed(1)}:LRA=${targetLra.toFixed(1)}`);
     }
 
     if (postFilters.length > 0) {
