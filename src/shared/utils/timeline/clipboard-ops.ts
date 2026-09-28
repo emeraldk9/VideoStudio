@@ -5,6 +5,7 @@ import type {
 } from '../../types/sequence';
 import { layoutTrack, type PlacedClip } from './layout';
 import { rippleDelete, splitClipAtFrame } from './edit-ops';
+import { executeRangeRippleDelete } from './timeline-sync-lock-ripple-ops';
 
 export interface TimelineClipboardItem {
   clip: SequenceClip;
@@ -300,20 +301,19 @@ export function executeLiftOrExtractWorkArea(
   const insideSet = new Set(insideClipIds);
   let kept = current.filter((c) => !insideSet.has(c.id));
 
-  // 6. Ripple downstream if Extract
+  // 6. Ripple downstream if Extract (S192: sync-lock & connected clip preservation)
   if (ripple) {
-    kept = kept.map((clip) => {
-      const track = tracks.find((t) => t.id === clip.trackId);
-      if (!track || track.locked || track.magnetic) return clip;
-      const clipStart = clip.startFrames ?? 0;
-      if (clipStart >= end) {
-        return {
-          ...clip,
-          startFrames: Math.max(0, clipStart - rangeDuration),
-        };
-      }
-      return clip;
+    const rippleRes = executeRangeRippleDelete({
+      clips: current,
+      tracks,
+      inFrame: start,
+      outFrame: end,
+      respectSyncLock: true,
+      respectTrackLock: true,
+      propagateAnchoredClips: true,
+      mintId,
     });
+    kept = rippleRes.updatedClips;
   }
 
   return {
