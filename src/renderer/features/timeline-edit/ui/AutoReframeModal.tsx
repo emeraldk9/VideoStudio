@@ -4,6 +4,7 @@ import {
   ASPECT_RATIO_PRESETS,
   ASPECT_RATIO_PRESET_LIST,
   applyAutoReframeToSequence,
+  batchAutoReframeSequence,
   calculatePanAndScanBounds,
   calculateScaleToFill,
   type TargetAspectRatio,
@@ -33,7 +34,7 @@ export function AutoReframeModal({
   const [trackingSpeed, setTrackingSpeed] = useState<TrackingSpeed>('default');
   const [motionInterval, setMotionInterval] = useState<number>(1.0);
   const [repositionSubtitles, setRepositionSubtitles] = useState<boolean>(true);
-  const [creationMode, setCreationMode] = useState<'duplicate' | 'inplace'>('duplicate');
+  const [creationMode, setCreationMode] = useState<'duplicate' | 'inplace' | 'batch_social'>('duplicate');
   const [isProcessing, setIsProcessing] = useState(false);
 
   const pushToast = useToastStore((state) => state.pushToast);
@@ -78,7 +79,68 @@ export function AutoReframeModal({
         adjustSubtitlesSafeMargin: repositionSubtitles,
       });
 
-      if (creationMode === 'duplicate') {
+      if (creationMode === 'batch_social') {
+        if (!window.api?.sequence?.create) {
+          throw new Error('Sequence creation API unavailable.');
+        }
+
+        const socialAspects: TargetAspectRatio[] = ['9:16', '1:1', '4:5'];
+        const batchResults = batchAutoReframeSequence(
+          document,
+          socialAspects,
+          trackingSpeed,
+          repositionSubtitles,
+        );
+
+        let lastCreatedId: string | null = null;
+        for (const item of batchResults) {
+          const newName = `${document.sequence.name} [${item.preset.shortLabel}]`;
+          const backendDoc = await window.api.sequence.create({
+            projectId: document.sequence.projectId,
+            name: newName,
+          });
+
+          if (backendDoc) {
+            lastCreatedId = backendDoc.sequence.id;
+            if (window.api?.sequence?.updateSettings) {
+              await window.api.sequence.updateSettings({
+                sequenceId: backendDoc.sequence.id,
+                width: item.preset.width,
+                height: item.preset.height,
+              });
+            }
+
+            const remappedTracks = document.tracks.map((t) => ({
+              ...t,
+              sequenceId: backendDoc.sequence.id,
+            }));
+
+            const remappedClips = item.document.clips.map((c) => ({
+              ...c,
+              sequenceId: backendDoc.sequence.id,
+            }));
+
+            if (window.api?.sequence?.replaceDocument) {
+              await window.api.sequence.replaceDocument({
+                sequenceId: backendDoc.sequence.id,
+                tracks: remappedTracks,
+                clips: remappedClips,
+                spineTrackId: document.sequence.spineTrackId ?? null,
+              });
+            }
+          }
+        }
+
+        if (lastCreatedId) {
+          await useSequenceStore.getState().openSequence(lastCreatedId);
+        }
+        await useSequenceStore.getState().loadSequences(document.sequence.projectId);
+
+        pushToast({
+          variant: 'success',
+          message: `Created 3 batch reframed social sequences (9:16 Vertical, 1:1 Square, 4:5 Portrait)!`,
+        });
+      } else if (creationMode === 'duplicate') {
         const newName = `${document.sequence.name} [${targetPreset.shortLabel}]`;
         if (!window.api?.sequence?.create) {
           throw new Error('Sequence creation API unavailable.');
@@ -353,7 +415,7 @@ export function AutoReframeModal({
               <span className="text-[11px] font-medium text-text-muted block mb-1.5 uppercase tracking-wider">
                 Reframing Output Mode
               </span>
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 cursor-pointer text-xs">
                   <input
                     type="radio"
@@ -377,6 +439,18 @@ export function AutoReframeModal({
                   />
                   <span className="text-text-primary font-medium">In-Place Reframe</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer text-xs">
+                  <input
+                    type="radio"
+                    name="creationMode"
+                    value="batch_social"
+                    checked={creationMode === 'batch_social'}
+                    onChange={() => setCreationMode('batch_social')}
+                    className="text-accent-primary focus:ring-0"
+                  />
+                  <span className="text-text-primary font-medium">Batch All Social Formats</span>
+                  <span className="text-[10px] text-accent-ai font-mono">(9:16 + 1:1 + 4:5)</span>
+                </label>
               </div>
             </div>
           </div>
@@ -388,7 +462,11 @@ export function AutoReframeModal({
             {videoClipCount === 0 ? (
               <span className="text-amber-400">⚠️ No video clips found on active timeline.</span>
             ) : (
-              <span>Ready to generate pan-and-scan keyframes for {videoClipCount} video clips.</span>
+              <span>
+                {creationMode === 'batch_social'
+                  ? `Ready to generate 3 social sequences (9:16, 1:1, 4:5) for ${videoClipCount} video clips.`
+                  : `Ready to generate pan-and-scan keyframes for ${videoClipCount} video clips.`}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -403,7 +481,13 @@ export function AutoReframeModal({
               className="flex items-center gap-1.5"
             >
               <span className="material-symbols-outlined text-sm">auto_fix_high</span>
-              <span>{isProcessing ? 'Reframing...' : `Apply Auto-Reframe (${targetPreset.shortLabel})`}</span>
+              <span>
+                {isProcessing
+                  ? 'Reframing...'
+                  : creationMode === 'batch_social'
+                  ? 'Batch Reframe All Social Formats (3 Stems)'
+                  : `Apply Auto-Reframe (${targetPreset.shortLabel})`}
+              </span>
             </Button>
           </div>
         </div>

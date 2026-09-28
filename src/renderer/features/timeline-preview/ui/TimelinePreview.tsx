@@ -74,6 +74,9 @@ import {
   buildAdjustmentLayerCssStyles,
   isAdjustmentLayerClip,
   type ActiveAdjustmentLayer,
+  ASPECT_RATIO_PRESETS,
+  calculateCropFramingBox,
+  type TargetAspectRatio,
 } from '@shared';
 
 import {
@@ -100,6 +103,9 @@ import { MultiCamGrid } from './MultiCamGrid';
 import { useStylusCaptureStore } from '../model/stylusCaptureStore';
 import { StylusRecordingOverlay } from './StylusRecordingOverlay';
 import { TimelinePreviewTimecode } from './TimelinePreviewTimecode';
+import { InteractiveCropFramingBox } from './InteractiveCropFramingBox';
+import { useModalStore } from '../../../shared/model/modalStore';
+import { MODAL_IDS } from '../../../shared/config/modal-ids';
 
 function boundaryVisual(
   type: ClipTransition,
@@ -275,6 +281,21 @@ export function TimelinePreview() {
   const [safeAreas, setSafeAreas] = useState(false);
   const [thirdsGrid, setThirdsGrid] = useState(false);
   const [socialZones, setSocialZones] = useState(false);
+
+  // S173: Multi-Format Social Auto-Reframe Interactive Framing
+  const [reframeAspect, setReframeAspect] = useState<TargetAspectRatio | null>(null);
+  const [reframeCropPan, setReframeCropPan] = useState<{ panX: number; panY: number }>({ panX: 0, panY: 0 });
+
+  const currentCropBox = useMemo(() => {
+    if (!reframeAspect || !document?.sequence.width || !document?.sequence.height) return null;
+    return calculateCropFramingBox(
+      document.sequence.width,
+      document.sequence.height,
+      reframeAspect,
+      reframeCropPan.panX,
+      reframeCropPan.panY,
+    );
+  }, [reframeAspect, document?.sequence.width, document?.sequence.height, reframeCropPan.panX, reframeCropPan.panY]);
 
   // S65 — MultiCam 4-Up Synchronized Canvas Quad View Toggle
   const [multiCamViewEnabled, setMultiCamViewEnabled] = useState(false);
@@ -1621,6 +1642,43 @@ export function TimelinePreview() {
               <span className="material-symbols-outlined text-[14px]">stay_current_portrait</span>
             </button>
             <span className="h-3 w-px bg-hairline mx-0.5" />
+            {/* S173 — Social Aspect Ratio Framing Mode Selector */}
+            <div className="flex items-center rounded bg-bg-app border border-hairline/80 px-1 py-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const aspects: (TargetAspectRatio | null)[] = [null, '9:16', '1:1', '4:5', '21:9'];
+                  const currentIndex = aspects.indexOf(reframeAspect);
+                  const nextAspect = aspects[(currentIndex + 1) % aspects.length];
+                  setReframeAspect(nextAspect);
+                  setReframeCropPan({ panX: 0, panY: 0 });
+                }}
+                className={`h-5 px-1.5 rounded text-[10px] font-mono flex items-center gap-1 transition-all ${
+                  reframeAspect
+                    ? 'bg-accent-ai text-text-on-accent font-semibold shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                title={
+                  reframeAspect
+                    ? `Active Social Framing: ${reframeAspect} (Click to cycle)`
+                    : 'Aspect Framing Preview (Click to preview 9:16, 1:1, 4:5, 21:9 crops)'
+                }
+              >
+                <span className="material-symbols-outlined text-[12px]">
+                  {reframeAspect ? ASPECT_RATIO_PRESETS[reframeAspect].icon : 'aspect_ratio'}
+                </span>
+                <span>{reframeAspect ? reframeAspect : 'Native'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => useModalStore.getState().openModal(MODAL_IDS.AUTO_REFRAME)}
+                className="h-5 w-5 rounded text-[10px] flex items-center justify-center text-text-disabled hover:text-accent-ai hover:bg-bg-hover transition-colors"
+                title="Open AI Auto-Reframe & Batch Social Stems Dialog"
+              >
+                <span className="material-symbols-outlined text-[12px]">auto_fix_high</span>
+              </button>
+            </div>
+            <span className="h-3 w-px bg-hairline mx-0.5" />
             {/* S65 — MultiCam 4-Up Live Quad Switcher HUD button */}
             <button
               type="button"
@@ -2051,8 +2109,53 @@ export function TimelinePreview() {
         <StudioOverlayGuides
           showSafeAreas={safeAreas}
           showThirdsGrid={thirdsGrid}
-          showSocialZones={socialZones}
+          showSocialZones={socialZones || reframeAspect !== null}
+          targetAspect={reframeAspect}
         />
+
+        {/* S173 — Interactive On-Canvas Social Crop Framing Box */}
+        {reframeAspect && currentCropBox && document && (
+          <InteractiveCropFramingBox
+            sourceWidth={document.sequence.width}
+            sourceHeight={document.sequence.height}
+            targetAspect={reframeAspect}
+            cropBox={currentCropBox}
+            panX={reframeCropPan.panX}
+            panY={reframeCropPan.panY}
+            onPanChange={(panX, panY) => {
+              setReframeCropPan({ panX, panY });
+              if (current?.clip && (current.clip.sourceKind === 'video' || current.clip.sourceKind === 'still')) {
+                const existingTransform = current.clip.effects?.transform ?? { scale: 1, x: 0, y: 0, rotationDeg: 0, opacity: 1 };
+                patchClip(current.clip.id, {
+                  effects: {
+                    ...current.clip.effects,
+                    transform: {
+                      ...existingTransform,
+                      x: Number((panX * 100).toFixed(2)),
+                      y: Number((panY * 100).toFixed(2)),
+                    },
+                  },
+                });
+              }
+            }}
+            onResetPan={() => {
+              setReframeCropPan({ panX: 0, panY: 0 });
+              if (current?.clip && (current.clip.sourceKind === 'video' || current.clip.sourceKind === 'still')) {
+                const existingTransform = current.clip.effects?.transform ?? { scale: 1, x: 0, y: 0, rotationDeg: 0, opacity: 1 };
+                patchClip(current.clip.id, {
+                  effects: {
+                    ...current.clip.effects,
+                    transform: {
+                      ...existingTransform,
+                      x: 0,
+                      y: 0,
+                    },
+                  },
+                });
+              }
+            }}
+          />
+        )}
 
         {/* S24 — Interactive On-Canvas Transform Gizmo */}
         {isTransformableSelected && selectedClip && (

@@ -1,17 +1,23 @@
+import { type TargetAspectRatio } from '@shared';
+
 export interface StudioOverlayGuidesProps {
   showSafeAreas: boolean;
   showThirdsGrid: boolean;
   showSocialZones: boolean;
+  targetAspect?: TargetAspectRatio | null;
 }
 
 export function StudioOverlayGuides({
   showSafeAreas,
   showThirdsGrid,
   showSocialZones,
+  targetAspect,
 }: StudioOverlayGuidesProps) {
   if (!showSafeAreas && !showThirdsGrid && !showSocialZones) {
     return null;
   }
+
+  const isInstagramFeed = targetAspect === '1:1' || targetAspect === '4:5';
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden select-none">
@@ -52,32 +58,58 @@ export function StudioOverlayGuides({
         </>
       )}
 
-      {/* 3. Social Media UI Safe Zone Simulator (TikTok / Reels / Shorts) */}
+      {/* 3. Social Media UI Safe Zone Simulator */}
       {showSocialZones && (
         <div className="absolute inset-0">
-          {/* Top Bar Warning (Profile / Live buttons) */}
-          <div className="absolute inset-x-0 top-0 h-[12%] bg-rose-500/10 border-b border-rose-500/30 flex items-center justify-center">
-            <span className="font-mono text-[9px] font-semibold text-rose-400 uppercase tracking-wider">
-              Top Bar UI Obscured
-            </span>
-          </div>
+          {isInstagramFeed ? (
+            /* Instagram Post / Carousel Feed Overlay */
+            <>
+              {/* Top Profile Header */}
+              <div className="absolute inset-x-0 top-0 h-[8%] bg-rose-500/10 border-b border-rose-500/30 flex items-center justify-between px-3">
+                <span className="font-mono text-[8px] font-semibold text-rose-400 uppercase tracking-wider">
+                  Instagram Profile Header
+                </span>
+                <span className="font-mono text-[7px] text-rose-400/70">•••</span>
+              </div>
 
-          {/* Bottom Captions & Music Area */}
-          <div className="absolute inset-x-0 bottom-0 h-[22%] bg-rose-500/10 border-t border-rose-500/30 flex flex-col items-center justify-center p-1">
-            <span className="font-mono text-[9px] font-semibold text-rose-400 uppercase tracking-wider">
-              Captions & Audio Name UI Safe Area
-            </span>
-            <span className="font-mono text-[8px] text-text-disabled mt-0.5">
-              Keep critical graphics above this line
-            </span>
-          </div>
+              {/* Bottom Action Bar & Captions Area */}
+              <div className="absolute inset-x-0 bottom-0 h-[14%] bg-rose-500/10 border-t border-rose-500/30 flex flex-col items-center justify-center p-1">
+                <span className="font-mono text-[9px] font-semibold text-rose-400 uppercase tracking-wider">
+                  Likes, Comments & Caption Area
+                </span>
+                <span className="font-mono text-[8px] text-text-disabled mt-0.5">
+                  Keep critical text above this margin
+                </span>
+              </div>
+            </>
+          ) : (
+            /* TikTok / Instagram Reels / YouTube Shorts Vertical Overlay */
+            <>
+              {/* Top Bar Warning (Profile / Live buttons) */}
+              <div className="absolute inset-x-0 top-0 h-[12%] bg-rose-500/10 border-b border-rose-500/30 flex items-center justify-center">
+                <span className="font-mono text-[9px] font-semibold text-rose-400 uppercase tracking-wider">
+                  Top Bar UI Obscured (Following / For You)
+                </span>
+              </div>
 
-          {/* Right Column (Like, Comment, Share, Bookmark buttons) */}
-          <div className="absolute right-0 top-[18%] bottom-[24%] w-[16%] bg-rose-500/10 border-l border-rose-500/30 flex items-center justify-center">
-            <div className="rotate-90 font-mono text-[8px] font-semibold text-rose-400 whitespace-nowrap">
-              Action Rail UI
-            </div>
-          </div>
+              {/* Bottom Captions & Music Area */}
+              <div className="absolute inset-x-0 bottom-0 h-[22%] bg-rose-500/10 border-t border-rose-500/30 flex flex-col items-center justify-center p-1">
+                <span className="font-mono text-[9px] font-semibold text-rose-400 uppercase tracking-wider">
+                  Captions & Audio Name UI Safe Area
+                </span>
+                <span className="font-mono text-[8px] text-text-disabled mt-0.5">
+                  Keep critical graphics and text above this line
+                </span>
+              </div>
+
+              {/* Right Column (Like, Comment, Share, Bookmark buttons) */}
+              <div className="absolute right-0 top-[18%] bottom-[24%] w-[16%] bg-rose-500/10 border-l border-rose-500/30 flex items-center justify-center">
+                <div className="rotate-90 font-mono text-[8px] font-semibold text-rose-400 whitespace-nowrap">
+                  Action Rail UI
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

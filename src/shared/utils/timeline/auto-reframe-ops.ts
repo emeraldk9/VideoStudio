@@ -309,3 +309,163 @@ export function applyAutoReframeToSequence(
     })),
   };
 }
+
+export interface CropFramingBox {
+  leftPct: number;    // 0..1 normalized X start on source
+  topPct: number;     // 0..1 normalized Y start on source
+  widthPct: number;   // 0..1 normalized width of crop box
+  heightPct: number;  // 0..1 normalized height of crop box
+  centerX: number;    // 0..1 normalized center X
+  centerY: number;    // 0..1 normalized center Y
+  maxPanX: number;    // allowable horizontal travel
+  maxPanY: number;    // allowable vertical travel
+}
+
+/**
+ * Calculates the bounding crop box of the target aspect ratio relative to the source frame.
+ *
+ * @param sourceWidth Width of source video/sequence in pixels
+ * @param sourceHeight Height of source video/sequence in pixels
+ * @param targetAspect Target aspect ratio key (e.g. '9:16', '1:1', '4:5')
+ * @param panX Normalized pan offset in [-maxPanX, maxPanX]
+ * @param panY Normalized pan offset in [-maxPanY, maxPanY]
+ */
+export function calculateCropFramingBox(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetAspect: TargetAspectRatio,
+  panX: number = 0,
+  panY: number = 0,
+): CropFramingBox {
+  const preset = ASPECT_RATIO_PRESETS[targetAspect];
+  const { maxPanX, maxPanY } = calculatePanAndScanBounds(
+    sourceWidth,
+    sourceHeight,
+    preset.width,
+    preset.height,
+  );
+
+  const sourceRatio = sourceWidth / sourceHeight;
+  const targetRatio = preset.width / preset.height;
+
+  let widthPct = 1;
+  let heightPct = 1;
+
+  if (sourceRatio > targetRatio) {
+    // Source wider than target -> vertical fills 100%, horizontal is cropped
+    widthPct = Number((targetRatio / sourceRatio).toFixed(4));
+    heightPct = 1;
+  } else if (sourceRatio < targetRatio) {
+    // Source taller than target -> horizontal fills 100%, vertical is cropped
+    widthPct = 1;
+    heightPct = Number((sourceRatio / targetRatio).toFixed(4));
+  }
+
+  // Clamped pan offsets
+  const clampedPanX = Math.max(-maxPanX, Math.min(maxPanX, panX));
+  const clampedPanY = Math.max(-maxPanY, Math.min(maxPanY, panY));
+
+  // Center coordinates (default 0.5 without pan)
+  const centerX = 0.5 + clampedPanX;
+  const centerY = 0.5 + clampedPanY;
+
+  const leftPct = Math.max(0, Math.min(1 - widthPct, centerX - widthPct / 2));
+  const topPct = Math.max(0, Math.min(1 - heightPct, centerY - heightPct / 2));
+
+  return {
+    leftPct: Number(leftPct.toFixed(4)),
+    topPct: Number(topPct.toFixed(4)),
+    widthPct: Number(widthPct.toFixed(4)),
+    heightPct: Number(heightPct.toFixed(4)),
+    centerX: Number(centerX.toFixed(4)),
+    centerY: Number(centerY.toFixed(4)),
+    maxPanX,
+    maxPanY,
+  };
+}
+
+/**
+ * Computes the normalized pan offset (x or y) given a requested new center point [0..1]
+ * from dragging the interactive crop framing box.
+ */
+export function panOffsetFromCropBoxCenter(
+  newCenterX: number,
+  newCenterY: number,
+  sourceWidth: number,
+  sourceHeight: number,
+  targetAspect: TargetAspectRatio,
+): { panX: number; panY: number } {
+  const preset = ASPECT_RATIO_PRESETS[targetAspect];
+  const { maxPanX, maxPanY } = calculatePanAndScanBounds(
+    sourceWidth,
+    sourceHeight,
+    preset.width,
+    preset.height,
+  );
+
+  const rawPanX = newCenterX - 0.5;
+  const rawPanY = newCenterY - 0.5;
+
+  return {
+    panX: Number(Math.max(-maxPanX, Math.min(maxPanX, rawPanX)).toFixed(4)),
+    panY: Number(Math.max(-maxPanY, Math.min(maxPanY, rawPanY)).toFixed(4)),
+  };
+}
+
+/**
+ * Applies a 2nd-order damped spring smoothing filter across a sequence of position samples.
+ * Prevents erratic camera jumps and jitter while tracking quick focal subject motions.
+ */
+export function applySpringSmoothing(
+  samples: number[],
+  stiffness: number = 0.15,
+  damping: number = 0.75,
+): number[] {
+  if (samples.length <= 1) return [...samples];
+
+  const result: number[] = new Array(samples.length);
+  let pos = samples[0];
+  let vel = 0;
+  result[0] = pos;
+
+  for (let i = 1; i < samples.length; i++) {
+    const target = samples[i];
+    const force = (target - pos) * stiffness;
+    vel = vel * damping + force;
+    pos += vel;
+    result[i] = Number(pos.toFixed(4));
+  }
+
+  return result;
+}
+
+export interface BatchReframeResult {
+  preset: AspectRatioPreset;
+  document: SequenceDocument;
+}
+
+/**
+ * Generates an array of reframed sequence documents for multiple target aspect ratios in one pass.
+ */
+export function batchAutoReframeSequence(
+  document: SequenceDocument,
+  targetAspects: TargetAspectRatio[],
+  trackingSpeed: TrackingSpeed = 'default',
+  adjustSubtitlesSafeMargin: boolean = true,
+): BatchReframeResult[] {
+  return targetAspects.map((aspect) => {
+    const preset = ASPECT_RATIO_PRESETS[aspect];
+    const reframedDoc = applyAutoReframeToSequence(document, {
+      targetAspect: aspect,
+      trackingSpeed,
+      adjustSubtitlesSafeMargin,
+      duplicateSequence: true,
+      newSequenceName: `${document.sequence.name} [${preset.shortLabel}]`,
+    });
+    return {
+      preset,
+      document: reframedDoc,
+    };
+  });
+}
+
