@@ -14,6 +14,7 @@ import {
   isAdjustmentLayerClip,
   isCompoundClip,
   isClipLinked,
+  isClipAnchored,
   type SequenceClip,
 } from '@shared';
 
@@ -595,6 +596,15 @@ export const TimelineClip = memo(function TimelineClip({
                 className="material-symbols-outlined text-[12px] leading-4 text-emerald-400 shrink-0 select-none"
               >
                 link
+              </span>
+            )}
+            {isClipAnchored(clip) && (
+              <span
+                aria-label="Anchored Clip"
+                title={`Anchored to ${clip.effects?.anchor?.parentClipId} (${(clip.effects?.anchor?.offsetFrames ?? 0) >= 0 ? `+${clip.effects?.anchor?.offsetFrames}` : clip.effects?.anchor?.offsetFrames}f)`}
+                className="material-symbols-outlined text-[12px] leading-4 text-indigo-400 shrink-0 select-none"
+              >
+                anchor
               </span>
             )}
             <span className="truncate">{clip.label || (isCompoundClip(clip) ? 'Compound Clip' : 'Clip')}</span>

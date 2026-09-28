@@ -153,6 +153,7 @@ export * from './utils/timeline/rhythmic-beat-grid-ops';
 export * from './utils/timeline/transform-motion-path-ops';
 export * from './utils/timeline/audio-loudness-ops';
 export * from './utils/timeline/multicam-angle-cut-ops';
+export * from './utils/timeline/connected-clip-anchor-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

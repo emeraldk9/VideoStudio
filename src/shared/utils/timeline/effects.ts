@@ -71,6 +71,7 @@ import {
   generateDeEsserFilterString,
   generateNotchFilterString,
 } from './audio-deesser-notch-ops';
+import { type ClipAnchorSettings } from './connected-clip-anchor-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -305,6 +306,8 @@ export interface ClipEffects {
   motionBlur?: MotionBlurSettings;
   /** S64 — Compound Clip & Nested Sequence Packaging */
   compound?: CompoundClipSettings;
+  /** S188 — Magnetic Connected Clips & Relational Parent-Child Storyline Anchoring */
+  anchor?: ClipAnchorSettings;
   /**
    * S161 — hand-drawn (whiteboard) reveal. Stills only: the still routes
    * through `whiteboard-segment.ts` instead of the Ken Burns path, and the
@@ -1951,6 +1954,16 @@ export const clipEffectsSchema = z
       .strict()
       .optional(),
     compound: compoundClipSettingsSchema.optional(),
+    anchor: z
+      .object({
+        enabled: z.boolean(),
+        parentClipId: z.string(),
+        offsetFrames: z.number().int(),
+        anchorPoint: z.enum(['start', 'end', 'midpoint']).optional(),
+        orphanPolicy: z.enum(['keep_absolute', 'delete', 'reanchor_nearest']).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

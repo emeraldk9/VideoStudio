@@ -33,6 +33,7 @@ import { AnimationInspectorTab } from './AnimationInspectorTab';
 import { MotionInspectorTab } from './MotionInspectorTab';
 import { AudioInspectorTab } from './AudioInspectorTab';
 import { TransitionInspectorTab } from './TransitionInspectorTab';
+import { AnchorSection } from './AnchorSection';
 
 export interface SingleClipInspectorProps {
   clip: SequenceClip;
@@ -385,6 +386,9 @@ export const SingleClipInspector = React.memo(function SingleClipInspector({
               </p>
             ) : null}
           </Section>
+
+          {/* S188 — Connected Clip Anchor Section */}
+          <AnchorSection clip={clip} document={document} patchClip={patchClip} />
 
           {/* S19 — Media Slip & In/Out Controls */}
           {(clip.sourceKind === 'video' || clip.sourceKind === 'audio') && clip.filePath ? (
