@@ -55,6 +55,7 @@ import {
   applyDualSystemAudioSync,
   linkClips,
   unlinkClips,
+  formatDragDeltaBadge,
   type ClipColorLabel,
   type TimelineTrackGap,
   type SequenceClip,
@@ -79,7 +80,7 @@ import { useModalStore } from '../../../shared/model/modalStore';
 import { useToastStore } from '../../../shared/model/toastStore';
 import { ContextMenu, type ContextMenuItem } from '../../../shared/ui/ContextMenu';
 import { IconButton } from '../../../shared/ui/IconButton';
-import { SNAP_THRESHOLD_PX, useTimelineDrag, type DragState } from '../lib/useTimelineDrag';
+import { SNAP_THRESHOLD_PX, useTimelineDrag, type DragKind, type DragState } from '../lib/useTimelineDrag';
 
 import { MarkerModal } from './MarkerModal';
 import { SpeedModal } from './SpeedModal';
@@ -567,7 +568,7 @@ export function TimelinePanel() {
   const snapLineRef = useRef<HTMLDivElement | null>(null);
   const snapBadgeRef = useRef<HTMLDivElement | null>(null);
   const handleDragDelta = useCallback(
-    (deltaFrames: number, snappedTarget: number | null, snapLabel?: string) => {
+    (deltaFrames: number, snappedTarget: number | null, snapLabel?: string, dragKind?: DragKind) => {
       // S176 — the live drag offset: one custom-property write per pointer
       // event moves every flagged clip. Direct rather than rAF-coalesced.
       if (toolMode !== 'slip') {
@@ -582,11 +583,30 @@ export function TimelinePanel() {
       const badge = snapBadgeRef.current;
       if (!line) return;
 
+      const gestureKind =
+        toolMode === 'slip'
+          ? 'slip'
+          : toolMode === 'slide'
+            ? 'slide'
+            : toolMode === 'ripple'
+              ? 'ripple'
+              : toolMode === 'roll'
+                ? 'roll'
+                : (dragKind ?? 'move');
+
+      const badgeText = formatDragDeltaBadge({
+        kind: gestureKind,
+        deltaFrames,
+        snappedTarget,
+        snapLabel,
+        fps,
+      });
+
       if (toolMode === 'slip') {
         line.style.display = 'none';
         if (badge) {
-          badge.textContent = `Slip: ${deltaFrames >= 0 ? '+' : ''}${deltaFrames}f`;
-          badge.style.display = 'block';
+          badge.textContent = badgeText;
+          badge.style.display = deltaFrames !== 0 ? 'block' : 'none';
         }
         return;
       }
@@ -594,8 +614,8 @@ export function TimelinePanel() {
       if (snappedTarget === null) {
         line.style.display = 'none';
         if (badge) {
-          if (toolMode === 'slide' && deltaFrames !== 0) {
-            badge.textContent = `Slide: ${deltaFrames >= 0 ? '+' : ''}${deltaFrames}f`;
+          if (deltaFrames !== 0) {
+            badge.textContent = badgeText;
             badge.style.display = 'block';
           } else {
             badge.style.display = 'none';
@@ -603,13 +623,11 @@ export function TimelinePanel() {
         }
         return;
       }
+
       line.style.display = 'block';
       line.style.left = `calc(var(--lane-label-w) + ${snappedTarget * (pixelsPerSecond / fps)}px)`;
       if (badge) {
-        badge.textContent =
-          toolMode === 'slide'
-            ? `Slide: ${deltaFrames >= 0 ? '+' : ''}${deltaFrames}f (${snapLabel || `${snappedTarget}f`})`
-            : snapLabel || `${snappedTarget}f`;
+        badge.textContent = badgeText;
         badge.style.display = 'block';
       }
     },

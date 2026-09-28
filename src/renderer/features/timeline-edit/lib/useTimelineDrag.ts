@@ -84,7 +84,7 @@ export interface TimelineDragOptions {
    * semantic snap label for the Smart Magnetic HUD. The panel drives the snap
    * indicator and HUD badge imperatively.
    */
-  onDelta?: (deltaFrames: number, snappedTarget: number | null, snapLabel?: string) => void;
+  onDelta?: (deltaFrames: number, snappedTarget: number | null, snapLabel?: string, dragKind?: DragKind) => void;
 }
 
 export function useTimelineDrag(options: TimelineDragOptions) {
@@ -215,7 +215,7 @@ export function useTimelineDrag(options: TimelineDragOptions) {
       // travels through `onDelta` and the `lastDeltaFrames` ref, so a drag
       // renders React exactly twice (begin, end) however long it runs.
       origin.current.lastDeltaFrames = deltaFrames;
-      options.onDelta?.(deltaFrames, snappedTarget, snappedLabel);
+      options.onDelta?.(deltaFrames, snappedTarget, snappedLabel, drag.kind);
 
       if (drag.kind === 'scrub') {
         options.onScrub?.(origin.current.frame + deltaFrames);

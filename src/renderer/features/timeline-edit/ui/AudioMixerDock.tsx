@@ -6,6 +6,8 @@ import {
   createInitialPeakHoldState,
   dbToMeterPercent,
   updatePeakHold,
+  calculateCombinedGainReduction,
+  gainReductionToMeterPercent,
   AUDIO_EQ_PRESETS,
   DEFAULT_AUDIO_EQ_SETTINGS,
   resolveEqBands,
@@ -1184,6 +1186,38 @@ function AudioMixerDockContent() {
                     </div>
                   </div>
                 </div>
+
+                {/* S176 — Audio Dynamics Gain Reduction (GR) Downward Meter */}
+                {(() => {
+                  const comp = trackCompressor[track.id] || DEFAULT_COMPRESSOR_SETTINGS;
+                  const trackMaxLevelDb = Math.max(meter.leftDb, meter.rightDb);
+                  const totalTrackGrDb = calculateCombinedGainReduction(
+                    trackMaxLevelDb,
+                    comp,
+                    isCurrentlyDucked ? currentGainReductionDb : null,
+                  );
+                  const grHeightPct = gainReductionToMeterPercent(totalTrackGrDb, 24);
+
+                  return (
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span
+                        className="h-2.5 text-[7px] font-mono font-bold text-amber-400/80 flex items-center justify-center select-none"
+                        title={totalTrackGrDb > 0.1 ? `Gain Reduction: -${totalTrackGrDb} dB` : 'Gain Reduction: 0 dB'}
+                      >
+                        GR
+                      </span>
+                      <div
+                        className="relative h-20 w-1.5 rounded-xs bg-black/90 border border-hairline/40 overflow-hidden flex flex-col justify-start"
+                        title={totalTrackGrDb > 0.1 ? `Dynamics Gain Reduction: -${totalTrackGrDb} dB` : 'GR: 0 dB'}
+                      >
+                        <div
+                          className="w-full bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)] transition-all duration-75"
+                          style={{ height: `${grHeightPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Pan Control */}
@@ -1527,47 +1561,71 @@ function AudioMixerDockContent() {
               const leftPeakPct = dbToMeterPercent(masterPeak.left.heldPeakDb);
               const rightPeakPct = dbToMeterPercent(masterPeak.right.heldPeakDb);
 
+              const masterGrDb = Math.abs(masterGainReductionDb);
+              const grHeightPct = gainReductionToMeterPercent(masterGrDb, 24);
+
               return (
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => clearClipping('master')}
-                    title={isMasterClipping ? 'Master Clipping! Click to reset' : 'Master headroom OK'}
-                    className={`h-2.5 w-6 rounded-[2px] text-[7.5px] font-mono font-black flex items-center justify-center transition-colors ${
-                      isMasterClipping
-                        ? 'bg-rose-600 text-white shadow-[0_0_8px_rgba(225,29,72,0.9)] animate-pulse cursor-pointer'
-                        : 'bg-black/50 text-text-disabled border border-white/5'
-                    }`}
-                  >
-                    CLIP
-                  </button>
-                  <div className="relative flex gap-0.5 h-20 w-5 rounded bg-black/90 p-0.5 border border-hairline/60 overflow-hidden items-end">
-                    <div className="relative w-1/2 h-full flex items-end">
-                      <div
-                        className="w-full bg-gradient-to-t from-emerald-500 via-amber-400 to-rose-500 rounded-xs transition-all duration-75"
-                        style={{ height: `${masterLevels.leftPct}%` }}
-                      />
-                      {leftPeakPct > 0 && (
+                <>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => clearClipping('master')}
+                      title={isMasterClipping ? 'Master Clipping! Click to reset' : 'Master headroom OK'}
+                      className={`h-2.5 w-6 rounded-[2px] text-[7.5px] font-mono font-black flex items-center justify-center transition-colors ${
+                        isMasterClipping
+                          ? 'bg-rose-600 text-white shadow-[0_0_8px_rgba(225,29,72,0.9)] animate-pulse cursor-pointer'
+                          : 'bg-black/50 text-text-disabled border border-white/5'
+                      }`}
+                    >
+                      CLIP
+                    </button>
+                    <div className="relative flex gap-0.5 h-20 w-5 rounded bg-black/90 p-0.5 border border-hairline/60 overflow-hidden items-end">
+                      <div className="relative w-1/2 h-full flex items-end">
                         <div
-                          className="absolute left-0 right-0 h-[2px] bg-white shadow-xs pointer-events-none"
-                          style={{ bottom: `${leftPeakPct}%` }}
+                          className="w-full bg-gradient-to-t from-emerald-500 via-amber-400 to-rose-500 rounded-xs transition-all duration-75"
+                          style={{ height: `${masterLevels.leftPct}%` }}
                         />
-                      )}
-                    </div>
-                    <div className="relative w-1/2 h-full flex items-end">
-                      <div
-                        className="w-full bg-gradient-to-t from-emerald-500 via-amber-400 to-rose-500 rounded-xs transition-all duration-75"
-                        style={{ height: `${masterLevels.rightPct}%` }}
-                      />
-                      {rightPeakPct > 0 && (
+                        {leftPeakPct > 0 && (
+                          <div
+                            className="absolute left-0 right-0 h-[2px] bg-white shadow-xs pointer-events-none"
+                            style={{ bottom: `${leftPeakPct}%` }}
+                          />
+                        )}
+                      </div>
+                      <div className="relative w-1/2 h-full flex items-end">
                         <div
-                          className="absolute left-0 right-0 h-[2px] bg-white shadow-xs pointer-events-none"
-                          style={{ bottom: `${rightPeakPct}%` }}
+                          className="w-full bg-gradient-to-t from-emerald-500 via-amber-400 to-rose-500 rounded-xs transition-all duration-75"
+                          style={{ height: `${masterLevels.rightPct}%` }}
                         />
-                      )}
+                        {rightPeakPct > 0 && (
+                          <div
+                            className="absolute left-0 right-0 h-[2px] bg-white shadow-xs pointer-events-none"
+                            style={{ bottom: `${rightPeakPct}%` }}
+                          />
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+
+                  {/* S176 — Master Glue Compressor / Limiter Gain Reduction (GR) Meter */}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <span
+                      className="h-2.5 text-[7px] font-mono font-bold text-amber-400/80 flex items-center justify-center select-none"
+                      title={masterGrDb > 0.1 ? `Master Gain Reduction: -${masterGrDb.toFixed(1)} dB` : 'Master GR: 0 dB'}
+                    >
+                      GR
+                    </span>
+                    <div
+                      className="relative h-20 w-1.5 rounded-xs bg-black/90 border border-hairline/60 overflow-hidden flex flex-col justify-start"
+                      title={masterGrDb > 0.1 ? `Master Dynamics Reduction: -${masterGrDb.toFixed(1)} dB` : 'Master GR: 0 dB'}
+                    >
+                      <div
+                        className="w-full bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)] transition-all duration-75"
+                        style={{ height: `${grHeightPct}%` }}
+                      />
+                    </div>
+                  </div>
+                </>
               );
             })()}
           </div>

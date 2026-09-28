@@ -339,6 +339,12 @@ export function TimelinePreview() {
   currentRef.current = current;
   const audioPlacedRef = useRef<PlacedClip[]>([]);
 
+  // S176 — Live Hardware Playback & Dropped Frame Telemetry
+  const [liveFps, setLiveFps] = useState<number>(fps);
+  const [droppedFrames, setDroppedFrames] = useState<number>(0);
+  const fpsSampleCountRef = useRef(0);
+  const lastFpsSampleTimeRef = useRef(performance.now());
+
   // S65 — Resolve current active MultiCam clip under playhead on spine track
   const currentMultiCamClip = useMemo(() => {
     if (!current?.clip?.effects?.multiCam?.enabled || (current.clip.effects.multiCam.angles?.length ?? 0) <= 1) {
@@ -693,6 +699,22 @@ export function TimelinePreview() {
       if (isScopesOpenRef.current && now - lastScopesSampleTimeRef.current >= 33) {
         lastScopesSampleTimeRef.current = now;
         sampleScopesFrameRef.current();
+      }
+
+      // S176: Hardware playback telemetry calculation (FPS & dropped frames)
+      fpsSampleCountRef.current++;
+      if (now - lastFpsSampleTimeRef.current >= 500) {
+        const deltaMs = now - lastFpsSampleTimeRef.current;
+        const currentCalculatedFps = (fpsSampleCountRef.current * 1000) / deltaMs;
+        lastFpsSampleTimeRef.current = now;
+        fpsSampleCountRef.current = 0;
+        setLiveFps(Number(currentCalculatedFps.toFixed(1)));
+
+        // Query native video quality if active
+        if (videoRef.current && typeof (videoRef.current as any).getVideoPlaybackQuality === 'function') {
+          const q = (videoRef.current as any).getVideoPlaybackQuality();
+          setDroppedFrames(q.droppedVideoFrames ?? 0);
+        }
       }
 
       // Direct zero-delay audio playback synchronization from rAF loop
@@ -2346,6 +2368,30 @@ export function TimelinePreview() {
               {playbackRate > 0 ? '▶' : '◀'} {Math.abs(playbackRate)}×
             </span>
           ) : null}
+
+          {/* S176 — Live Hardware Playback & Dropped Frame Telemetry HUD */}
+          <div
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-bg-app border border-hairline font-mono text-[10px] text-text-secondary select-none"
+            title={`Hardware Acceleration: ${glActive ? 'WebGL2 Pipeline' : 'Chromium Direct3D11 / NVDEC Bypass'} · Total Dropped Frames: ${droppedFrames}`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                droppedFrames === 0
+                  ? 'bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.8)]'
+                  : 'bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]'
+              }`}
+            />
+            <span className="text-text-primary font-semibold">
+              {playing ? `${liveFps.toFixed(1)} FPS` : `${fps} FPS`}
+            </span>
+            <span className="text-hairline">·</span>
+            <span className="text-accent-ai">{glActive ? 'WebGL2 HW' : 'D3D11 HW'}</span>
+            <span className="text-hairline">·</span>
+            <span className={droppedFrames > 0 ? 'text-amber-400 font-semibold' : 'text-text-disabled'}>
+              {droppedFrames} Drops
+            </span>
+          </div>
+
           <IconButton
             icon="query_stats"
             label={
