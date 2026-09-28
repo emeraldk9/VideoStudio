@@ -1,6 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
-
-import { snapFrame, snapFrameWithMeta, type SequenceClip, type SnapTargetEntry } from '@shared';
+import {
+  snapFrame,
+  snapFrameWithMeta,
+  calculateMultiPointSnap,
+  type SequenceClip,
+  type SnapTargetEntry,
+} from '@shared';
 
 /**
  * Beta S145 — continuous timeline gestures, on Pointer Events.
@@ -173,27 +178,46 @@ export function useTimelineDrag(options: TimelineDragOptions) {
       let snappedTarget: number | null = null;
       let snappedLabel: string | undefined = undefined;
       if (snapping) {
-        // S175 — the nearer edge wins on a move: a clip can butt its tail
-        // against a neighbour's head, not just its own head against a tail.
-        // Ties go to the leading edge — it is the grabbed one.
-        const lead = snapPoint(rounded);
-        let frame = lead.frame;
-        let target = lead.target;
-        let label = lead.label;
         const span = origin.current.span;
-        if (drag.kind === 'move' && span > 0) {
-          const tail = snapPoint(rounded + span);
-          const leadAdjust = lead.target === null ? Infinity : Math.abs(lead.frame - rounded);
-          const tailAdjust = tail.target === null ? Infinity : Math.abs(tail.frame - (rounded + span));
-          if (tailAdjust < leadAdjust) {
-            frame = tail.frame - span;
-            target = tail.target;
-            label = tail.label;
+        if (drag.kind === 'move' && span > 0 && options.metaTargets && options.metaTargets.length > 0) {
+          // S190: Multi-point magnetic snapping evaluating head, midpoint, and tail against priority-weighted targets
+          const multiRes = calculateMultiPointSnap({
+            candidateStartFrame: rounded,
+            durationFrames: span,
+            targets: options.metaTargets,
+            toleranceFrames: tolerance,
+            enableMidpointSnap: true,
+          });
+          if (multiRes.didSnap && multiRes.matchedTarget) {
+            snapped = multiRes.snappedStartFrame;
+            snappedTarget = multiRes.matchedTarget.frame;
+            snappedLabel = multiRes.activeGuide?.label;
+          } else {
+            const lead = snapPoint(rounded);
+            snapped = Math.max(0, lead.frame);
+            snappedTarget = lead.target;
+            snappedLabel = lead.label;
           }
+        } else {
+          // S175 — Trims, scrubs, or basic targets
+          const lead = snapPoint(rounded);
+          let frame = lead.frame;
+          let target = lead.target;
+          let label = lead.label;
+          if (drag.kind === 'move' && span > 0) {
+            const tail = snapPoint(rounded + span);
+            const leadAdjust = lead.target === null ? Infinity : Math.abs(lead.frame - rounded);
+            const tailAdjust = tail.target === null ? Infinity : Math.abs(tail.frame - (rounded + span));
+            if (tailAdjust < leadAdjust) {
+              frame = tail.frame - span;
+              target = tail.target;
+              label = tail.label;
+            }
+          }
+          snapped = Math.max(0, frame);
+          snappedTarget = target;
+          snappedLabel = label;
         }
-        snapped = Math.max(0, frame);
-        snappedTarget = target;
-        snappedLabel = label;
       }
 
       let deltaFrames = snapped - origin.current.frame;
