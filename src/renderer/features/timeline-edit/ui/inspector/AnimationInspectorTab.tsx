@@ -1,9 +1,13 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import {
   keyframesFor,
   valueAtFrame,
   type KeyframeProperty,
   type SequenceClip,
+  extractSpatialWaypoints,
+  buildMotionPathSegments,
+  calculateMotionVelocity,
+  smoothKeyframeTangents,
 } from '@shared';
 import { Button } from '../../../../shared/ui/Button';
 import { Section } from '../../../../shared/ui/Section';
@@ -33,6 +37,31 @@ export function AnimationInspectorTab({
   patchClip,
 }: AnimationInspectorTabProps) {
   const [animationViewMode, setAnimationViewMode] = useState<'graph' | 'list'>('graph');
+
+  const waypoints = useMemo(() => {
+    if (!clip.keyframes || clip.keyframes.length === 0) return [];
+    return extractSpatialWaypoints(
+      clip.keyframes,
+      clip.effects?.transform?.x ?? 0.5,
+      clip.effects?.transform?.y ?? 0.5,
+    );
+  }, [clip.keyframes, clip.effects?.transform?.x, clip.effects?.transform?.y]);
+
+  const motionSegments = useMemo(() => {
+    if (waypoints.length < 2) return [];
+    return buildMotionPathSegments(waypoints);
+  }, [waypoints]);
+
+  const currentPlayheadFrame = clipRelativePlayhead();
+
+  const liveVelocity = useMemo(() => {
+    if (motionSegments.length === 0) return null;
+    return calculateMotionVelocity(motionSegments, currentPlayheadFrame, fps, 1920, 1080);
+  }, [motionSegments, currentPlayheadFrame, fps]);
+
+  const totalPathDistancePx = useMemo(() => {
+    return motionSegments.reduce((acc, seg) => acc + seg.arcLength, 0);
+  }, [motionSegments]);
 
   return (
     <Section title="Curves & Animation">
@@ -243,6 +272,49 @@ export function AnimationInspectorTab({
                   )}
                 </div>
               ) : null}
+            </div>
+          )}
+
+          {/* S185: Spatial Spline Dynamics Card */}
+          {waypoints.length >= 2 && (
+            <div className="flex flex-col gap-2 rounded-lg border border-hairline bg-bg-app p-2.5 mt-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-accent-ai">gesture</span>
+                  <span className="text-xs font-semibold text-text-primary">Spatial Spline Dynamics</span>
+                </div>
+                <span className="text-[10px] font-mono text-accent-ai bg-accent-ai/10 px-1.5 py-0.5 rounded border border-accent-ai/30">
+                  {waypoints.length} waypoints · {Math.round(totalPathDistancePx)}px
+                </span>
+              </div>
+
+              {liveVelocity && (
+                <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-bg-panel p-2 rounded border border-hairline">
+                  <div className="flex flex-col">
+                    <span className="text-[9px] text-text-disabled uppercase">Instant Speed</span>
+                    <span className="text-text-primary font-bold">{Math.round(liveVelocity.speed)} px/s</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[9px] text-text-disabled uppercase">Auto-Orient Heading</span>
+                    <span className="text-accent-ai font-bold">{Math.round(liveVelocity.headingDeg)}°</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 mt-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="text-xs flex-1"
+                  onClick={() => {
+                    const smoothed = smoothKeyframeTangents(clip.keyframes);
+                    patchClip(clip.id, { keyframes: smoothed });
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[13px] mr-1">auto_fix_high</span>
+                  Smooth Spline Tangents
+                </Button>
+              </div>
             </div>
           )}
         </div>

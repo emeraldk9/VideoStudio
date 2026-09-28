@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   type ClipTransform,
   type SequenceClip,
@@ -9,6 +9,10 @@ import {
   calculateGizmoRotation,
   type GizmoHandle,
   type SnapGuideLine,
+  extractSpatialWaypoints,
+  buildMotionPathSegments,
+  generateMotionPathSvg,
+  type MotionPathSvgResult,
 } from '@shared';
 
 export interface TransformGizmoProps {
@@ -65,6 +69,19 @@ export function TransformGizmo({
   const currentY = isText
     ? (liveTextPos?.y ?? textEffects?.positionPct?.y ?? 0.5)
     : (liveTransform?.y ?? clipTransform?.y ?? 0.5);
+
+  // Compute on-canvas Catmull-Rom motion path spline when position keyframes exist
+  const motionPathSvg: MotionPathSvgResult | null = useMemo(() => {
+    if (!clip.keyframes || clip.keyframes.length === 0) return null;
+    const waypoints = extractSpatialWaypoints(
+      clip.keyframes,
+      clipTransform?.x ?? 0.5,
+      clipTransform?.y ?? 0.5,
+    );
+    if (waypoints.length < 2) return null;
+    const segments = buildMotionPathSegments(waypoints);
+    return generateMotionPathSvg(segments, waypoints, containerDims.width, containerDims.height, 16);
+  }, [clip.keyframes, clipTransform?.x, clipTransform?.y, containerDims.width, containerDims.height]);
 
   // Bounding box dimensions (as percentages of container)
   const boxWidthPct = isText ? 40 : currentScale * 100;
@@ -275,6 +292,63 @@ export function TransformGizmo({
         )
       )}
 
+      {/* On-Canvas Motion Path Spline Overlay */}
+      {motionPathSvg && (
+        <svg
+          className="pointer-events-none absolute inset-0 w-full h-full overflow-visible z-10"
+          viewBox={`0 0 ${containerDims.width} ${containerDims.height}`}
+        >
+          <defs>
+            <filter id="motion-path-spline-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="0" stdDeviation="2.5" floodColor="rgba(56, 189, 248, 0.7)" />
+            </filter>
+          </defs>
+          {/* Smooth Catmull-Rom spline trajectory line */}
+          <path
+            d={motionPathSvg.svgPathD}
+            fill="none"
+            stroke="var(--accent-ai, #38bdf8)"
+            strokeWidth={2}
+            strokeDasharray="5 3"
+            filter="url(#motion-path-spline-glow)"
+          />
+          {/* Keyframe waypoints with frame badges */}
+          {motionPathSvg.waypointPositions.map((pt) => (
+            <g key={pt.index}>
+              <circle
+                cx={pt.x}
+                cy={pt.y}
+                r={5}
+                fill="var(--bg-app, #0f172a)"
+                stroke="var(--accent-ai, #38bdf8)"
+                strokeWidth={2}
+              />
+              <rect
+                x={pt.x + 8}
+                y={pt.y - 14}
+                width={28}
+                height={14}
+                rx={3}
+                fill="var(--bg-panel, #1e293b)"
+                stroke="var(--hairline, #334155)"
+                strokeWidth={1}
+              />
+              <text
+                x={pt.x + 22}
+                y={pt.y - 4}
+                textAnchor="middle"
+                fill="var(--accent-ai, #38bdf8)"
+                fontSize="9"
+                fontFamily="monospace"
+                fontWeight="bold"
+              >
+                {pt.frame}f
+              </text>
+            </g>
+          ))}
+        </svg>
+      )}
+
       {/* Transform Bounding Box */}
       <div
         className={`pointer-events-auto absolute border-2 transition-[border-color] duration-100 ${
@@ -323,6 +397,18 @@ export function TransformGizmo({
               <>
                 <span className="text-text-disabled">·</span>
                 <span className="text-accent-ai font-semibold">{Math.round(currentScale * 100)}%</span>
+              </>
+            )}
+            {motionPathSvg && (
+              <>
+                <span className="text-text-disabled">·</span>
+                <span
+                  title={`Motion Spline: ${motionPathSvg.waypointPositions.length} waypoints, ${Math.round(motionPathSvg.totalPathLengthPx)}px total distance`}
+                  className="flex items-center gap-0.5 text-accent-ai bg-accent-ai/10 px-1 py-0.5 rounded text-[9px]"
+                >
+                  <span className="material-symbols-outlined text-[10px]">timeline</span>
+                  <span>{motionPathSvg.waypointPositions.length} keys</span>
+                </span>
               </>
             )}
           </div>
