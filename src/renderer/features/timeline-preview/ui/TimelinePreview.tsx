@@ -548,6 +548,12 @@ export function TimelinePreview() {
   const sampleScopesFrame = useCallback(() => {
     if (!isScopesOpenRef.current) return;
 
+    const now = performance.now();
+    const scopeFps = useVideoScopesStore.getState().scopeFps ?? 30;
+    const minIntervalMs = scopeFps === 15 ? 65 : scopeFps === 30 ? 30 : 15;
+    if (now - lastScopesSampleTimeRef.current < minIntervalMs) return;
+    lastScopesSampleTimeRef.current = now;
+
     let sourceEl: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement | null = null;
     if (glActiveRef.current && canvasRef.current) {
       sourceEl = canvasRef.current;

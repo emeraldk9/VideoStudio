@@ -7,8 +7,14 @@ import {
   computeRgbParade,
   computeVectorscopePoints,
   computeWhiteBalanceStats,
-  SKIN_TONE_LINE_ANGLE_RAD,
+  computeYrgbParade,
+  detectOutlierPixels,
+  getVectorscopeTargets,
+  calculateSkinToneLineAngle,
   VECTORSCOPE_SMPTE_TARGETS,
+  type ParadeDisplayMode,
+  type ScopeRefreshRate,
+  type VectorscopeTargetMode,
 } from '@shared';
 
 import { Modal } from '../../../shared/ui/Modal';
@@ -28,6 +34,19 @@ export function VideoScopesModal() {
   const setShowGraticule = useVideoScopesStore((s) => s.setShowGraticule);
   const showSkinToneLine = useVideoScopesStore((s) => s.showSkinToneLine);
   const setShowSkinToneLine = useVideoScopesStore((s) => s.setShowSkinToneLine);
+
+  // S181 Customization Controls
+  const paradeMode = useVideoScopesStore((s) => s.paradeMode);
+  const setParadeMode = useVideoScopesStore((s) => s.setParadeMode);
+  const vectorscopeTargetMode = useVideoScopesStore((s) => s.vectorscopeTargetMode);
+  const setVectorscopeTargetMode = useVideoScopesStore((s) => s.setVectorscopeTargetMode);
+  const skinToneAngleOffset = useVideoScopesStore((s) => s.skinToneAngleOffset);
+  const setSkinToneAngleOffset = useVideoScopesStore((s) => s.setSkinToneAngleOffset);
+  const highlightGamutAlerts = useVideoScopesStore((s) => s.highlightGamutAlerts);
+  const setHighlightGamutAlerts = useVideoScopesStore((s) => s.setHighlightGamutAlerts);
+  const scopeFps = useVideoScopesStore((s) => s.scopeFps);
+  const setScopeFps = useVideoScopesStore((s) => s.setScopeFps);
+
   const frameBuffer = useVideoScopesStore((s) => s.frameBuffer);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -81,19 +100,56 @@ export function VideoScopesModal() {
     const { data, width: fbW, height: fbH } = frameBuffer;
 
     if (scopeType === 'waveform') {
-      renderWaveform(ctx, width, height, data, fbW, fbH, intensity, showGraticule);
+      renderWaveform(ctx, width, height, data, fbW, fbH, intensity, showGraticule, highlightGamutAlerts);
     } else if (scopeType === 'parade') {
-      renderParade(ctx, width, height, data, fbW, fbH, intensity, showGraticule);
+      renderParade(ctx, width, height, data, fbW, fbH, intensity, showGraticule, paradeMode, highlightGamutAlerts);
     } else if (scopeType === 'vectorscope') {
-      renderVectorscope(ctx, width, height, data, fbW, fbH, intensity, showGraticule, showSkinToneLine);
+      renderVectorscope(
+        ctx,
+        width,
+        height,
+        data,
+        fbW,
+        fbH,
+        intensity,
+        showGraticule,
+        showSkinToneLine,
+        vectorscopeTargetMode,
+        skinToneAngleOffset,
+      );
     } else if (scopeType === 'histogram') {
       renderHistogram(ctx, width, height, data, fbW, fbH, intensity, showGraticule);
     } else if (scopeType === 'all') {
-      renderAllScopes(ctx, width, height, data, fbW, fbH, intensity, showGraticule, showSkinToneLine);
+      renderAllScopes(
+        ctx,
+        width,
+        height,
+        data,
+        fbW,
+        fbH,
+        intensity,
+        showGraticule,
+        showSkinToneLine,
+        paradeMode,
+        vectorscopeTargetMode,
+        skinToneAngleOffset,
+        highlightGamutAlerts,
+      );
     }
 
     ctx.restore();
-  }, [isOpen, scopeType, intensity, showGraticule, showSkinToneLine, frameBuffer]);
+  }, [
+    isOpen,
+    scopeType,
+    intensity,
+    showGraticule,
+    showSkinToneLine,
+    paradeMode,
+    vectorscopeTargetMode,
+    skinToneAngleOffset,
+    highlightGamutAlerts,
+    frameBuffer,
+  ]);
 
   if (!isOpen) return null;
 
@@ -106,7 +162,7 @@ export function VideoScopesModal() {
           <span className="material-symbols-outlined text-accent-ai text-[20px]">query_stats</span>
           <span>Broadcast Video Scopes</span>
           <span className="text-[10px] font-mono text-text-disabled uppercase px-1.5 py-0.5 rounded bg-bg-app border border-hairline">
-            Rec.709 60fps
+            Rec.709 {scopeFps}fps
           </span>
         </div>
       }
@@ -121,7 +177,7 @@ export function VideoScopesModal() {
             {(
               [
                 { id: 'waveform', label: 'Waveform', icon: 'show_chart' },
-                { id: 'parade', label: 'RGB Parade', icon: 'view_column' },
+                { id: 'parade', label: 'Parade', icon: 'view_column' },
                 { id: 'vectorscope', label: 'Vectorscope', icon: 'radar' },
                 { id: 'histogram', label: 'Histogram', icon: 'bar_chart' },
                 { id: 'all', label: '4-Up All', icon: 'dashboard' },
@@ -133,7 +189,7 @@ export function VideoScopesModal() {
                   key={mode.id}
                   type="button"
                   onClick={() => setScopeType(mode.id as VideoScopeType)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-button text-xs font-medium transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-button text-xs font-medium transition-all cursor-pointer ${
                     active
                       ? 'bg-bg-selected text-text-primary font-semibold'
                       : 'text-text-secondary hover:text-text-primary'
@@ -148,13 +204,92 @@ export function VideoScopesModal() {
             })}
           </div>
 
-          {/* Controls: Intensity & Graticules */}
-          <div className="flex items-center gap-3">
+          {/* Controls: Mode Customization, Graticules & Throttling */}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Parade Mode Switcher (Visible on Parade or All) */}
+            {(scopeType === 'parade' || scopeType === 'all') && (
+              <div className="flex items-center rounded border border-hairline bg-bg-app p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setParadeMode('rgb')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    paradeMode === 'rgb'
+                      ? 'bg-accent-ai text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="3-Channel RGB Parade"
+                >
+                  RGB
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setParadeMode('yrgb')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    paradeMode === 'yrgb'
+                      ? 'bg-accent-ai text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="4-Channel YRGB (Luma + RGB) Parade"
+                >
+                  YRGB
+                </button>
+              </div>
+            )}
+
+            {/* Vectorscope Target Mode (Visible on Vectorscope or All) */}
+            {(scopeType === 'vectorscope' || scopeType === 'all') && (
+              <div className="flex items-center rounded border border-hairline bg-bg-app p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setVectorscopeTargetMode('75pct')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    vectorscopeTargetMode === '75pct'
+                      ? 'bg-accent-ai text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="75% SMPTE color targets (Broadcast Standard)"
+                >
+                  75%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVectorscopeTargetMode('100pct')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    vectorscopeTargetMode === '100pct'
+                      ? 'bg-accent-ai text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="100% SMPTE color targets (Full Gamut)"
+                >
+                  100%
+                </button>
+              </div>
+            )}
+
+            {/* Skin Tone Angle Micro-offset Slider (Visible when Skin Line enabled) */}
+            {showSkinToneLine && (scopeType === 'vectorscope' || scopeType === 'all') && (
+              <div className="flex items-center gap-1 text-[11px] text-text-disabled font-mono" title="Fine-tune vectorscope skin-tone angle">
+                <span>Angle:</span>
+                <input
+                  type="range"
+                  min={-10}
+                  max={10}
+                  step={1}
+                  value={skinToneAngleOffset}
+                  onChange={(e) => setSkinToneAngleOffset(parseInt(e.target.value, 10))}
+                  className="w-14 h-1 accent-amber-400 cursor-pointer"
+                />
+                <span className="text-[10px] tabular-nums text-amber-400 font-semibold w-7 text-right">
+                  {skinToneAngleOffset > 0 ? `+${skinToneAngleOffset}°` : `${skinToneAngleOffset}°`}
+                </span>
+              </div>
+            )}
+
             {/* Graticule toggle */}
             <button
               type="button"
               onClick={() => setShowGraticule(!showGraticule)}
-              className={`flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors ${
+              className={`flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors cursor-pointer ${
                 showGraticule
                   ? 'border-accent-ai/50 bg-accent-ai/10 text-accent-ai'
                   : 'border-hairline text-text-disabled'
@@ -165,12 +300,12 @@ export function VideoScopesModal() {
               <span>Graticule</span>
             </button>
 
-            {/* Skin Tone Line Toggle (Vectorscope or 4-Up) */}
+            {/* Skin Tone Line Toggle */}
             {(scopeType === 'vectorscope' || scopeType === 'all') && (
               <button
                 type="button"
                 onClick={() => setShowSkinToneLine(!showSkinToneLine)}
-                className={`flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors ${
+                className={`flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors cursor-pointer ${
                   showSkinToneLine
                     ? 'border-amber-400/50 bg-amber-400/10 text-amber-400'
                     : 'border-hairline text-text-disabled'
@@ -181,6 +316,41 @@ export function VideoScopesModal() {
                 <span>Skin Line</span>
               </button>
             )}
+
+            {/* Gamut Outliers Alert Toggle */}
+            <button
+              type="button"
+              onClick={() => setHighlightGamutAlerts(!highlightGamutAlerts)}
+              className={`flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors cursor-pointer ${
+                highlightGamutAlerts
+                  ? 'border-rose-500/50 bg-rose-500/10 text-rose-400 font-semibold'
+                  : 'border-hairline text-text-disabled hover:text-text-primary'
+              }`}
+              title="Highlight clipped highlights (>100 IRE) and crushed blacks (<0 IRE) with false-color alert indicators"
+            >
+              <span className="material-symbols-outlined text-[14px]">warning</span>
+              <span>Gamut Alerts</span>
+            </button>
+
+            {/* Scope FPS Throttling Selector */}
+            <div className="flex items-center rounded border border-hairline bg-bg-app p-0.5 text-xs">
+              <span className="px-1 text-[10px] font-mono text-text-muted">FPS:</span>
+              {([15, 30, 60] as const).map((fpsVal) => (
+                <button
+                  key={fpsVal}
+                  type="button"
+                  onClick={() => setScopeFps(fpsVal)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium transition-colors cursor-pointer ${
+                    scopeFps === fpsVal
+                      ? 'bg-accent-ai text-white'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title={`Sample scopes at ${fpsVal} frames per second`}
+                >
+                  {fpsVal}
+                </button>
+              ))}
+            </div>
 
             {/* Trace Intensity */}
             <div className="flex items-center gap-1.5">
@@ -193,7 +363,7 @@ export function VideoScopesModal() {
                 value={intensity}
                 onChange={(e) => setIntensity(parseFloat(e.target.value))}
                 title="Adjust trace brightness gain"
-                className="w-20 h-1.5 accent-accent-ai cursor-pointer"
+                className="w-16 h-1.5 accent-accent-ai cursor-pointer"
               />
             </div>
           </div>
@@ -285,6 +455,7 @@ function renderWaveform(
   fbH: number,
   intensity: number,
   showGraticule: boolean,
+  highlightGamutAlerts = false,
 ) {
   const marginL = 35;
   const marginR = 15;
@@ -333,6 +504,35 @@ function renderWaveform(
       ctx.fillRect(marginL + c * colW, y, Math.max(1, colW), Math.max(1, binH));
     }
   }
+
+  // S181: Gamut Outlier Alert Overlays
+  if (highlightGamutAlerts) {
+    const outliers = detectOutlierPixels(data, fbW, fbH);
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'left';
+
+    if (outliers.clippedCount > 0) {
+      ctx.fillStyle = '#06b6d4';
+      ctx.fillText(`▲ CLIPPED (${outliers.clippedPercent}%)`, marginL + 6, marginT + 12);
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(marginL, marginT);
+      ctx.lineTo(marginL + plotW, marginT);
+      ctx.stroke();
+    }
+
+    if (outliers.crushedCount > 0) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(`▼ CRUSHED (${outliers.crushedPercent}%)`, marginL + 6, marginT + plotH - 6);
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(marginL, marginT + plotH);
+      ctx.lineTo(marginL + plotW, marginT + plotH);
+      ctx.stroke();
+    }
+  }
 }
 
 function renderParade(
@@ -344,6 +544,8 @@ function renderParade(
   fbH: number,
   intensity: number,
   showGraticule: boolean,
+  paradeMode: ParadeDisplayMode = 'rgb',
+  highlightGamutAlerts = false,
 ) {
   const marginL = 35;
   const marginR = 15;
@@ -352,16 +554,27 @@ function renderParade(
   const plotW = width - marginL - marginR;
   const plotH = height - marginT - marginB;
 
-  const gap = 12;
-  const channelW = Math.floor((plotW - gap * 2) / 3);
+  const isYrgb = paradeMode === 'yrgb';
+  const numChannels = isYrgb ? 4 : 3;
+  const gap = 10;
+  const channelW = Math.floor((plotW - gap * (numChannels - 1)) / numChannels);
   const numBins = 100;
-  const parade = computeRgbParade(data, fbW, fbH, channelW, numBins);
 
-  const channels = [
-    { name: 'RED', grid: parade.rGrid, color: (a: number) => `rgba(239, 68, 68, ${a})`, x: marginL },
-    { name: 'GREEN', grid: parade.gGrid, color: (a: number) => `rgba(34, 197, 94, ${a})`, x: marginL + channelW + gap },
-    { name: 'BLUE', grid: parade.bGrid, color: (a: number) => `rgba(59, 130, 246, ${a})`, x: marginL + (channelW + gap) * 2 },
-  ];
+  const yrgbData = isYrgb ? computeYrgbParade(data, fbW, fbH, channelW, numBins) : null;
+  const rgbData = !isYrgb ? computeRgbParade(data, fbW, fbH, channelW, numBins) : null;
+
+  const channels = isYrgb
+    ? [
+        { name: 'LUMA', grid: yrgbData!.yGrid, color: (a: number) => `rgba(226, 232, 240, ${a})`, x: marginL },
+        { name: 'RED', grid: yrgbData!.rGrid, color: (a: number) => `rgba(239, 68, 68, ${a})`, x: marginL + channelW + gap },
+        { name: 'GREEN', grid: yrgbData!.gGrid, color: (a: number) => `rgba(34, 197, 94, ${a})`, x: marginL + (channelW + gap) * 2 },
+        { name: 'BLUE', grid: yrgbData!.bGrid, color: (a: number) => `rgba(59, 130, 246, ${a})`, x: marginL + (channelW + gap) * 3 },
+      ]
+    : [
+        { name: 'RED', grid: rgbData!.rGrid, color: (a: number) => `rgba(239, 68, 68, ${a})`, x: marginL },
+        { name: 'GREEN', grid: rgbData!.gGrid, color: (a: number) => `rgba(34, 197, 94, ${a})`, x: marginL + channelW + gap },
+        { name: 'BLUE', grid: rgbData!.bGrid, color: (a: number) => `rgba(59, 130, 246, ${a})`, x: marginL + (channelW + gap) * 2 },
+      ];
 
   // Graticules
   if (showGraticule) {
@@ -404,6 +617,22 @@ function renderParade(
       }
     }
   }
+
+  // S181: Gamut Outlier Alert Overlays
+  if (highlightGamutAlerts) {
+    const outliers = detectOutlierPixels(data, fbW, fbH);
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'left';
+
+    if (outliers.clippedCount > 0) {
+      ctx.fillStyle = '#06b6d4';
+      ctx.fillText(`▲ CLIPPED (${outliers.clippedPercent}%)`, marginL + 6, marginT + 12);
+    }
+    if (outliers.crushedCount > 0) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText(`▼ CRUSHED (${outliers.crushedPercent}%)`, marginL + 6, marginT + plotH - 6);
+    }
+  }
 }
 
 function renderVectorscope(
@@ -416,10 +645,15 @@ function renderVectorscope(
   intensity: number,
   showGraticule: boolean,
   showSkinToneLine: boolean,
+  targetMode: VectorscopeTargetMode = '75pct',
+  skinToneAngleOffset = 0,
 ) {
   const centerX = width / 2;
   const centerY = height / 2;
   const radius = Math.min(width, height) * 0.42;
+
+  const targets = getVectorscopeTargets(targetMode, VECTORSCOPE_SMPTE_TARGETS);
+  const skinAngle = calculateSkinToneLineAngle(123, skinToneAngleOffset);
 
   // Outer circle & reference rings
   if (showGraticule) {
@@ -446,11 +680,10 @@ function renderVectorscope(
     ctx.lineTo(centerX, centerY + radius);
     ctx.stroke();
 
-    // SMPTE 75% Target Boxes
+    // SMPTE Target Boxes (75% or 100%)
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
-    for (const target of VECTORSCOPE_SMPTE_TARGETS) {
-      // U is horizontal (X), V is vertical (inverted Y)
+    for (const target of targets) {
       const tx = centerX + target.u * radius;
       const ty = centerY - target.v * radius;
 
@@ -461,7 +694,7 @@ function renderVectorscope(
       ctx.fillText(target.name, tx, ty - 6);
     }
 
-    // Skin Tone / I-Line
+    // Skin Tone / I-Line with angle micro-adjustment
     if (showSkinToneLine) {
       ctx.strokeStyle = '#f59e0b';
       ctx.lineWidth = 1;
@@ -469,8 +702,8 @@ function renderVectorscope(
       ctx.beginPath();
       ctx.moveTo(centerX, centerY);
       ctx.lineTo(
-        centerX + Math.cos(SKIN_TONE_LINE_ANGLE_RAD) * radius,
-        centerY - Math.sin(SKIN_TONE_LINE_ANGLE_RAD) * radius,
+        centerX + Math.cos(skinAngle.radians) * radius,
+        centerY - Math.sin(skinAngle.radians) * radius,
       );
       ctx.stroke();
       ctx.setLineDash([]);
@@ -478,9 +711,9 @@ function renderVectorscope(
       ctx.fillStyle = '#f59e0b';
       ctx.font = '8px monospace';
       ctx.fillText(
-        'I-Line',
-        centerX + Math.cos(SKIN_TONE_LINE_ANGLE_RAD) * (radius + 14),
-        centerY - Math.sin(SKIN_TONE_LINE_ANGLE_RAD) * (radius + 14),
+        `I-Line (${skinAngle.degrees}°)`,
+        centerX + Math.cos(skinAngle.radians) * (radius + 14),
+        centerY - Math.sin(skinAngle.radians) * (radius + 14),
       );
     }
   }
@@ -519,56 +752,45 @@ function renderHistogram(
   const plotW = width - marginL - marginR;
   const plotH = height - marginT - marginB;
 
-  const hist = computeHistogramBins(data, fbW, fbH);
-  const maxVal = hist.maxCount > 0 ? hist.maxCount : 1;
+  const bins = computeHistogramBins(data, fbW, fbH);
+  if (bins.maxCount === 0) return;
 
   // Graticules
   if (showGraticule) {
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    ctx.beginPath();
-    // 0, 64, 128, 192, 255 marks
-    for (const bin of [0, 64, 128, 192, 255]) {
-      const x = marginL + (bin / 255) * plotW;
+    ctx.font = '9px monospace';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'center';
+
+    const levels = [0, 64, 128, 192, 255];
+    for (const lvl of levels) {
+      const x = marginL + (lvl / 255) * plotW;
+      ctx.beginPath();
       ctx.moveTo(x, marginT);
       ctx.lineTo(x, marginT + plotH);
-    }
-    ctx.stroke();
+      ctx.stroke();
 
-    ctx.fillStyle = '#64748b';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Shadows', marginL + plotW * 0.16, height - 8);
-    ctx.fillText('Midtones', marginL + plotW * 0.5, height - 8);
-    ctx.fillText('Highlights', marginL + plotW * 0.84, height - 8);
+      ctx.fillText(`${lvl}`, x, height - 10);
+    }
   }
 
-  // Draw Channels
+  const barW = plotW / 256;
+  const maxSafe = Math.max(1, bins.maxCount * 0.75);
+
   const channels = [
-    { data: hist.luma, color: 'rgba(255, 255, 255, 0.4)' },
-    { data: hist.r, color: 'rgba(239, 68, 68, 0.55)' },
-    { data: hist.g, color: 'rgba(34, 197, 94, 0.55)' },
-    { data: hist.b, color: 'rgba(59, 130, 246, 0.55)' },
+    { counts: bins.r, color: 'rgba(239, 68, 68, 0.35)' },
+    { counts: bins.g, color: 'rgba(34, 197, 94, 0.35)' },
+    { counts: bins.b, color: 'rgba(59, 130, 246, 0.35)' },
+    { counts: bins.luma, color: 'rgba(255, 255, 255, 0.45)' },
   ];
 
-  ctx.lineWidth = 1.2;
-
   for (const ch of channels) {
-    ctx.strokeStyle = ch.color;
-    ctx.beginPath();
-
+    ctx.fillStyle = ch.color;
     for (let i = 0; i < 256; i++) {
-      const x = marginL + (i / 255) * plotW;
-      const normY = Math.min(1.0, (ch.data[i] / maxVal) * (1.2 * intensity));
-      const y = marginT + plotH - normY * plotH;
-
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
+      const barH = Math.min(plotH, (ch.counts[i] / maxSafe) * plotH * intensity);
+      ctx.fillRect(marginL + i * barW, marginT + plotH - barH, Math.max(1, barW), barH);
     }
-    ctx.stroke();
   }
 }
 
@@ -582,6 +804,10 @@ function renderAllScopes(
   intensity: number,
   showGraticule: boolean,
   showSkinToneLine: boolean,
+  paradeMode: ParadeDisplayMode = 'rgb',
+  vectorscopeTargetMode: VectorscopeTargetMode = '75pct',
+  skinToneAngleOffset = 0,
+  highlightGamutAlerts = false,
 ) {
   const halfW = width / 2;
   const halfH = height / 2;
@@ -591,24 +817,24 @@ function renderAllScopes(
   ctx.beginPath();
   ctx.rect(0, 0, halfW, halfH);
   ctx.clip();
-  renderWaveform(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule);
+  renderWaveform(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule, highlightGamutAlerts);
   ctx.fillStyle = '#94a3b8';
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'left';
   ctx.fillText('WAVEFORM (LUMA)', 10, 14);
   ctx.restore();
 
-  // 2. Top-Right: RGB Parade
+  // 2. Top-Right: Parade (RGB or YRGB)
   ctx.save();
   ctx.translate(halfW, 0);
   ctx.beginPath();
   ctx.rect(0, 0, halfW, halfH);
   ctx.clip();
-  renderParade(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule);
+  renderParade(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule, paradeMode, highlightGamutAlerts);
   ctx.fillStyle = '#94a3b8';
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('RGB PARADE', 10, 14);
+  ctx.fillText(paradeMode === 'yrgb' ? 'YRGB PARADE' : 'RGB PARADE', 10, 14);
   ctx.restore();
 
   // 3. Bottom-Left: Vectorscope
@@ -617,7 +843,19 @@ function renderAllScopes(
   ctx.beginPath();
   ctx.rect(0, 0, halfW, halfH);
   ctx.clip();
-  renderVectorscope(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule, showSkinToneLine);
+  renderVectorscope(
+    ctx,
+    halfW,
+    halfH,
+    data,
+    fbW,
+    fbH,
+    intensity,
+    showGraticule,
+    showSkinToneLine,
+    vectorscopeTargetMode,
+    skinToneAngleOffset,
+  );
   ctx.fillStyle = '#94a3b8';
   ctx.font = 'bold 9px monospace';
   ctx.textAlign = 'left';
@@ -647,4 +885,3 @@ function renderAllScopes(
   ctx.lineTo(width, halfH);
   ctx.stroke();
 }
-
