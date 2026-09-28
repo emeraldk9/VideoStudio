@@ -21,6 +21,13 @@ import {
   ASS_SUBTITLE_STYLES,
   DNXHR_PROFILE_DETAILS,
   PRORES_PROFILES,
+  ALL_MULTI_FORMAT_PROFILE_IDS,
+  DEFAULT_BATCH_PROFILE_IDS,
+  MULTI_FORMAT_PROFILES,
+  buildMultiFormatBatch,
+  calculateBatchEstimatedDuration,
+  formatBatchSummary,
+  type MultiFormatProfileId,
 } from '@shared';
 
 import { useProjectStore } from '../../../entities/project';
@@ -247,6 +254,11 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
   const [twoPass, setTwoPass] = useState<boolean>(false);
   const [proresProfile, setProresProfile] = useState<number>(3);
   const [dnxhrProfile, setDnxhrProfile] = useState<DnxhrProfileId>('dnxhr_hq');
+  // S177 Multi-Format Social & Broadcast Batch Presets
+  const [exportBatchMultiFormat, setExportBatchMultiFormat] = useState<boolean>(false);
+  const [selectedBatchProfiles, setSelectedBatchProfiles] = useState<MultiFormatProfileId[]>([
+    ...DEFAULT_BATCH_PROFILE_IDS,
+  ]);
   const queueCount = useRenderQueueStore((state) => state.jobs.length);
 
   // S157 Broadcast Loudness & Dolby Atmos ADM BWF Metadata
@@ -282,6 +294,14 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
   }, [exportRange, hasWorkArea, inPointFrame, outPointFrame, durationFrames]);
   const durationSec = framesToSeconds(effectiveDurationFrames, fps);
   const aspectRatioStr = `${width}:${height}`;
+
+  const batchEstimates = useMemo(() => {
+    return calculateBatchEstimatedDuration(durationSec, selectedBatchProfiles, acceleration);
+  }, [durationSec, selectedBatchProfiles, acceleration]);
+
+  const batchSummaryText = useMemo(() => {
+    return formatBatchSummary(selectedBatchProfiles.length, batchEstimates.formattedTotal);
+  }, [selectedBatchProfiles.length, batchEstimates.formattedTotal]);
 
   const hasSubtitleClips = useMemo(() => {
     return document?.clips.some((clip) => clip.sourceKind === 'text' && Boolean(clip.effects?.text?.text?.trim())) ?? false;
@@ -529,7 +549,27 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
         exportAdmBwfXml: exportAdmXml,
       };
 
-      if (exportStems) {
+      if (exportBatchMultiFormat) {
+        const batch = buildMultiFormatBatch(baseReq, selectedBatchProfiles);
+        useRenderQueueStore.getState().enqueueBatch(
+          batch.map((req) => {
+            const matchedProfile = Object.values(MULTI_FORMAT_PROFILES).find((p) =>
+              req.outputPath.endsWith(`_${p.suffix}.${p.extension}`),
+            );
+            return {
+              sequenceId: document.sequence.id,
+              sequenceName: document.sequence.name,
+              presetName: matchedProfile?.label ?? 'Multi-Format Delivery',
+              request: req,
+              outputPath: req.outputPath,
+            };
+          }),
+        );
+        pushToast({
+          variant: 'success',
+          message: `Added ${batch.length} multi-format deliverables to Render Queue!`,
+        });
+      } else if (exportStems) {
         const batch = buildStemExportBatch(baseReq, selectedStems, undefined, 'wav');
         useRenderQueueStore.getState().enqueueBatch(
           batch.map((req) => ({
@@ -1200,6 +1240,81 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
                     </div>
                   )}
 
+                  {/* S177 Multi-Format Social & Broadcast Batch Delivery */}
+                  <div className="flex flex-col gap-2.5 rounded-xl border border-hairline/60 bg-bg-app p-3 mt-1">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-xs font-medium text-text-primary flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px] text-accent-ai">layers</span>
+                          <span>Multi-Format Batch Delivery</span>
+                          {exportBatchMultiFormat && (
+                            <span className="rounded bg-accent-ai/20 text-accent-ai text-[10px] font-mono px-1.5 py-0.2 border border-accent-ai/30 font-semibold">
+                              {batchSummaryText}
+                            </span>
+                          )}
+                        </label>
+                        <p className="text-[11px] text-text-disabled">Simultaneously queue YouTube 4K, TikTok 9:16, Instagram 1:1, and ProRes 422 HQ archive deliverables</p>
+                      </div>
+                      <Switch
+                        checked={exportBatchMultiFormat}
+                        label="Batch Deliveries"
+                        onChange={() => setExportBatchMultiFormat(!exportBatchMultiFormat)}
+                      />
+                    </div>
+
+                    {exportBatchMultiFormat && (
+                      <div className="space-y-2 pt-2 border-t border-hairline">
+                        <div className="grid grid-cols-2 gap-2">
+                          {ALL_MULTI_FORMAT_PROFILE_IDS.map((id) => {
+                            const profile = MULTI_FORMAT_PROFILES[id];
+                            const isChecked = selectedBatchProfiles.includes(id);
+                            const estSec = batchEstimates.profileEstimates[id];
+                            return (
+                              <label
+                                key={id}
+                                className={`flex items-start gap-2 rounded-lg border p-2 text-xs cursor-pointer transition-all ${
+                                  isChecked
+                                    ? 'border-accent-ai bg-accent-ai/10 text-text-primary'
+                                    : 'border-hairline bg-bg-canvas/50 text-text-secondary hover:text-text-primary'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedBatchProfiles([...selectedBatchProfiles, id]);
+                                    } else {
+                                      if (selectedBatchProfiles.length > 1) {
+                                        setSelectedBatchProfiles(selectedBatchProfiles.filter((p) => p !== id));
+                                      }
+                                    }
+                                  }}
+                                  className="accent-accent-ai mt-0.5"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-semibold truncate">{profile.label}</span>
+                                    {estSec && (
+                                      <span className="font-mono text-[9px] text-text-disabled shrink-0">
+                                        ~{estSec}s
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-text-disabled block truncate">{profile.description}</span>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg bg-black/40 px-3 py-1.5 border border-white/5 font-mono text-[11px] text-text-secondary">
+                          <span>Total Estimated Encode Time:</span>
+                          <span className="text-accent-ai font-semibold">{batchEstimates.formattedTotal}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Audio Stems Batch Delivery */}
                   <div className="flex flex-col gap-2.5 rounded-xl border border-hairline/60 bg-bg-app p-3 mt-1">
                     <div className="flex items-center justify-between">
@@ -1310,25 +1425,33 @@ export function ExportModal({ isOpen, onClose }: ExportModalProps) {
               Cancel
             </Button>
             <Button
-              variant="secondary"
+              variant={exportBatchMultiFormat ? 'primary' : 'secondary'}
               size="sm"
-              disabled={busy || !document}
+              disabled={busy || !document || (exportBatchMultiFormat && selectedBatchProfiles.length === 0)}
               onClick={handleAddToQueue}
               className="flex items-center gap-1.5 font-semibold"
             >
-              <span className="material-symbols-outlined text-[16px]">playlist_add</span>
-              <span>Add to Queue</span>
+              <span className="material-symbols-outlined text-[16px]">
+                {exportBatchMultiFormat ? 'layers' : 'playlist_add'}
+              </span>
+              <span>
+                {exportBatchMultiFormat
+                  ? `Queue Batch (${selectedBatchProfiles.length})`
+                  : 'Add to Queue'}
+              </span>
             </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={busy || !document}
-              onClick={handleStartExport}
-              className="flex items-center gap-1.5 font-semibold"
-            >
-              <span className="material-symbols-outlined text-[16px]">rocket_launch</span>
-              <span>Export Video</span>
-            </Button>
+            {!exportBatchMultiFormat && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={busy || !document}
+                onClick={handleStartExport}
+                className="flex items-center gap-1.5 font-semibold"
+              >
+                <span className="material-symbols-outlined text-[16px]">rocket_launch</span>
+                <span>Export Video</span>
+              </Button>
+            )}
           </div>
         </div>
       )}

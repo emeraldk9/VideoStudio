@@ -87,6 +87,11 @@ export function RenderQueueDock() {
                 {failedCount} failed
               </span>
             )}
+            {jobs.find((j) => j.status === 'rendering')?.formattedEta && (
+              <span className="rounded bg-cyan-950/60 px-2 py-0.5 font-mono text-[10px] text-cyan-300 border border-cyan-500/30">
+                ETA {jobs.find((j) => j.status === 'rendering')?.formattedEta}
+              </span>
+            )}
           </div>
 
           {/* Queue Actions */}
@@ -206,10 +211,17 @@ function JobCard({ job, onCancel, onRetry, onRemove, onReveal }: JobCardProps) {
         {/* Status Pill */}
         <div className="flex items-center gap-1.5 shrink-0">
           {isRendering && (
-            <span className="flex items-center gap-1 rounded-full bg-cyan-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-cyan-300 border border-cyan-500/40 animate-pulse">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
-              <span>{job.progress}%</span>
-            </span>
+            <>
+              {job.formattedEta && (
+                <span className="rounded bg-black/60 px-1.5 py-0.5 font-mono text-[9px] text-cyan-200 border border-cyan-500/30">
+                  ETA {job.formattedEta}
+                </span>
+              )}
+              <span className="flex items-center gap-1 rounded-full bg-cyan-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-cyan-300 border border-cyan-500/40 animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                <span>{job.progress}%</span>
+              </span>
+            </>
           )}
           {isCompleted && (
             <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-300 border border-emerald-500/40">
@@ -247,7 +259,10 @@ function JobCard({ job, onCancel, onRetry, onRemove, onReveal }: JobCardProps) {
           </div>
           <div className="flex justify-between font-mono text-[10px] text-text-secondary">
             <span>{job.stage ? `Stage: ${job.stage}` : 'Encoding...'}</span>
-            <span>{job.stageDetail || ''}</span>
+            <span>
+              {job.formattedEta ? `ETA ${job.formattedEta} · ` : ''}
+              {job.stageDetail || ''}
+            </span>
           </div>
         </div>
       )}

@@ -143,6 +143,7 @@ export * from './utils/timeline/spatial-audio-atmos-ops';
 export * from './utils/timeline/transcript-editing-ops';
 export * from './utils/timeline/timeline-virtualization-ops';
 export * from './utils/timeline/nle-hud-ops';
+export * from './utils/timeline/multi-format-batch-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

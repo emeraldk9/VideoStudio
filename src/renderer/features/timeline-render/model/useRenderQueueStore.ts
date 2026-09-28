@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand';
-import type { SequenceRenderProgress, SequenceRenderRequest } from '@shared';
+import { calculateLiveEta, type SequenceRenderProgress, type SequenceRenderRequest } from '@shared';
 
 export type RenderJobStatus = 'queued' | 'rendering' | 'completed' | 'failed' | 'cancelled';
 
@@ -27,6 +27,8 @@ export interface RenderQueueJob {
   addedAt: number;
   startedAt?: number;
   completedAt?: number;
+  formattedEta?: string;
+  estimatedSecondsRemaining?: number;
 }
 
 interface RenderQueueStoreState {
@@ -206,9 +208,12 @@ export const useRenderQueueStore = create<RenderQueueStoreState>((set, get) => {
     },
 
     updateActiveProgress: (progress) => {
-      const { activeJobId } = get();
+      const { activeJobId, jobs } = get();
       if (!activeJobId) return;
+      const activeJob = jobs.find((j) => j.id === activeJobId);
       const pct = Math.min(100, Math.max(0, Math.round((progress.completed / Math.max(1, progress.total)) * 100)));
+      const eta = calculateLiveEta(activeJob?.startedAt, pct);
+
       set((state) => ({
         jobs: state.jobs.map((j) =>
           j.id === activeJobId
@@ -217,6 +222,8 @@ export const useRenderQueueStore = create<RenderQueueStoreState>((set, get) => {
                 progress: pct,
                 stage: progress.stage,
                 stageDetail: progress.detail,
+                formattedEta: eta?.formattedEta,
+                estimatedSecondsRemaining: eta?.remainingSeconds,
               }
             : j,
         ),
