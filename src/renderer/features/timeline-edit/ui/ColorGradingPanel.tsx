@@ -29,6 +29,7 @@ import { Select } from '../../../shared/ui/Select';
 import { Switch } from '../../../shared/ui/Switch';
 import { ColorWheel } from './ColorWheel';
 import { RgbCurvesEditor } from './RgbCurvesEditor';
+import { HslQualifierSection } from './inspector/HslQualifierSection';
 
 export interface ColorGradingPanelProps {
   clip: SequenceClip;
@@ -39,7 +40,9 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
   const document = useSequenceStore((state) => state.document);
   const pushToast = useToastStore((state) => state.pushToast);
 
-  const [activeSubTab, setActiveSubTab] = useState<'wheels' | 'curves' | 'tone' | 'presets' | 'lut' | 'match'>('wheels');
+  const [activeSubTab, setActiveSubTab] = useState<
+    'wheels' | 'curves' | 'qualifier' | 'tone' | 'presets' | 'lut' | 'match'
+  >('wheels');
 
   // S74 Shot Match State
   const [selectedRefClipId, setSelectedRefClipId] = useState<string>('');
@@ -210,6 +213,19 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
         </button>
         <button
           type="button"
+          onClick={() => setActiveSubTab('qualifier')}
+          className={`flex-1 flex items-center justify-center gap-1 rounded-button py-1 text-center text-[11px] font-medium transition-all ${
+            activeSubTab === 'qualifier'
+              ? 'bg-bg-selected text-text-primary font-semibold'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+          title="HSL Secondary Color Qualifier & Keyer"
+        >
+          <span className="material-symbols-outlined text-[13px]">colorize</span>
+          <span>Qualifier</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveSubTab('tone')}
           className={`flex-1 flex items-center justify-center gap-1 rounded-button py-1 text-center text-[11px] font-medium transition-all ${
             activeSubTab === 'tone'
@@ -264,6 +280,11 @@ export function ColorGradingPanel({ clip }: ColorGradingPanelProps) {
           curves={grade.curves}
           onChange={updateCurves}
         />
+      )}
+
+      {/* S194: HSL Color Qualifier & Secondary Keyer Tab */}
+      {activeSubTab === 'qualifier' && (
+        <HslQualifierSection clip={clip} patchClip={patchClip} />
       )}
 
       {/* Tab 1: 3-Way Chromatic Wheels (Lift, Gamma, Gain) */}

@@ -68,6 +68,7 @@ import { useModalStore } from '../../../../shared/model/modalStore';
 import { MotionTrackingSection } from './MotionTrackingSection';
 import { SceneCutDetectionSection } from './SceneCutDetectionSection';
 import { MultiCamSection } from './MultiCamSection';
+import { HslQualifierSection } from './HslQualifierSection';
 
 export interface VideoInspectorTabProps {
   clip: SequenceClip;
@@ -685,6 +686,11 @@ export const VideoInspectorTab = React.memo(function VideoInspectorTab({
               ) : null}
             </div>
           </Section>
+        ) : null}
+
+        {/* S194 — Video HSL Color Qualifier & Secondary Grading Keyer Engine */}
+        {(currentTab === 'video' || currentTab === 'basic') && clip.sourceKind !== 'text' ? (
+          <HslQualifierSection clip={clip} patchClip={patchClip} />
         ) : null}
 
         {/* S39 / S62 — Shape Mask Engine (including Adjustment Layers) */}

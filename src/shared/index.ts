@@ -159,6 +159,7 @@ export * from './utils/timeline/timeline-magnetic-snapping-ops';
 export * from './utils/timeline/dynamic-eq-ops';
 export * from './utils/timeline/timeline-sync-lock-ripple-ops';
 export * from './utils/timeline/multiband-dynamics-ops';
+export * from './utils/timeline/hsl-color-qualifier-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

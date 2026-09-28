@@ -75,6 +75,7 @@ import { type ClipAnchorSettings } from './connected-clip-anchor-ops';
 import { type SpectralDuckingSettings } from './spectral-ducking-ops';
 import { type DynamicEqSettings, generateDynamicEqFiltergraph } from './dynamic-eq-ops';
 import { type MultibandDynamicsSettings, generateMultibandDynamicsFiltergraph } from './multiband-dynamics-ops';
+import { type HslQualifierSettings, generateHslQualifierFiltergraph } from './hsl-color-qualifier-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -250,6 +251,8 @@ export interface ClipEffects {
   filterIntensity?: number;
   /** S30 — 3-Way Color Wheels & Primary Color Balance Engine */
   colorGrade?: ColorGradingSettings;
+  /** S194 — Video HSL Color Qualifier & Secondary Grading Keyer Engine */
+  hslQualifier?: HslQualifierSettings;
   /** S42 — 3D LUT (Look-Up Table) & Film Emulation */
   lut?: ClipLutSettings;
   /** S55 — HDR Tone Mapping & ACES Color Science */
@@ -2119,6 +2122,58 @@ export const clipEffectsSchema = z
       })
       .strict()
       .optional(),
+    // S194 — Video HSL Color Qualifier & Secondary Grading Keyer Engine
+    hslQualifier: z
+      .object({
+        enabled: z.boolean(),
+        previewMode: z.enum([
+          'composite',
+          'black_and_white_matte',
+          'highlight_isolated',
+          'inverted_matte',
+        ]),
+        hue: z
+          .object({
+            centerDeg: boundedNumber(0, 360),
+            widthDeg: boundedNumber(1, 180),
+            softnessDeg: boundedNumber(0, 60),
+          })
+          .strict(),
+        saturation: z
+          .object({
+            low: boundedNumber(0, 1),
+            high: boundedNumber(0, 1),
+            softness: boundedNumber(0, 0.5),
+          })
+          .strict(),
+        luminance: z
+          .object({
+            low: boundedNumber(0, 1),
+            high: boundedNumber(0, 1),
+            softness: boundedNumber(0, 0.5),
+          })
+          .strict(),
+        refinement: z
+          .object({
+            invert: z.boolean(),
+            cleanBlack: boundedNumber(0, 0.5),
+            cleanWhite: boundedNumber(0.5, 1.0),
+            blurRadius: boundedNumber(0, 20),
+          })
+          .strict(),
+        correction: z
+          .object({
+            hueShiftDeg: boundedNumber(-180, 180),
+            saturationScale: boundedNumber(0, 3),
+            contrast: boundedNumber(-1, 1),
+            brightness: boundedNumber(-1, 1),
+            temperature: boundedNumber(-50, 50),
+            tint: boundedNumber(-50, 50),
+          })
+          .strict(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -2184,6 +2239,14 @@ export function buildColorFilterChain(
   const colorGrade = buildFfmpegColorBalanceFilter(effects.colorGrade);
   if (colorGrade) {
     parts.push(colorGrade);
+  }
+
+  // S194 — Video HSL Color Qualifier & Secondary Grading Keyer Engine
+  if (effects.hslQualifier) {
+    const hslQualifierFilter = generateHslQualifierFiltergraph(effects.hslQualifier);
+    if (hslQualifierFilter) {
+      parts.push(hslQualifierFilter);
+    }
   }
 
   // S42 — 3D LUT (Look-Up Table) & Film Emulation LUTs
