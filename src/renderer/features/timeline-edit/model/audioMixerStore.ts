@@ -14,6 +14,10 @@ import {
   type TrackSpatialSettings,
   DEFAULT_TRACK_SPATIAL_SETTINGS,
   validateSpatialAudioConfig,
+  type StudioDeEsserSettings,
+  DEFAULT_DEESSER_SETTINGS,
+  type MainsHumNotchSettings,
+  DEFAULT_NOTCH_FILTER_SETTINGS,
 } from '@shared';
 
 export interface TrackMixerState {
@@ -91,6 +95,18 @@ export interface AudioMixerState {
   setActiveSpatialTrackId: (trackId: string | null) => void;
   showSpatialPanner: boolean;
   setShowSpatialPanner: (show: boolean) => void;
+
+  // S183 — Studio Vocal De-Esser & Mains Hum Notch Filter Rack
+  trackDeEsser: Record<string, StudioDeEsserSettings>;
+  setTrackDeEsser: (trackId: string, patch: Partial<StudioDeEsserSettings>) => void;
+  resetTrackDeEsser: (trackId: string) => void;
+  trackNotchFilter: Record<string, MainsHumNotchSettings>;
+  setTrackNotchFilter: (trackId: string, patch: Partial<MainsHumNotchSettings>) => void;
+  resetTrackNotchFilter: (trackId: string) => void;
+  activeDeEsserTrackId: string | null;
+  setActiveDeEsserTrackId: (trackId: string | null) => void;
+  activeNotchTrackId: string | null;
+  setActiveNotchTrackId: (trackId: string | null) => void;
 }
 
 export const useAudioMixerStore = create<AudioMixerState>((set) => ({
@@ -405,4 +421,46 @@ export const useAudioMixerStore = create<AudioMixerState>((set) => ({
   setActiveSpatialTrackId: (activeSpatialTrackId) => set({ activeSpatialTrackId }),
   showSpatialPanner: false,
   setShowSpatialPanner: (showSpatialPanner) => set({ showSpatialPanner }),
+
+  // S183 — Studio Vocal De-Esser & Mains Hum Notch Filter Rack
+  trackDeEsser: {},
+  setTrackDeEsser: (trackId, patch) =>
+    set((state) => {
+      const current = state.trackDeEsser[trackId] ?? { ...DEFAULT_DEESSER_SETTINGS };
+      return {
+        trackDeEsser: {
+          ...state.trackDeEsser,
+          [trackId]: { ...current, ...patch },
+        },
+      };
+    }),
+  resetTrackDeEsser: (trackId) =>
+    set((state) => {
+      const next = { ...state.trackDeEsser };
+      delete next[trackId];
+      return { trackDeEsser: next };
+    }),
+
+  trackNotchFilter: {},
+  setTrackNotchFilter: (trackId, patch) =>
+    set((state) => {
+      const current = state.trackNotchFilter[trackId] ?? { ...DEFAULT_NOTCH_FILTER_SETTINGS };
+      return {
+        trackNotchFilter: {
+          ...state.trackNotchFilter,
+          [trackId]: { ...current, ...patch },
+        },
+      };
+    }),
+  resetTrackNotchFilter: (trackId) =>
+    set((state) => {
+      const next = { ...state.trackNotchFilter };
+      delete next[trackId];
+      return { trackNotchFilter: next };
+    }),
+
+  activeDeEsserTrackId: null,
+  setActiveDeEsserTrackId: (activeDeEsserTrackId) => set({ activeDeEsserTrackId }),
+  activeNotchTrackId: null,
+  setActiveNotchTrackId: (activeNotchTrackId) => set({ activeNotchTrackId }),
 }));

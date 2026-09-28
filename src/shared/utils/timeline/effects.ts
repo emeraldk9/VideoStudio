@@ -65,6 +65,12 @@ import { type VideoDenoiserSettings, buildFfmpegVideoDenoiserFilter } from './vi
 import { type MultiCamClipSettings } from './multi-cam-ops';
 import { type MotionBlurSettings, buildFfmpegMotionBlurFilter } from './motion-blur-ops';
 import { type VocalStemSeparationSettings } from './vocal-separator-ops';
+import {
+  type StudioDeEsserSettings,
+  type MainsHumNotchSettings,
+  generateDeEsserFilterString,
+  generateNotchFilterString,
+} from './audio-deesser-notch-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -268,6 +274,10 @@ export interface ClipEffects {
   vocalSeparation?: VocalStemSeparationSettings;
   /** S56 — Multiband Audio Denoiser, De-Clicker & Hum Removal */
   multibandDenoiser?: MultibandDenoiserSettings;
+  /** S183 — Studio Vocal De-Esser */
+  deEsser?: StudioDeEsserSettings;
+  /** S183 — Parametric AC Mains Hum Notch Filter Rack */
+  notchFilter?: MainsHumNotchSettings;
   /** S51 — AI Video Background Matting & Smart Portrait Cutout */
   matting?: PortraitMattingSettings;
   /** S52 — Optical Flow Motion Estimation & AI Video Super Slow-Motion */
@@ -2107,10 +2117,22 @@ export function buildAudioFilterChain(effects: ClipEffects | undefined): string 
     if (filter) parts.push(filter);
   }
 
+  // S183 — Parametric AC Mains Hum Notch Filter Rack
+  if (effects.notchFilter) {
+    const notchFilter = generateNotchFilterString(effects.notchFilter);
+    if (notchFilter) parts.push(notchFilter);
+  }
+
   // S45 — Audio Noise Gate, Downward Expander & Dialogue De-Esser / De-Hummer
   const gateFilter = buildFfmpegGateFilter(effects.noiseGate);
   if (gateFilter) {
     parts.push(gateFilter);
+  }
+
+  // S183 — Studio Vocal De-Esser
+  if (effects.deEsser) {
+    const deEsserFilter = generateDeEsserFilterString(effects.deEsser);
+    if (deEsserFilter) parts.push(deEsserFilter);
   }
 
   // S35 — 3-Band Parametric Audio Equalizer (Bass, Mid, Treble)

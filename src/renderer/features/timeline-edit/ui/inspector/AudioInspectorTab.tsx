@@ -47,6 +47,17 @@ import {
   type MultibandDenoiserSettings,
   type DeHumMode,
   type MultibandDenoiserPresetKey,
+  DEFAULT_DEESSER_SETTINGS,
+  DEESSER_PRESETS,
+  sampleDeEsserCurvePoints,
+  calculateDeEsserGainReduction,
+  type StudioDeEsserSettings,
+  type DeEsserPresetKey,
+  DEFAULT_NOTCH_FILTER_SETTINGS,
+  MAINS_HUM_PRESETS,
+  sampleNotchFilterResponse,
+  type MainsHumNotchSettings,
+  type MainsHumPresetKey,
   type KeyframeProperty,
   type SequenceClip,
   type ClipOverridableField,
@@ -1121,6 +1132,404 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
       {/* S44 — Audio Beat & Rhythm Transient Detection */}
       {currentTab === 'audio' && carriesSound ? (
         <BeatDetectionSection clip={clip} document={document} fps={fps} />
+      ) : null}
+
+      {/* S183 — Studio Vocal De-Esser & Mains Hum Notch Filter Rack */}
+      {currentTab === 'audio' && carriesSound ? (
+        <Section title="Vocal De-Esser & AC Hum Notch Rack">
+          {(() => {
+            const deEsser = clip.effects?.deEsser ?? DEFAULT_DEESSER_SETTINGS;
+            const notch = clip.effects?.notchFilter ?? DEFAULT_NOTCH_FILTER_SETTINGS;
+
+            const patchDeEsser = (patch: Partial<StudioDeEsserSettings>) => {
+              patchClip(clip.id, {
+                effects: {
+                  ...clip.effects,
+                  deEsser: {
+                    ...deEsser,
+                    ...patch,
+                  },
+                },
+              });
+            };
+
+            const patchNotch = (patch: Partial<MainsHumNotchSettings>) => {
+              patchClip(clip.id, {
+                effects: {
+                  ...clip.effects,
+                  notchFilter: {
+                    ...notch,
+                    ...patch,
+                  },
+                },
+              });
+            };
+
+            const deEsserCurve = sampleDeEsserCurvePoints(deEsser, 260, 56);
+            const notchCurve = sampleNotchFilterResponse(notch, 260, 56, 20, 500);
+            const estReduction = deEsser.enabled ? calculateDeEsserGainReduction(-12, deEsser) : 0;
+
+            return (
+              <div className="flex flex-col gap-4">
+                {/* 1. VOCAL DE-ESSER SUB-RACK */}
+                <div className="flex flex-col gap-2 p-2 rounded bg-bg-surface border border-hairline">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+                      <Switch
+                        checked={deEsser.enabled}
+                        label="Enable Vocal De-Esser"
+                        onChange={() => patchDeEsser({ enabled: !deEsser.enabled })}
+                      />
+                      <span className="font-semibold text-text-primary text-[11px]">
+                        {deEsser.enabled ? 'De-Esser Active' : 'De-Esser Bypassed'}
+                      </span>
+                    </label>
+
+                    <div className="flex items-center gap-1.5">
+                      {deEsser.enabled && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                          -{estReduction.toFixed(1)} dB GR
+                        </span>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 text-[10px] text-text-disabled hover:text-text-primary px-1"
+                        onClick={() => patchDeEsser(DEFAULT_DEESSER_SETTINGS)}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* De-Esser Presets */}
+                  <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                    {(Object.keys(DEESSER_PRESETS) as DeEsserPresetKey[]).map((pKey) => {
+                      const preset = DEESSER_PRESETS[pKey];
+                      return (
+                        <button
+                          key={pKey}
+                          type="button"
+                          onClick={() => patchDeEsser({ ...preset.settings, enabled: true })}
+                          title={preset.description}
+                          className="px-1.5 py-0.5 rounded border border-hairline bg-bg-app text-text-secondary hover:text-text-primary hover:border-cyan-400/50 transition-colors"
+                        >
+                          {preset.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* SVG De-Esser Characteristic Curve */}
+                  <div className="relative w-full h-[56px] bg-bg-app rounded border border-hairline overflow-hidden select-none">
+                    <svg viewBox="0 0 260 56" className="w-full h-full">
+                      <line x1="0" y1="28" x2="260" y2="28" stroke="#334155" strokeWidth="0.5" strokeDasharray="2 2" />
+                      <line x1="130" y1="0" x2="130" y2="56" stroke="#334155" strokeWidth="0.5" strokeDasharray="2 2" />
+                      {/* Unity diagonal */}
+                      <line x1="0" y1="56" x2="260" y2="0" stroke="#475569" strokeWidth="0.75" strokeDasharray="3 3" />
+
+                      {/* Threshold marker */}
+                      {deEsser.enabled && (
+                        <line
+                          x1={((deEsser.thresholdDb - -50) / 50) * 260}
+                          y1="0"
+                          x2={((deEsser.thresholdDb - -50) / 50) * 260}
+                          y2="56"
+                          stroke="rgba(6,182,212,0.4)"
+                          strokeDasharray="2 2"
+                        />
+                      )}
+
+                      {/* Dynamic Curve */}
+                      <path
+                        d={`M ${deEsserCurve.map((p) => `${p.x},${p.y}`).join(' L ')}`}
+                        fill="none"
+                        stroke={deEsser.enabled ? '#06b6d4' : '#64748b'}
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                      />
+                      <text x="4" y="10" fill="#64748b" fontSize="7" fontFamily="monospace">0 dB</text>
+                      <text x="4" y="50" fill="#64748b" fontSize="7" fontFamily="monospace">-50 dB</text>
+                      <text x="256" y="50" fill="#64748b" fontSize="7" fontFamily="monospace" textAnchor="end">{deEsser.frequency} Hz</text>
+                    </svg>
+                  </div>
+
+                  {/* Controls */}
+                  <div className="flex flex-col gap-1.5 font-mono text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="w-16 shrink-0 font-bold text-cyan-400">Mode</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={!deEsser.enabled}
+                          onClick={() => patchDeEsser({ mode: 'split_band' })}
+                          className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
+                            deEsser.mode === 'split_band'
+                              ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold'
+                              : 'bg-bg-app text-text-disabled border-hairline hover:text-text-primary'
+                          } disabled:opacity-40`}
+                        >
+                          Split-Band
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!deEsser.enabled}
+                          onClick={() => patchDeEsser({ mode: 'wideband' })}
+                          className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
+                            deEsser.mode === 'wideband'
+                              ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold'
+                              : 'bg-bg-app text-text-disabled border-hairline hover:text-text-primary'
+                          } disabled:opacity-40`}
+                        >
+                          Wideband
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Frequency */}
+                    <label className="flex items-center gap-2 text-text-secondary">
+                      <span className="w-16 shrink-0 font-bold text-cyan-400">Freq</span>
+                      <input
+                        type="range"
+                        min={4000}
+                        max={10000}
+                        step={100}
+                        value={deEsser.frequency}
+                        disabled={!deEsser.enabled}
+                        onChange={(e) => patchDeEsser({ frequency: Number(e.target.value) })}
+                        className="flex-1 accent-cyan-400 h-1.5 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="w-14 text-right text-text-primary">{deEsser.frequency} Hz</span>
+                    </label>
+
+                    {/* Threshold */}
+                    <label className="flex items-center gap-2 text-text-secondary">
+                      <span className="w-16 shrink-0 font-bold text-cyan-400">Threshold</span>
+                      <input
+                        type="range"
+                        min={-40}
+                        max={0}
+                        step={1}
+                        value={deEsser.thresholdDb}
+                        disabled={!deEsser.enabled}
+                        onChange={(e) => patchDeEsser({ thresholdDb: Number(e.target.value) })}
+                        className="flex-1 accent-cyan-400 h-1.5 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="w-14 text-right text-text-primary">{deEsser.thresholdDb} dB</span>
+                    </label>
+
+                    {/* Ratio */}
+                    <label className="flex items-center gap-2 text-text-secondary">
+                      <span className="w-16 shrink-0 font-bold text-cyan-400">Ratio</span>
+                      <input
+                        type="range"
+                        min={1.5}
+                        max={8.0}
+                        step={0.5}
+                        value={deEsser.ratio}
+                        disabled={!deEsser.enabled}
+                        onChange={(e) => patchDeEsser({ ratio: Number(e.target.value) })}
+                        className="flex-1 accent-cyan-400 h-1.5 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="w-14 text-right text-text-primary">{deEsser.ratio}:1</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* 2. MAINS HUM NOTCH FILTER RACK */}
+                <div className="flex flex-col gap-2 p-2 rounded bg-bg-surface border border-hairline">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+                      <Switch
+                        checked={notch.enabled}
+                        label="Enable Mains Hum Filter"
+                        onChange={() => patchNotch({ enabled: !notch.enabled })}
+                      />
+                      <span className="font-semibold text-text-primary text-[11px]">
+                        {notch.enabled ? 'Notch Active' : 'Notch Bypassed'}
+                      </span>
+                    </label>
+
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 text-[10px] text-text-disabled hover:text-text-primary px-1"
+                        onClick={() => patchNotch(DEFAULT_NOTCH_FILTER_SETTINGS)}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Notch Presets */}
+                  <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                    {(Object.keys(MAINS_HUM_PRESETS) as MainsHumPresetKey[]).map((pKey) => {
+                      const preset = MAINS_HUM_PRESETS[pKey];
+                      return (
+                        <button
+                          key={pKey}
+                          type="button"
+                          onClick={() => patchNotch({ ...preset.settings, enabled: true })}
+                          title={preset.description}
+                          className="px-1.5 py-0.5 rounded border border-hairline bg-bg-app text-text-secondary hover:text-text-primary hover:border-emerald-400/50 transition-colors"
+                        >
+                          {preset.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* SVG Logarithmic Frequency Response */}
+                  <div className="relative w-full h-[56px] bg-bg-app rounded border border-hairline overflow-hidden select-none">
+                    <svg viewBox="0 0 260 56" className="w-full h-full">
+                      <line x1="0" y1="12" x2="260" y2="12" stroke="#334155" strokeWidth="0.5" strokeDasharray="2 2" />
+                      <line x1="0" y1="46" x2="260" y2="46" stroke="#334155" strokeWidth="0.5" strokeDasharray="2 2" />
+
+                      {/* Notches markers */}
+                      {notch.enabled &&
+                        Array.from({ length: notch.harmonicsCount }, (_, i) => i + 1).map((k) => {
+                          const f = notch.baseFreq * k;
+                          if (f > 500) return null;
+                          const logMin = Math.log10(20);
+                          const logMax = Math.log10(500);
+                          const x = ((Math.log10(f) - logMin) / (logMax - logMin)) * 260;
+                          return (
+                            <line
+                              key={k}
+                              x1={x}
+                              y1="0"
+                              x2={x}
+                              y2="56"
+                              stroke="rgba(16,185,129,0.3)"
+                              strokeDasharray="2 2"
+                            />
+                          );
+                        })}
+
+                      {/* Frequency Response Line */}
+                      <path
+                        d={`M ${notchCurve.map((p) => `${p.x},${p.y}`).join(' L ')}`}
+                        fill="none"
+                        stroke={notch.enabled ? '#10b981' : '#64748b'}
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                      />
+                      <text x="4" y="10" fill="#64748b" fontSize="7" fontFamily="monospace">0 dB</text>
+                      <text x="4" y="50" fill="#64748b" fontSize="7" fontFamily="monospace">-48 dB</text>
+                      <text x="256" y="50" fill="#64748b" fontSize="7" fontFamily="monospace" textAnchor="end">500 Hz</text>
+                    </svg>
+                  </div>
+
+                  {/* Notch Controls */}
+                  <div className="flex flex-col gap-1.5 font-mono text-[11px]">
+                    <div className="flex items-center gap-3">
+                      <span className="w-16 shrink-0 font-bold text-emerald-400">Standard</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={!notch.enabled}
+                          onClick={() => patchNotch({ baseFreq: 50 })}
+                          className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
+                            notch.baseFreq === 50
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold'
+                              : 'bg-bg-app text-text-disabled border-hairline hover:text-text-primary'
+                          } disabled:opacity-40`}
+                        >
+                          50Hz (EU/UK/Asia)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!notch.enabled}
+                          onClick={() => patchNotch({ baseFreq: 60 })}
+                          className={`px-2 py-0.5 rounded text-[10px] border transition-all ${
+                            notch.baseFreq === 60
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold'
+                              : 'bg-bg-app text-text-disabled border-hairline hover:text-text-primary'
+                          } disabled:opacity-40`}
+                        >
+                          60Hz (US)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Harmonics Count */}
+                    <div className="flex items-center gap-3">
+                      <span className="w-16 shrink-0 font-bold text-emerald-400">Harmonics</span>
+                      <div className="flex items-center gap-1">
+                        {[1, 2, 3, 4].map((count) => (
+                          <button
+                            key={count}
+                            type="button"
+                            disabled={!notch.enabled}
+                            onClick={() => patchNotch({ harmonicsCount: count })}
+                            className={`w-6 h-5 rounded text-[10px] border transition-all ${
+                              notch.harmonicsCount === count
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold'
+                                : 'bg-bg-app text-text-disabled border-hairline hover:text-text-primary'
+                            } disabled:opacity-40`}
+                          >
+                            {count}x
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Attenuation Depth */}
+                    <label className="flex items-center gap-2 text-text-secondary">
+                      <span className="w-16 shrink-0 font-bold text-emerald-400">Depth</span>
+                      <input
+                        type="range"
+                        min={-60}
+                        max={-6}
+                        step={2}
+                        value={notch.attenuationDb}
+                        disabled={!notch.enabled}
+                        onChange={(e) => patchNotch({ attenuationDb: Number(e.target.value) })}
+                        className="flex-1 accent-emerald-400 h-1.5 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="w-14 text-right text-text-primary">{notch.attenuationDb} dB</span>
+                    </label>
+
+                    {/* Q Factor */}
+                    <label className="flex items-center gap-2 text-text-secondary">
+                      <span className="w-16 shrink-0 font-bold text-emerald-400">Q-Factor</span>
+                      <input
+                        type="range"
+                        min={5}
+                        max={50}
+                        step={1}
+                        value={notch.qFactor}
+                        disabled={!notch.enabled}
+                        onChange={(e) => patchNotch({ qFactor: Number(e.target.value) })}
+                        className="flex-1 accent-emerald-400 h-1.5 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="w-14 text-right text-text-primary">Q={notch.qFactor}</span>
+                    </label>
+
+                    {/* Subsonic High-Pass Filter */}
+                    <label className="flex items-center gap-2 text-text-secondary">
+                      <span className="w-16 shrink-0 font-bold text-emerald-400">Subsonic</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={80}
+                        step={5}
+                        value={notch.highPassHz}
+                        disabled={!notch.enabled}
+                        onChange={(e) => patchNotch({ highPassHz: Number(e.target.value) })}
+                        className="flex-1 accent-emerald-400 h-1.5 cursor-pointer disabled:opacity-50"
+                      />
+                      <span className="w-14 text-right text-text-primary">
+                        {notch.highPassHz === 0 ? 'Off' : `${notch.highPassHz} Hz`}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </Section>
       ) : null}
 
       {/* S49 — Clip Pitch Shifter & Voice Effects */}

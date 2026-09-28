@@ -20,6 +20,8 @@ import {
   type AudioPanSettings,
   type AudioIsolationSettings,
   type MultibandDenoiserSettings,
+  type StudioDeEsserSettings,
+  type MainsHumNotchSettings,
   type ClipLutSettings,
   type HdrToneMappingSettings,
   type ClipLensOpticsSettings,
@@ -164,6 +166,39 @@ describe('End-to-End FFmpeg Render Engine Full-Filter Synthesis (Milestone S66)'
       expect(chain).toContain('equalizer=f=100:width_type=q:w=10:g=-24');
       expect(chain).toContain('equalizer=f=150:width_type=q:w=10:g=-24');
       expect(chain).toContain('afftdn=');
+    });
+
+    it('synthesizes studio vocal de-esser and parametric mains hum notch filter', () => {
+      const notchFilter: MainsHumNotchSettings = {
+        enabled: true,
+        baseFreq: 60,
+        harmonicsCount: 2,
+        attenuationDb: -40,
+        qFactor: 20,
+        harmonicRollOffDbPerOctave: 3,
+        highPassHz: 25,
+      };
+      const deEsser: StudioDeEsserSettings = {
+        enabled: true,
+        frequency: 6500,
+        q: 1.5,
+        thresholdDb: -20,
+        ratio: 4.0,
+        attackMs: 2.0,
+        releaseMs: 50,
+        kneeDb: 3,
+        mode: 'split_band',
+        detectionMode: 'rms',
+        auditionMode: 'normal',
+        makeupGainDb: 1.5,
+      };
+
+      const chain = buildAudioFilterChain({ notchFilter, deEsser });
+      expect(chain).toContain('highpass=f=25');
+      expect(chain).toContain('equalizer=f=60:t=q:w=20:g=-40');
+      expect(chain).toContain('equalizer=f=120:t=q:w=20');
+      expect(chain).toContain('deesser=');
+      expect(chain).toContain('volume=1.5dB');
     });
 
     it('combines full audio signal chain in deterministic post-production order', () => {
