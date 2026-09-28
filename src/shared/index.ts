@@ -147,6 +147,7 @@ export * from './utils/timeline/multi-format-batch-ops';
 export * from './utils/timeline/diagnostics-telemetry-ops';
 export * from './utils/timeline/marker-navigation-ops';
 export * from './utils/timeline/scopes-customization-ops';
+export * from './utils/timeline/marquee-selection-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

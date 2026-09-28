@@ -56,6 +56,13 @@ import {
   linkClips,
   unlinkClips,
   formatDragDeltaBadge,
+  applyMarqueeSelection,
+  calculateMarqueeRect,
+  calculateSelectionSummary,
+  intersectClipsWithMarquee,
+  resolveMarqueeModifier,
+  type MarqueeModifierMode,
+  type MarqueeRect,
   filterMarkersByCategory,
   findMarkerAtPlayhead,
   findNextMarker,
@@ -223,12 +230,19 @@ export function TimelinePanel() {
     [spineClips],
   );
   const fps = document?.sequence.fps ?? 24;
+  const pixelsPerFrame = pixelsPerSecond / fps;
   const soloTrackIds = useSequenceStore((state) => state.soloTrackIds);
   const snapEnabled = useSequenceStore((state) => state.snapEnabled);
   const snapToBeats = useSequenceStore((state) => state.snapToBeats);
   const markersForTargets = useSequenceStore((state) => state.markers);
   const inPointFrame = useSequenceStore((state) => state.inPointFrame);
   const outPointFrame = useSequenceStore((state) => state.outPointFrame);
+
+  /** S182: Selection metrics summary for multi-clip selection HUD */
+  const selectionSummary = useMemo(
+    () => calculateSelectionSummary(selectedClipIds, clips, fps),
+    [selectedClipIds, clips, fps],
+  );
 
   /**
    * S175 & S28 — target sets layered for stability. Clip edges
@@ -954,15 +968,14 @@ export function TimelinePanel() {
    * from client coordinates against the live bounding rect each move — which
    * makes mid-drag horizontal scrolling self-correcting.
    */
-  const marqueeRef = useRef<{ startX: number; startY: number; baseSelection: string[] } | null>(
-    null,
-  );
-  const [marqueeRect, setMarqueeRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
+  const marqueeRef = useRef<{
+    startX: number;
+    startY: number;
+    baseSelection: string[];
+    modifier: MarqueeModifierMode;
   } | null>(null);
+  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
+  const [activeMarqueeModifier, setActiveMarqueeModifier] = useState<MarqueeModifierMode>('replace');
 
   const marqueePoint = useCallback((event: React.PointerEvent) => {
     const bounds = lanesRef.current?.getBoundingClientRect();
@@ -973,40 +986,21 @@ export function TimelinePanel() {
 
   const handleMarqueeStart = useCallback(
     (event: React.PointerEvent, _track: SequenceTrack) => {
-      // S160 — the marquee belongs to the select tool; a blade or sweep
+      // S160 / S182 — the marquee belongs to the select tool; a blade or sweep
       // press on empty trough space does nothing rather than rubber-band.
       if (useSequenceStore.getState().toolMode !== 'select') return;
       event.currentTarget.setPointerCapture(event.pointerId);
       const point = marqueePoint(event);
+      const modifier = resolveMarqueeModifier(event);
+      setActiveMarqueeModifier(modifier);
       marqueeRef.current = {
         startX: point.x,
         startY: point.y,
-        baseSelection: event.shiftKey ? useSequenceStore.getState().selectedClipIds : [],
+        baseSelection: modifier === 'replace' ? [] : useSequenceStore.getState().selectedClipIds,
+        modifier,
       };
     },
     [marqueePoint],
-  );
-
-  /** Clip ids inside the rect — locked tracks skipped, geometry re-derived from the rows. */
-  const clipsInRect = useCallback(
-    (rect: { left: number; top: number; width: number; height: number }): string[] => {
-      const ids: string[] = [];
-      let rowTop = 0;
-      for (const track of displayTracks) {
-        const height = Math.max(24, track.heightPx);
-        const rowBottom = rowTop + height;
-        if (!track.locked && rowBottom > rect.top && rowTop < rect.top + rect.height) {
-          for (const placed of layoutTrack(clips, track)) {
-            const left = LANE_LABEL_WIDTH_PX + placed.startFrames * (pixelsPerSecond / fps);
-            const right = LANE_LABEL_WIDTH_PX + placed.endFrames * (pixelsPerSecond / fps);
-            if (right > rect.left && left < rect.left + rect.width) ids.push(placed.clip.id);
-          }
-        }
-        rowTop = rowBottom + LANE_GAP_PX;
-      }
-      return ids;
-    },
-    [clips, displayTracks, fps, pixelsPerSecond],
   );
 
   const handleMarqueeMove = useCallback(
@@ -1014,16 +1008,22 @@ export function TimelinePanel() {
       const current = marqueeRef.current;
       if (!current) return;
       const point = marqueePoint(event);
-      const rect = {
-        left: Math.min(current.startX, point.x),
-        top: Math.min(current.startY, point.y),
-        width: Math.abs(point.x - current.startX),
-        height: Math.abs(point.y - current.startY),
-      };
+      const rect = calculateMarqueeRect(current.startX, current.startY, point.x, point.y);
       setMarqueeRect(rect);
-      select([...new Set([...current.baseSelection, ...clipsInRect(rect)])]);
+
+      const intersected = intersectClipsWithMarquee({
+        clips,
+        tracks: displayTracks,
+        rect,
+        pixelsPerFrame,
+        laneLabelWidthPx: LANE_LABEL_WIDTH_PX,
+        laneGapPx: LANE_GAP_PX,
+      });
+
+      const nextSelection = applyMarqueeSelection(current.baseSelection, intersected, current.modifier);
+      select(nextSelection);
     },
-    [clipsInRect, marqueePoint, select],
+    [clips, displayTracks, marqueePoint, pixelsPerFrame, select],
   );
 
   const handleMarqueeEnd = useCallback(() => {
@@ -1031,9 +1031,10 @@ export function TimelinePanel() {
     marqueeRef.current = null;
     const rect = marqueeRect;
     setMarqueeRect(null);
+    setActiveMarqueeModifier('replace');
     if (!current) return;
     // No travel = a click on empty space: clear (or keep the base under
-    // Shift, which makes a stray shift-click harmless).
+    // Shift/Alt, which makes a stray shift/alt click harmless).
     if (!rect || (rect.width < 4 && rect.height < 4)) {
       select(current.baseSelection);
     }
@@ -2237,8 +2238,6 @@ export function TimelinePanel() {
 
   if (!document) return null;
 
-  const pixelsPerFrame = pixelsPerSecond / fps;
-
   /** Marker palette — accent token classes, resolved by name (migration 066's rule). */
   const MARKER_CLASSES: Record<string, string> = {
     ai: 'text-accent-ai',
@@ -2908,12 +2907,18 @@ export function TimelinePanel() {
                 style={{ top: reorderIndicatorY }}
               />
             ) : null}
-            {/* The marquee rectangle — the drag's own footprint; selection is
-                already applied live through the store as it moves. */}
+            {/* S182 — The marquee rectangle with modifier styling & live selection HUD */}
             {marqueeRect ? (
               <span
                 aria-hidden="true"
-                className="pointer-events-none absolute z-20 rounded-sm border border-accent-ai bg-accent-ai/10"
+                data-testid="timeline-marquee-rect"
+                className={`pointer-events-none absolute z-20 rounded-sm border transition-colors ${
+                  activeMarqueeModifier === 'subtract'
+                    ? 'border-rose-400 border-dashed bg-rose-500/15 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
+                    : activeMarqueeModifier === 'add'
+                    ? 'border-emerald-400 border-dashed bg-emerald-500/15 shadow-[0_0_8px_rgba(52,211,153,0.3)]'
+                    : 'border-accent-ai border-dashed bg-accent-ai/15 shadow-[0_0_8px_rgba(99,102,241,0.25)]'
+                }`}
                 style={marqueeRect}
               />
             ) : null}
@@ -3081,6 +3086,28 @@ export function TimelinePanel() {
 
       {/* S86 — CapCut AI Vocal Remover & 4-Stem Audio Separator */}
       <VocalStemSeparatorModal />
+
+      {/* S182 — Multi-Clip Selection Summary HUD Chip */}
+      {selectionSummary && selectionSummary.clipCount > 1 && (
+        <div
+          data-testid="selection-summary-hud"
+          className="pointer-events-auto absolute bottom-4 right-6 z-40 flex items-center gap-2 rounded-full border border-accent-ai/40 bg-bg-surface/95 px-3 py-1.5 text-xs text-text-primary shadow-xl backdrop-blur-md transition-all select-none"
+        >
+          <span className="material-symbols-outlined text-accent-ai text-[16px]">select_all</span>
+          <span className="font-semibold text-text-primary font-mono text-[11px]">
+            {selectionSummary.badgeText}
+          </span>
+          <button
+            type="button"
+            onClick={() => select([])}
+            className="ml-1 rounded-full p-0.5 text-text-disabled hover:bg-bg-panel hover:text-text-primary transition-colors cursor-pointer"
+            title="Clear selection (Escape)"
+            aria-label="Clear selection"
+          >
+            <span className="material-symbols-outlined text-[14px]">close</span>
+          </button>
+        </div>
+      )}
     </section>
   );
 }
