@@ -141,6 +141,7 @@ export * from './utils/timeline/compass-divider-caliper-ops';
 export * from './utils/timeline/collaborative-crdt-ops';
 export * from './utils/timeline/spatial-audio-atmos-ops';
 export * from './utils/timeline/transcript-editing-ops';
+export * from './utils/timeline/timeline-virtualization-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

@@ -92,6 +92,7 @@ import { LANE_LABEL_WIDTH_PX, TimelineTrackRow } from './TimelineLane';
 import { TimelineTrackFolderRow } from './TimelineTrackFolderRow';
 import { SketchKeyframeLane } from './SketchKeyframeLane';
 import { TIMELINE_RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler';
+import { useTimelineViewportStore } from '../model/timelineViewportStore';
 
 /**
  * Beta S145 — the timeline surface: ruler, three lanes, playhead.
@@ -531,6 +532,33 @@ export function TimelinePanel() {
     },
     [clips, commitClips, document, laneTargetAt, moveClipToNewTrack, toolMode, tracks],
   );
+
+  /**
+   * S175 — Timeline Viewport Virtualization: keep viewport scrollLeft and
+   * viewportWidth synchronized in useTimelineViewportStore.
+   */
+  const setViewport = useTimelineViewportStore((s) => s.setViewport);
+
+  const handleTimelineScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setViewport(el.scrollLeft, el.clientWidth);
+  }, [setViewport]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setViewport(el.scrollLeft, el.clientWidth);
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setViewport(el.scrollLeft, entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [setViewport]);
+
 
   /**
    * S175 & S28 — the snap indicator & Smart Magnetic HUD badge, driven imperatively
@@ -2190,6 +2218,7 @@ export function TimelinePanel() {
           when it outgrows it, instead of ending mid-panel. */}
       <div
         ref={scrollRef}
+        onScroll={handleTimelineScroll}
         className="relative flex-1 overflow-x-auto overflow-y-auto"
         // S174 — any future scrollIntoView lands rows below the pinned strip.
         style={{ scrollPaddingTop: TIMELINE_RULER_HEIGHT_PX }}
