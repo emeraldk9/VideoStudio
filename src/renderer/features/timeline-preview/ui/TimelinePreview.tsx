@@ -531,6 +531,58 @@ export function TimelinePreview() {
   const glActiveRef = useRef<boolean>(false);
   const drawGlFrameRef = useRef<((frame: number) => void) | null>(null);
 
+  // S174: Broadcast Video Scopes Frame Buffer Sampler
+  const isScopesOpenRef = useRef(isScopesOpen);
+  isScopesOpenRef.current = isScopesOpen;
+
+  const scopesOffscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastScopesSampleTimeRef = useRef<number>(0);
+  const sampleScopesFrameRef = useRef<() => void>(() => {});
+
+  const sampleScopesFrame = useCallback(() => {
+    if (!isScopesOpenRef.current) return;
+
+    let sourceEl: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement | null = null;
+    if (glActiveRef.current && canvasRef.current) {
+      sourceEl = canvasRef.current;
+    } else if (videoRef.current && videoRef.current.readyState >= 2) {
+      sourceEl = videoRef.current;
+    } else if (stillImgRef.current && stillImgRef.current.complete) {
+      sourceEl = stillImgRef.current;
+    }
+
+    if (!sourceEl) return;
+
+    const targetW = 160;
+    const targetH = 90;
+
+    if (!scopesOffscreenCanvasRef.current && typeof window !== 'undefined') {
+      const oc = window.document.createElement('canvas');
+      oc.width = targetW;
+      oc.height = targetH;
+      scopesOffscreenCanvasRef.current = oc;
+    }
+
+    const oc = scopesOffscreenCanvasRef.current;
+    if (!oc) return;
+    const octx = oc.getContext('2d', { willReadFrequently: true });
+    if (!octx) return;
+
+    try {
+      octx.drawImage(sourceEl, 0, 0, targetW, targetH);
+      const imgData = octx.getImageData(0, 0, targetW, targetH);
+      useVideoScopesStore.getState().setFrameBuffer({
+        data: imgData.data,
+        width: targetW,
+        height: targetH,
+      });
+    } catch {
+      // Ignore cross-origin canvas exceptions if any
+    }
+  }, []);
+
+  sampleScopesFrameRef.current = sampleScopesFrame;
+
   // Transport clock rAF loop
   useEffect(() => {
     if (!playing) {
@@ -635,6 +687,12 @@ export function TimelinePreview() {
       // S171: Direct 60fps WebGL frame rendering during active playback when GL shaders/transitions are active
       if (glActiveRef.current) {
         drawGlFrameRef.current?.(frame);
+      }
+
+      // S174: Continuous 30fps broadcast video scopes frame buffer sampling during active playback
+      if (isScopesOpenRef.current && now - lastScopesSampleTimeRef.current >= 33) {
+        lastScopesSampleTimeRef.current = now;
+        sampleScopesFrameRef.current();
       }
 
       // Direct zero-delay audio playback synchronization from rAF loop
@@ -1354,9 +1412,19 @@ export function TimelinePreview() {
   const [glEnabled, setGlEnabled] = useState(true);
   const [mediaTick, setMediaTick] = useState(0);
   const bumpMedia = useCallback(() => {
-    if (useSequenceStore.getState().playing) return;
-    setMediaTick((tick) => tick + 1);
-  }, []);
+    if (!useSequenceStore.getState().playing) {
+      setMediaTick((tick) => tick + 1);
+    }
+    if (isScopesOpenRef.current) {
+      sampleScopesFrame();
+    }
+  }, [sampleScopesFrame]);
+
+  useEffect(() => {
+    if (isScopesOpen) {
+      sampleScopesFrame();
+    }
+  }, [isScopesOpen, storedFrame, sampleScopesFrame]);
 
   const adjustments = useMemo(
     () =>

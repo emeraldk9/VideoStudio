@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import {
+  computeBroadcastGamutAudit,
   computeHistogramBins,
   computeLumaWaveform,
   computeRgbParade,
   computeVectorscopePoints,
+  computeWhiteBalanceStats,
   SKIN_TONE_LINE_ANGLE_RAD,
   VECTORSCOPE_SMPTE_TARGETS,
 } from '@shared';
@@ -29,6 +31,18 @@ export function VideoScopesModal() {
   const frameBuffer = useVideoScopesStore((s) => s.frameBuffer);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Compute live Broadcast Gamut Audit
+  const gamutAudit = useMemo(() => {
+    if (!frameBuffer || frameBuffer.width === 0 || frameBuffer.height === 0) return null;
+    return computeBroadcastGamutAudit(frameBuffer.data, frameBuffer.width, frameBuffer.height);
+  }, [frameBuffer]);
+
+  // Compute live White Balance Stats
+  const whiteBalance = useMemo(() => {
+    if (!frameBuffer || frameBuffer.width === 0 || frameBuffer.height === 0) return null;
+    return computeWhiteBalanceStats(frameBuffer.data, frameBuffer.width, frameBuffer.height);
+  }, [frameBuffer]);
 
   // Render scope canvas on frame update or settings change
   useEffect(() => {
@@ -74,6 +88,8 @@ export function VideoScopesModal() {
       renderVectorscope(ctx, width, height, data, fbW, fbH, intensity, showGraticule, showSkinToneLine);
     } else if (scopeType === 'histogram') {
       renderHistogram(ctx, width, height, data, fbW, fbH, intensity, showGraticule);
+    } else if (scopeType === 'all') {
+      renderAllScopes(ctx, width, height, data, fbW, fbH, intensity, showGraticule, showSkinToneLine);
     }
 
     ctx.restore();
@@ -95,7 +111,7 @@ export function VideoScopesModal() {
         </div>
       }
       subtitle="Real-time exposure, parade, and chromatic vectorscope monitoring"
-      size="lg"
+      size={scopeType === 'all' ? 'xl' : 'lg'}
     >
       <div className="flex flex-col gap-3 select-none">
         {/* Scope Mode Toolbar */}
@@ -108,6 +124,7 @@ export function VideoScopesModal() {
                 { id: 'parade', label: 'RGB Parade', icon: 'view_column' },
                 { id: 'vectorscope', label: 'Vectorscope', icon: 'radar' },
                 { id: 'histogram', label: 'Histogram', icon: 'bar_chart' },
+                { id: 'all', label: '4-Up All', icon: 'dashboard' },
               ] as const
             ).map((mode) => {
               const active = scopeType === mode.id;
@@ -148,8 +165,8 @@ export function VideoScopesModal() {
               <span>Graticule</span>
             </button>
 
-            {/* Skin Tone Line Toggle (Vectorscope only) */}
-            {scopeType === 'vectorscope' && (
+            {/* Skin Tone Line Toggle (Vectorscope or 4-Up) */}
+            {(scopeType === 'vectorscope' || scopeType === 'all') && (
               <button
                 type="button"
                 onClick={() => setShowSkinToneLine(!showSkinToneLine)}
@@ -182,8 +199,69 @@ export function VideoScopesModal() {
           </div>
         </div>
 
+        {/* Live Broadcast Gamut & White Balance HUD Strip */}
+        {gamutAudit && whiteBalance && (
+          <div className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded bg-bg-app border border-hairline font-mono">
+            <div className="flex items-center gap-3">
+              {/* Gamut Legal Status */}
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    gamutAudit.isLegal ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]' : 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]'
+                  }`}
+                />
+                <span className={gamutAudit.isLegal ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                  {gamutAudit.isLegal ? 'Rec.709 Legal' : 'Gamut Out-of-Spec'}
+                </span>
+                {!gamutAudit.isLegal && (
+                  <span className="text-text-disabled text-[10px]">
+                    (Crushed: {gamutAudit.crushedPercent.toFixed(1)}%, Clipped: {gamutAudit.clippedPercent.toFixed(1)}%)
+                  </span>
+                )}
+              </div>
+
+              <span className="text-hairline">|</span>
+
+              {/* White Balance Tint & Temp Bias */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-disabled">WB:</span>
+                <span
+                  className={`font-semibold capitalize ${
+                    whiteBalance.colorCast === 'neutral'
+                      ? 'text-sky-400'
+                      : whiteBalance.colorCast === 'warm'
+                      ? 'text-amber-400'
+                      : whiteBalance.colorCast === 'cool'
+                      ? 'text-cyan-400'
+                      : whiteBalance.colorCast === 'green'
+                      ? 'text-emerald-400'
+                      : 'text-fuchsia-400'
+                  }`}
+                >
+                  {whiteBalance.colorCast}
+                </span>
+                <span className="text-[10px] text-text-disabled">
+                  (ΔT: {whiteBalance.tempDelta > 0 ? `+${whiteBalance.tempDelta.toFixed(0)}` : whiteBalance.tempDelta.toFixed(0)}, ΔG: {whiteBalance.tintDelta > 0 ? `+${whiteBalance.tintDelta.toFixed(0)}` : whiteBalance.tintDelta.toFixed(0)})
+                </span>
+              </div>
+            </div>
+
+            {/* Average Luma / IRE */}
+            <div className="flex items-center gap-2 text-text-secondary text-[11px]">
+              <span>IRE:</span>
+              <span className="font-semibold text-text-primary">
+                {((gamutAudit.averageLuma / 255) * 100).toFixed(1)}%
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* High-Performance 60fps Scopes Canvas */}
-        <div className="relative w-full h-[360px] rounded-lg border border-hairline overflow-hidden bg-[#0b0c10] shadow-inner flex items-center justify-center">
+        <div
+          className={`relative w-full ${
+            scopeType === 'all' ? 'h-[500px]' : 'h-[360px]'
+          } rounded-lg border border-hairline overflow-hidden bg-[#0b0c10] shadow-inner flex items-center justify-center transition-all`}
+        >
           <canvas
             ref={canvasRef}
             className="w-full h-full block"
@@ -493,3 +571,80 @@ function renderHistogram(
     ctx.stroke();
   }
 }
+
+function renderAllScopes(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  data: Uint8ClampedArray,
+  fbW: number,
+  fbH: number,
+  intensity: number,
+  showGraticule: boolean,
+  showSkinToneLine: boolean,
+) {
+  const halfW = width / 2;
+  const halfH = height / 2;
+
+  // 1. Top-Left: Waveform (Luma)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, halfW, halfH);
+  ctx.clip();
+  renderWaveform(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('WAVEFORM (LUMA)', 10, 14);
+  ctx.restore();
+
+  // 2. Top-Right: RGB Parade
+  ctx.save();
+  ctx.translate(halfW, 0);
+  ctx.beginPath();
+  ctx.rect(0, 0, halfW, halfH);
+  ctx.clip();
+  renderParade(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('RGB PARADE', 10, 14);
+  ctx.restore();
+
+  // 3. Bottom-Left: Vectorscope
+  ctx.save();
+  ctx.translate(0, halfH);
+  ctx.beginPath();
+  ctx.rect(0, 0, halfW, halfH);
+  ctx.clip();
+  renderVectorscope(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule, showSkinToneLine);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('VECTORSCOPE', 10, 14);
+  ctx.restore();
+
+  // 4. Bottom-Right: Histogram
+  ctx.save();
+  ctx.translate(halfW, halfH);
+  ctx.beginPath();
+  ctx.rect(0, 0, halfW, halfH);
+  ctx.clip();
+  renderHistogram(ctx, halfW, halfH, data, fbW, fbH, intensity, showGraticule);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('HISTOGRAM', 10, 14);
+  ctx.restore();
+
+  // Dividing crosshair grid lines
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(halfW, 0);
+  ctx.lineTo(halfW, height);
+  ctx.moveTo(0, halfH);
+  ctx.lineTo(width, halfH);
+  ctx.stroke();
+}
+

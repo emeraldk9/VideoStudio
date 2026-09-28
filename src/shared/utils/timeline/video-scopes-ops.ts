@@ -276,3 +276,162 @@ export function computeHistogramBins(
 
   return { r, g, b, luma, maxCount };
 }
+
+export interface BroadcastGamutAudit {
+  totalPixels: number;
+  crushedBlacksCount: number;
+  crushedBlacksPct: number;
+  clippedHighlightsCount: number;
+  clippedWhitesCount: number;
+  clippedHighlightsPct: number;
+  broadcastLegalPct: number;
+  isLegal: boolean;
+  averageLuma: number;
+  crushedPercent: number;
+  clippedPercent: number;
+}
+
+/**
+ * Evaluates full-range or broadcast-range pixel values for black crush or highlight clipping.
+ * Rec.709 standard broadcast legal levels are 16 (0 IRE) to 235 (100 IRE).
+ */
+export function computeBroadcastGamutAudit(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+): BroadcastGamutAudit {
+  const totalPixels = width * height;
+  if (totalPixels <= 0 || pixels.length < totalPixels * 4) {
+    return {
+      totalPixels: 0,
+      crushedBlacksCount: 0,
+      crushedBlacksPct: 0,
+      clippedHighlightsCount: 0,
+      clippedWhitesCount: 0,
+      clippedHighlightsPct: 0,
+      broadcastLegalPct: 100,
+      isLegal: true,
+      averageLuma: 0,
+      crushedPercent: 0,
+      clippedPercent: 0,
+    };
+  }
+
+  let crushed = 0;
+  let clipped = 0;
+  let sumLuma = 0;
+
+  for (let i = 0; i < totalPixels; i++) {
+    const idx = i * 4;
+    const r = pixels[idx];
+    const g = pixels[idx + 1];
+    const b = pixels[idx + 2];
+    const luma = calculateLumaRec709(r, g, b);
+    sumLuma += luma;
+
+    if (luma <= 16) crushed++;
+    if (luma >= 235) clipped++;
+  }
+
+  const crushedPct = Number(((crushed / totalPixels) * 100).toFixed(2));
+  const clippedPct = Number(((clipped / totalPixels) * 100).toFixed(2));
+  const legalPct = Number((100 - crushedPct - clippedPct).toFixed(2));
+  const avgLuma = Number((sumLuma / totalPixels).toFixed(2));
+
+  return {
+    totalPixels,
+    crushedBlacksCount: crushed,
+    crushedBlacksPct: crushedPct,
+    clippedHighlightsCount: clipped,
+    clippedWhitesCount: clipped,
+    clippedHighlightsPct: clippedPct,
+    broadcastLegalPct: legalPct,
+    isLegal: crushedPct < 1.0 && clippedPct < 1.0,
+    averageLuma: avgLuma,
+    crushedPercent: crushedPct,
+    clippedPercent: clippedPct,
+  };
+}
+
+export interface WhiteBalanceStats {
+  avgR: number;
+  avgG: number;
+  avgB: number;
+  rgRatio: number;
+  bgRatio: number;
+  colorTemperatureBias: 'neutral' | 'warm' | 'cool' | 'magenta' | 'green';
+  colorCast: 'neutral' | 'warm' | 'cool' | 'magenta' | 'green';
+  tempDelta: number;
+  tintDelta: number;
+}
+
+/**
+ * Evaluates frame color balance across Red, Green, and Blue channels to determine
+ * overall color temperature bias (warm, cool, magenta, green, neutral).
+ */
+export function computeWhiteBalanceStats(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+): WhiteBalanceStats {
+  const totalPixels = width * height;
+  if (totalPixels <= 0 || pixels.length < totalPixels * 4) {
+    return {
+      avgR: 128,
+      avgG: 128,
+      avgB: 128,
+      rgRatio: 1.0,
+      bgRatio: 1.0,
+      colorTemperatureBias: 'neutral',
+      colorCast: 'neutral',
+      tempDelta: 0,
+      tintDelta: 0,
+    };
+  }
+
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+
+  for (let i = 0; i < totalPixels; i++) {
+    const idx = i * 4;
+    sumR += pixels[idx];
+    sumG += pixels[idx + 1];
+    sumB += pixels[idx + 2];
+  }
+
+  const avgR = Number((sumR / totalPixels).toFixed(2));
+  const avgG = Number((sumG / totalPixels).toFixed(2));
+  const avgB = Number((sumB / totalPixels).toFixed(2));
+
+  const safeG = Math.max(1, avgG);
+  const rgRatio = Number((avgR / safeG).toFixed(3));
+  const bgRatio = Number((avgB / safeG).toFixed(3));
+
+  const tempDelta = Number((avgR - avgB).toFixed(2));
+  const tintDelta = Number((avgG - (avgR + avgB) / 2).toFixed(2));
+
+  let colorTemperatureBias: 'neutral' | 'warm' | 'cool' | 'magenta' | 'green' = 'neutral';
+  if (tempDelta > 15 || (rgRatio > 1.08 && bgRatio < 0.95)) {
+    colorTemperatureBias = 'warm';
+  } else if (tempDelta < -15 || (bgRatio > 1.08 && rgRatio < 0.95)) {
+    colorTemperatureBias = 'cool';
+  } else if (tintDelta > 15 || (rgRatio < 0.95 && bgRatio < 0.95)) {
+    colorTemperatureBias = 'green';
+  } else if (tintDelta < -15 || (rgRatio > 1.05 && bgRatio > 1.05)) {
+    colorTemperatureBias = 'magenta';
+  }
+
+  return {
+    avgR,
+    avgG,
+    avgB,
+    rgRatio,
+    bgRatio,
+    colorTemperatureBias,
+    colorCast: colorTemperatureBias,
+    tempDelta,
+    tintDelta,
+  };
+}
+

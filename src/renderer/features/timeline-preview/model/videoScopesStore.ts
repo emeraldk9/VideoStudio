@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type VideoScopeType = 'waveform' | 'parade' | 'vectorscope' | 'histogram';
+export type VideoScopeType = 'all' | 'waveform' | 'parade' | 'vectorscope' | 'histogram';
 
 export interface VideoScopesState {
   isOpen: boolean;
