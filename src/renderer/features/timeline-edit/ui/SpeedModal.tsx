@@ -16,6 +16,9 @@ import {
   applyClipSpeedRamp,
   type SpeedRampSettings,
   type SpeedRampPresetKey,
+  DEFAULT_OPTICAL_FLOW_SETTINGS,
+  type OpticalFlowMode,
+  type OpticalFlowSettings,
 } from '@shared';
 
 import { applyClipSpeed, calculateSpeedDuration } from '../../../../shared/utils/timeline/speed-ops';
@@ -33,8 +36,14 @@ export interface SpeedModalProps {
   onClose: () => void;
 }
 
-const CONSTANT_SPEED_PRESETS = [
-  { label: '0.25×', value: 0.25, sub: 'Quarter' },
+const CONSTANT_SPEED_PRESETS: {
+  label: string;
+  value: number;
+  sub: string;
+  optical?: boolean;
+}[] = [
+  { label: '0.1×', value: 0.1, sub: '10x Dream-Mo', optical: true },
+  { label: '0.25×', value: 0.25, sub: '4x Fluid Slow', optical: true },
   { label: '0.5×', value: 0.5, sub: 'Half / Slow' },
   { label: '0.75×', value: 0.75, sub: 'Smooth' },
   { label: '1.0×', value: 1.0, sub: 'Normal' },
@@ -52,6 +61,7 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
   const initialSpeed = clip ? clipSpeed(clip.effects) : 1;
   const [speed, setSpeed] = useState<number>(initialSpeed);
   const [rippleSequence, setRippleSequence] = useState<boolean>(true);
+  const [retimingMode, setRetimingMode] = useState<OpticalFlowMode>('nearest');
 
   // Speed Curve (Ramping) State
   const [speedRamp, setSpeedRamp] = useState<SpeedRampSettings>(
@@ -71,6 +81,7 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
           enabled: true,
         }
       );
+      setRetimingMode(clip.effects?.opticalFlow?.enabled ? clip.effects.opticalFlow.mode : 'nearest');
       setRippleSequence(true);
       setSelectedPointIndex(1);
     }
@@ -108,8 +119,25 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
   const handleApply = () => {
     if (!clip || !document) return;
 
+    const targetSpeedVal = mode === 'constant' ? speed : avgRampSpeed;
+    const opticalFlowSettings: OpticalFlowSettings | undefined =
+      retimingMode !== 'nearest'
+        ? {
+            ...DEFAULT_OPTICAL_FLOW_SETTINGS,
+            enabled: true,
+            mode: retimingMode,
+            speedMultiplier: targetSpeedVal,
+            preset:
+              retimingMode === 'optical_flow'
+                ? targetSpeedVal <= 0.15
+                  ? 'extreme_dream_mo_10x'
+                  : 'smooth_slow_mo_4x'
+                : undefined,
+          }
+        : undefined;
+
     if (mode === 'constant') {
-      // Clear speedRamp and set constant speed
+      // Clear speedRamp and set constant speed + opticalFlow
       const withoutRamp = document.clips.map((c) =>
         c.id === clip.id
           ? {
@@ -117,6 +145,7 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
               effects: {
                 ...c.effects,
                 speedRamp: undefined,
+                opticalFlow: opticalFlowSettings,
               },
             }
           : c
@@ -126,8 +155,19 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
       });
       commitClips(next);
     } else {
-      // Apply speed ramp
-      const next = applyClipSpeedRamp(document.clips, document.tracks, clip.id, {
+      // Apply speed ramp + opticalFlow
+      const withOpticalFlow = document.clips.map((c) =>
+        c.id === clip.id
+          ? {
+              ...c,
+              effects: {
+                ...c.effects,
+                opticalFlow: opticalFlowSettings,
+              },
+            }
+          : c
+      );
+      const next = applyClipSpeedRamp(withOpticalFlow, document.tracks, clip.id, {
         ...speedRamp,
         enabled: true,
         rippleSequence,
@@ -137,8 +177,11 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
     onClose();
   };
 
-  const handlePresetSelect = (val: number) => {
+  const handlePresetSelect = (val: number, optical?: boolean) => {
     setSpeed(val);
+    if (optical) {
+      setRetimingMode('optical_flow');
+    }
   };
 
   const handleRampPresetSelect = (key: SpeedRampPresetKey) => {
@@ -253,7 +296,7 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
                     <button
                       key={preset.value}
                       type="button"
-                      onClick={() => handlePresetSelect(preset.value)}
+                      onClick={() => handlePresetSelect(preset.value, preset.optical)}
                       className={`flex flex-col items-center justify-center rounded-lg border p-1.5 transition-all ${
                         active
                           ? 'border-accent-ai bg-accent-ai/15 text-accent-ai font-bold shadow-xs'
@@ -427,6 +470,53 @@ export function SpeedModal({ open, clip, document, fps, onClose }: SpeedModalPro
               </div>
             )}
           </>
+        )}
+
+        {/* Frame Retiming & Interpolation (Optical Flow) */}
+        {clip?.sourceKind === 'video' && (
+          <div className="flex flex-col gap-2 rounded-xl border border-hairline bg-bg-app p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-semibold text-text-primary block">
+                  Motion Retiming Mode
+                </span>
+                <span className="text-[11px] text-text-secondary block mt-0.5">
+                  AI Frame Interpolation for butter-smooth high-frame-rate slow-motion.
+                </span>
+              </div>
+              {retimingMode === 'optical_flow' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-accent-ai/15 text-accent-ai border border-accent-ai/30">
+                  <span className="material-symbols-outlined text-[12px]">auto_awesome</span>
+                  <span>AI Optical Flow</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5 pt-1">
+              {[
+                { id: 'nearest', label: 'Nearest Frame', desc: 'Standard / Instant' },
+                { id: 'blend', label: 'Frame Blend', desc: 'Ghost Blend' },
+                { id: 'optical_flow', label: 'Optical Flow', desc: 'AI Motion Vector' },
+              ].map((item) => {
+                const active = retimingMode === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setRetimingMode(item.id as OpticalFlowMode)}
+                    className={`flex flex-col items-center justify-center p-2 rounded-lg border text-center transition-all ${
+                      active
+                        ? 'border-accent-ai bg-accent-ai/15 text-accent-ai font-bold shadow-xs'
+                        : 'border-hairline bg-bg-canvas text-text-secondary hover:border-text-disabled hover:text-text-primary'
+                    }`}
+                  >
+                    <span className="text-xs">{item.label}</span>
+                    <span className="text-[9px] text-text-disabled mt-0.5">{item.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         {/* Ripple Sequence Duration Switch */}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -162,7 +162,7 @@ const ROLE_LABELS: { role: TrackRole | null; label: string }[] = [
   { role: 'music', label: 'Music — ducks under narration' },
   { role: null, label: 'No role' },
 ];
-export function TimelineTrackRow({
+export const TimelineTrackRow = memo(function TimelineTrackRow({
   track,
   clips,
   fps,
@@ -908,4 +908,4 @@ export function TimelineTrackRow({
       />
     </div>
   );
-}
+});

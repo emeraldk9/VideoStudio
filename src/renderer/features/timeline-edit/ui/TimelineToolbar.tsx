@@ -77,7 +77,9 @@ const ZOOM_STEP = 1.15;
 function CompactMasterVuMeter() {
   const isPlaying = useSequenceStore((s) => s.playing);
   const audioScrubEnabled = useSequenceStore((s) => s.audioScrubEnabled);
-  const playheadFrame = useSequenceStore((s) => s.playheadFrame);
+  // S171: Only subscribe to active playhead frame when audio metering is actively needed (during playback or audio scrubbing).
+  // This eliminates full timeline VU recalculation and DOM re-renders on every mouse move during standard silent scrubbing!
+  const playheadFrame = useSequenceStore((s) => (s.playing || s.audioScrubEnabled ? s.playheadFrame : 0));
   const document = useSequenceStore((s) => s.document);
 
   const masterVolumeDb = useAudioMixerStore((s) => s.masterVolumeDb);

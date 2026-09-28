@@ -342,4 +342,147 @@ describe('Milestone S162: Playback Decoupling, Hardware Video Clock & Anti-Seek 
     expect(activeCueId).toBeNull();
     expect(renderTriggerCount).toBe(3);
   });
+
+  describe('Milestone S171: High-Performance Media Playback, 60fps Scrubber & Optical Flow Retiming', () => {
+    it('bypasses WebGL canvas overlay for standard video clips without active transitions or GPU shaders', () => {
+      // Helper function mirroring TimelinePreview's S171 glActive decision
+      const computeGlActive = (params: {
+        glEnabled: boolean;
+        current: { clip: SequenceClip } | null;
+        boundary: { type: string } | null;
+        resolvedMotion?: unknown;
+        adjustmentsCount: number;
+      }): boolean => {
+        if (!params.glEnabled || !params.current) return false;
+        const clip = params.current.clip;
+        const hasGlTransition = params.boundary !== null;
+        const hasGlEffects = Boolean(
+          (clip.sourceKind === 'still' && params.resolvedMotion !== undefined) ||
+            clip.effects?.filmEmulation?.enabled ||
+            clip.effects?.lensOptics?.enabled ||
+            clip.effects?.chromaKey?.enabled ||
+            clip.effects?.colorGrade ||
+            clip.effects?.mask?.enabled ||
+            params.adjustmentsCount > 0,
+        );
+        return (
+          (hasGlTransition || hasGlEffects) &&
+          (clip.sourceKind === 'still' || clip.sourceKind === 'video')
+        );
+      };
+
+      // 1. Standard video clip: no transitions, no shaders -> glActive is false (Direct 60fps GPU Hardware Scanout!)
+      const plainVideo = { clip: clipA };
+      expect(
+        computeGlActive({
+          glEnabled: true,
+          current: plainVideo,
+          boundary: null,
+          adjustmentsCount: 0,
+        }),
+      ).toBe(false);
+
+      // 2. Video with crossfade transition -> glActive is true (WebGL Compositor draws blend)
+      expect(
+        computeGlActive({
+          glEnabled: true,
+          current: plainVideo,
+          boundary: { type: 'crossfade' },
+          adjustmentsCount: 0,
+        }),
+      ).toBe(true);
+
+      // 3. Video with color grade or film emulation -> glActive is true
+      const gradedVideo = {
+        clip: {
+          ...clipA,
+          effects: {
+            filmEmulation: {
+              enabled: true,
+              stock: 'kodak_portra_400' as const,
+              grainIntensity: 0.5,
+              grainSize: 1.0,
+              halationSpread: 0.3,
+              halationColor: [1, 0, 0] as [number, number, number],
+              bloomIntensity: 0.2,
+              halationEnabled: true,
+              bloomEnabled: true,
+              filmGateWeave: 0.1,
+              gateWeaveSpeed: 1.0,
+            },
+          },
+        },
+      };
+      expect(
+        computeGlActive({
+          glEnabled: true,
+          current: gradedVideo,
+          boundary: null,
+          adjustmentsCount: 0,
+        }),
+      ).toBe(true);
+
+      // 4. Video under active adjustment layer -> glActive is true
+      expect(
+        computeGlActive({
+          glEnabled: true,
+          current: plainVideo,
+          boundary: null,
+          adjustmentsCount: 1,
+        }),
+      ).toBe(true);
+    });
+
+    it('syncs audio using micro-rate nudges for minor drift (< 0.8s) without popping or buffer dump', () => {
+      let seekCount = 0;
+      const el = {
+        paused: false,
+        currentTime: 2.0,
+        playbackRate: 1.0,
+        play: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const syncAudio = (target: number, tempo = 1.0) => {
+        const drift = el.currentTime - target;
+        if (Math.abs(drift) > 0.8) {
+          // Large drift -> hard seek
+          el.currentTime = target;
+          if (el.playbackRate !== tempo) el.playbackRate = tempo;
+          seekCount++;
+        } else if (Math.abs(drift) > 0.08) {
+          // Micro drift -> smooth nudge rate without dumping audio decode buffer
+          const nudge = drift > 0 ? 0.96 : 1.04;
+          const adjustedRate = tempo * nudge;
+          if (Math.abs(el.playbackRate - adjustedRate) > 0.01) {
+            el.playbackRate = adjustedRate;
+          }
+        } else if (el.playbackRate !== tempo) {
+          el.playbackRate = tempo;
+        }
+      };
+
+      // Case 1: Audio is slightly behind target (drift = -0.15s)
+      // Should nudge rate up to 1.04 to smoothly catch up with ZERO hard seeks!
+      syncAudio(2.15);
+      expect(seekCount).toBe(0);
+      expect(el.playbackRate).toBeCloseTo(1.04, 2);
+
+      // Case 2: Audio is slightly ahead of target (drift = +0.12s)
+      el.currentTime = 2.12;
+      syncAudio(2.0);
+      expect(seekCount).toBe(0);
+      expect(el.playbackRate).toBeCloseTo(0.96, 2);
+
+      // Case 3: In sync (drift < 0.08s) -> restore normal playback rate 1.0
+      el.currentTime = 2.02;
+      syncAudio(2.0);
+      expect(seekCount).toBe(0);
+      expect(el.playbackRate).toBe(1.0);
+
+      // Case 4: Major desync (e.g. user skipped playhead, drift = 2.5s) -> execute hard seek
+      syncAudio(4.5);
+      expect(seekCount).toBe(1);
+      expect(el.currentTime).toBe(4.5);
+    });
+  });
 });

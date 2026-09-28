@@ -1,7 +1,9 @@
 import {
   calculateRampAverageSpeed,
   clipSpeed,
+  DEFAULT_OPTICAL_FLOW_SETTINGS,
   sampleSpeedRampSvgPoints,
+  type OpticalFlowMode,
   type SequenceClip,
 } from '@shared';
 import { useModalStore } from '../../../../shared/model/modalStore';
@@ -21,6 +23,35 @@ export function SpeedInspectorTab({ clip, patchClip }: SpeedInspectorTabProps) {
   ) {
     return null;
   }
+
+  const currentRetimingMode: OpticalFlowMode = clip.effects?.opticalFlow?.enabled
+    ? clip.effects.opticalFlow.mode
+    : 'nearest';
+
+  const updateRetimingMode = (mode: OpticalFlowMode) => {
+    if (mode === 'nearest') {
+      patchClip(clip.id, {
+        effects: {
+          ...clip.effects,
+          opticalFlow: undefined,
+        },
+      });
+    } else {
+      patchClip(clip.id, {
+        effects: {
+          ...clip.effects,
+          opticalFlow: {
+            ...DEFAULT_OPTICAL_FLOW_SETTINGS,
+            ...(clip.effects?.opticalFlow ?? {}),
+            enabled: true,
+            mode,
+            speedMultiplier: clipSpeed(clip.effects),
+            preset: mode === 'optical_flow' ? 'smooth_slow_mo_4x' : undefined,
+          },
+        },
+      });
+    }
+  };
 
   return (
     <Section title="Speed & Retiming">
@@ -219,6 +250,46 @@ export function SpeedInspectorTab({ clip, patchClip }: SpeedInspectorTabProps) {
               .
             </p>
           </>
+        )}
+
+        {/* S171: Motion Retiming & Interpolation (Optical Flow Mode) */}
+        {clip.sourceKind === 'video' && (
+          <div className="flex flex-col gap-1.5 pt-2 border-t border-hairline/60">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold text-text-disabled tracking-wider block">
+                Motion Retiming Mode
+              </span>
+              {currentRetimingMode === 'optical_flow' && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-accent-ai/15 text-accent-ai border border-accent-ai/30">
+                  <span className="material-symbols-outlined text-[11px]">auto_awesome</span>
+                  <span>AI Optical Flow</span>
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {[
+                { id: 'nearest', label: 'Nearest' },
+                { id: 'blend', label: 'Frame Blend' },
+                { id: 'optical_flow', label: 'Optical Flow' },
+              ].map((item) => {
+                const active = currentRetimingMode === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => updateRetimingMode(item.id as OpticalFlowMode)}
+                    className={`rounded-lg border py-1 px-1.5 text-[11px] font-medium transition-all ${
+                      active
+                        ? 'border-accent-ai bg-accent-ai/15 text-accent-ai font-bold shadow-xs'
+                        : 'border-hairline bg-bg-app text-text-secondary hover:border-text-disabled hover:text-text-primary'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
     </Section>

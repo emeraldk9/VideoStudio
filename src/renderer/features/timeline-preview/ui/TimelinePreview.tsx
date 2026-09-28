@@ -507,6 +507,8 @@ export function TimelinePreview() {
   visualBoundariesRef.current = visualBoundaryFrames;
   const currentSegmentIdxRef = useRef<number>(-1);
   const lastSyncedClipIdRef = useRef<string | null>(null);
+  const glActiveRef = useRef<boolean>(false);
+  const drawGlFrameRef = useRef<((frame: number) => void) | null>(null);
 
   // Transport clock rAF loop
   useEffect(() => {
@@ -609,6 +611,11 @@ export function TimelinePreview() {
 
       transportClock.publish(frame);
 
+      // S171: Direct 60fps WebGL frame rendering during active playback when GL shaders/transitions are active
+      if (glActiveRef.current) {
+        drawGlFrameRef.current?.(frame);
+      }
+
       // Direct zero-delay audio playback synchronization from rAF loop
       const audible = playbackRate === 1;
       for (const placed of audioPlacedRef.current) {
@@ -626,8 +633,22 @@ export function TimelinePreview() {
           if (el.paused) {
             el.currentTime = target;
             void el.play().catch(() => undefined);
-          } else if (Math.abs(el.currentTime - target) > 0.4) {
-            el.currentTime = target;
+          } else {
+            const drift = el.currentTime - target;
+            if (Math.abs(drift) > 0.8) {
+              // S171: Large drift threshold - hard seek only on genuine desync
+              el.currentTime = target;
+              if (el.playbackRate !== tempo) el.playbackRate = tempo;
+            } else if (Math.abs(drift) > 0.08) {
+              // S171: Smooth micro-rate nudge catches up or slows down audio without popping or buffer dump
+              const nudge = drift > 0 ? 0.96 : 1.04;
+              const adjustedRate = tempo * nudge;
+              if (Math.abs(el.playbackRate - adjustedRate) > 0.01) {
+                el.playbackRate = adjustedRate;
+              }
+            } else if (el.playbackRate !== tempo) {
+              el.playbackRate = tempo;
+            }
           }
         }
       }
@@ -780,13 +801,16 @@ export function TimelinePreview() {
       element.volume = volume;
 
       const tempo = clipSpeed(placed.clip.effects);
-      if (element.playbackRate !== tempo) element.playbackRate = tempo;
-      const target = framesToSeconds(
-        (placed.clip.sourceInFrames ?? 0) + (playheadFrame - placed.startFrames) * tempo,
-        fps,
-      );
-      if (Math.abs(element.currentTime - target) > 0.6) element.currentTime = target;
-      if (element.paused) void element.play().catch(() => undefined);
+      // S171: When paused or scrubbing, keep currentTime in sync.
+      // During active playback, the rAF loop owns currentTime & smooth playbackRate sync to avoid audio buffer dumps.
+      if (!playing) {
+        if (element.playbackRate !== tempo) element.playbackRate = tempo;
+        const target = framesToSeconds(
+          (placed.clip.sourceInFrames ?? 0) + (playheadFrame - placed.startFrames) * tempo,
+          fps,
+        );
+        if (Math.abs(element.currentTime - target) > 0.05) element.currentTime = target;
+      }
     }
   }, [
     audioPlaced,
@@ -1313,12 +1337,44 @@ export function TimelinePreview() {
     setMediaTick((tick) => tick + 1);
   }, []);
 
+  const adjustments = useMemo(
+    () =>
+      (document?.tracks ?? [])
+        .filter((track) => track.kind === 'video' && track.videoEnabled)
+        .flatMap((track) =>
+          (trackLayoutMap.get(track.id) ?? []).filter(
+            (placed) =>
+              placed.clip.sourceKind === 'effect' &&
+              playheadFrame >= placed.startFrames &&
+              playheadFrame < placed.endFrames,
+          ),
+        )
+        .map((placed) => resolveFilterValues(placed.clip.effects)),
+    [document, trackLayoutMap, playheadFrame],
+  );
+
+  const hasGlTransition = boundary !== null;
+  const hasGlEffects = Boolean(
+    (current?.clip.sourceKind === 'still' && resolvedMotion !== undefined) ||
+      current?.clip.effects?.filmEmulation?.enabled ||
+      current?.clip.effects?.lensOptics?.enabled ||
+      current?.clip.effects?.chromaKey?.enabled ||
+      current?.clip.effects?.colorGrade ||
+      current?.clip.effects?.mask?.enabled ||
+      adjustments.length > 0,
+  );
+
+  // S171: Bypass WebGL canvas when standard video plays without active shaders/transitions.
+  // This allows native Chromium hardware decoding at 60/120fps with zero texture copy overhead!
   const glActive =
     glEnabled &&
     current !== null &&
     whiteboard === null &&
     reframeMotion === null &&
+    (hasGlTransition || hasGlEffects) &&
     (current.clip.sourceKind === 'still' || current.clip.sourceKind === 'video');
+
+  glActiveRef.current = glActive;
 
   const underlayVideoUrl =
     glActive && boundary?.previous.clip.sourceKind === 'video'
@@ -1336,22 +1392,6 @@ export function TimelinePreview() {
     );
     if (Math.abs(element.currentTime - target) > 0.05) element.currentTime = target;
   }, [boundary, fps]);
-
-  const adjustments = useMemo(
-    () =>
-      (document?.tracks ?? [])
-        .filter((track) => track.kind === 'video' && track.videoEnabled)
-        .flatMap((track) =>
-          (trackLayoutMap.get(track.id) ?? []).filter(
-            (placed) =>
-              placed.clip.sourceKind === 'effect' &&
-              playheadFrame >= placed.startFrames &&
-              playheadFrame < placed.endFrames,
-          ),
-        )
-        .map((placed) => resolveFilterValues(placed.clip.effects)),
-    [document, trackLayoutMap, playheadFrame],
-  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1377,84 +1417,92 @@ export function TimelinePreview() {
     [],
   );
 
-  useLayoutEffect(() => {
-    const compositor = compositorRef.current;
-    if (!glActive || !compositor || !current) return;
-    if (compositor.isFailed()) {
-      setGlEnabled(false);
-      return;
-    }
+  const drawGlFrame = useCallback(
+    (targetFrame: number) => {
+      const compositor = compositorRef.current;
+      if (!glActive || !compositor || !current) return;
+      if (compositor.isFailed()) {
+        setGlEnabled(false);
+        return;
+      }
 
-    const elementFor = (
-      element: HTMLVideoElement | HTMLImageElement | null,
-    ): GlSource | null => {
-      if (!element) return null;
-      const width =
-        element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
-      const height =
-        element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
-      return width > 0 && height > 0 ? { element, width, height } : null;
-    };
+      const elementFor = (
+        element: HTMLVideoElement | HTMLImageElement | null,
+      ): GlSource | null => {
+        if (!element) return null;
+        const width =
+          element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
+        const height =
+          element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
+        return width > 0 && height > 0 ? { element, width, height } : null;
+      };
 
-    const incoming = layerFor({
-      slot: 'b',
-      clipId: current.clip.id,
-      motion: resolvedMotion
-        ? motionAt(resolvedMotion, playheadFrame - current.startFrames, current.clip.durationFrames)
-        : undefined,
-      effects: current.clip.effects,
-      playheadFrame,
-    });
+      const incoming = layerFor({
+        slot: 'b',
+        clipId: current.clip.id,
+        motion: resolvedMotion
+          ? motionAt(resolvedMotion, targetFrame - current.startFrames, current.clip.durationFrames)
+          : undefined,
+        effects: current.clip.effects,
+        playheadFrame: targetFrame,
+      });
 
-    const previous = boundary?.previous.clip;
-    const outgoing =
-      previous && underlayMotion
-        ? layerFor({
-            slot: 'a',
-            clipId: previous.id,
-            motion: motionAt(underlayMotion, previous.durationFrames - 1, previous.durationFrames),
-            effects: previous.effects,
-            playheadFrame,
-          })
-        : previous
+      const previous = boundary?.previous.clip;
+      const outgoing =
+        previous && underlayMotion
           ? layerFor({
               slot: 'a',
               clipId: previous.id,
-              motion: undefined,
+              motion: motionAt(underlayMotion, previous.durationFrames - 1, previous.durationFrames),
               effects: previous.effects,
-              playheadFrame,
+              playheadFrame: targetFrame,
             })
-          : null;
+          : previous
+            ? layerFor({
+                slot: 'a',
+                clipId: previous.id,
+                motion: undefined,
+                effects: previous.effects,
+                playheadFrame: targetFrame,
+              })
+            : null;
 
-    const sourceA = elementFor(
-      previous?.sourceKind === 'video' ? underlayVideoRef.current : underlayImgRef.current,
-    );
-    const graph = buildFrameGraph({
-      incoming,
-      outgoing: boundary && sourceA ? outgoing : null,
-      transition: boundary
-        ? planTransition(boundary.type, boundary.progress, current.clip.effects?.transition)
-        : null,
+      const sourceA = elementFor(
+        previous?.sourceKind === 'video' ? underlayVideoRef.current : underlayImgRef.current,
+      );
+      const graph = buildFrameGraph({
+        incoming,
+        outgoing: boundary && sourceA ? outgoing : null,
+        transition: boundary
+          ? planTransition(boundary.type, boundary.progress, current.clip.effects?.transition)
+          : null,
+        adjustments,
+      });
+
+      const isCompVideo = compoundVisualClip?.sourceKind === 'video';
+      const sourceB = elementFor(
+        current.clip.sourceKind === 'video' || isCompVideo ? videoRef.current : stillImgRef.current,
+      );
+      if (!compositor.draw(graph, { a: graph.transition ? sourceA : null, b: sourceB }, [0, 0, 0])) {
+        setGlEnabled(false);
+      }
+    },
+    [
+      glActive,
+      current,
+      resolvedMotion,
+      boundary,
+      underlayMotion,
       adjustments,
-    });
+      compoundVisualClip,
+    ],
+  );
 
-    const isCompVideo = compoundVisualClip?.sourceKind === 'video';
-    const sourceB = elementFor(
-      current.clip.sourceKind === 'video' || isCompVideo ? videoRef.current : stillImgRef.current,
-    );
-    if (!compositor.draw(graph, { a: graph.transition ? sourceA : null, b: sourceB }, [0, 0, 0])) {
-      setGlEnabled(false);
-    }
-  }, [
-    glActive,
-    current,
-    resolvedMotion,
-    playheadFrame,
-    boundary,
-    underlayMotion,
-    adjustments,
-    mediaTick,
-  ]);
+  drawGlFrameRef.current = drawGlFrame;
+
+  useLayoutEffect(() => {
+    drawGlFrame(playheadFrame);
+  }, [drawGlFrame, playheadFrame, mediaTick]);
 
   const selectedClip = useMemo(() => {
     if (selectedClipIds.length !== 1) return null;

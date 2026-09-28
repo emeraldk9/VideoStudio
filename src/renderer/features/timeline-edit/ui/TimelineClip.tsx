@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 import {
   calculateFadeFrames,
@@ -85,7 +85,7 @@ export interface TimelineClipProps {
  * Beta S145 — one clip on a lane.
  * S22 — Interactive Audio Gain Rubberband and Fade In/Out Drag Handles.
  */
-export function TimelineClip({
+export const TimelineClip = memo(function TimelineClip({
   clip,
   fps,
   widthPx,
@@ -728,4 +728,4 @@ export function TimelineClip({
       )}
     </div>
   );
-}
+});
