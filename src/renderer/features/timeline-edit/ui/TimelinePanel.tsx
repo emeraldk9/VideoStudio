@@ -56,6 +56,15 @@ import {
   linkClips,
   unlinkClips,
   formatDragDeltaBadge,
+  filterMarkersByCategory,
+  findMarkerAtPlayhead,
+  findNextMarker,
+  findPreviousMarker,
+  formatMarkerTimecodeBadge,
+  getMarkerCountsByCategory,
+  getMarkerGlyph,
+  MARKER_FILTER_CATEGORIES,
+  type MarkerFilterCategory,
   type ClipColorLabel,
   type TimelineTrackGap,
   type SequenceClip,
@@ -2196,6 +2205,36 @@ export function TimelinePanel() {
     [markers, editingMarkerId],
   );
 
+  // S180: Marker Category Taxonomy & Quick Navigation
+  const [markerCategory, setMarkerCategory] = useState<MarkerFilterCategory>('all');
+  const filteredMarkers = useMemo(
+    () => filterMarkersByCategory(markers, markerCategory),
+    [markers, markerCategory],
+  );
+  const markerCounts = useMemo(() => getMarkerCountsByCategory(markers), [markers]);
+  const activeMarker = useMemo(
+    () => findMarkerAtPlayhead(markers, playheadFrame),
+    [markers, playheadFrame],
+  );
+
+  const handleJumpPrevMarker = useCallback(() => {
+    if (markers.length === 0) return;
+    const targetMarkers = markerCategory === 'all' ? markers : filteredMarkers;
+    const prev = findPreviousMarker(targetMarkers, playheadFrame);
+    if (prev) {
+      setPlayhead(prev.frame);
+    }
+  }, [markers, markerCategory, filteredMarkers, playheadFrame, setPlayhead]);
+
+  const handleJumpNextMarker = useCallback(() => {
+    if (markers.length === 0) return;
+    const targetMarkers = markerCategory === 'all' ? markers : filteredMarkers;
+    const next = findNextMarker(targetMarkers, playheadFrame);
+    if (next) {
+      setPlayhead(next.frame);
+    }
+  }, [markers, markerCategory, filteredMarkers, playheadFrame, setPlayhead]);
+
   if (!document) return null;
 
   const pixelsPerFrame = pixelsPerSecond / fps;
@@ -2223,6 +2262,131 @@ export function TimelinePanel() {
         setZoom(pixelsPerSecond * (event.deltaY < 0 ? 1.15 : 1 / 1.15));
       }}
     >
+      {/* S180 — Timeline Marker Quick-Navigation & Category Taxonomy Filter Bar */}
+      {markers.length > 0 && (
+        <div
+          data-testid="marker-quick-nav-bar"
+          className="flex shrink-0 items-center justify-between gap-3 rounded-card border border-hairline bg-bg-surface/90 px-3 py-1.5 text-xs backdrop-blur-sm select-none shadow-sm"
+        >
+          {/* Left: Category Filter Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <span className="flex items-center gap-1 font-semibold text-text-muted text-[11px] uppercase tracking-wider mr-1">
+              <span className="material-symbols-outlined text-[14px]">bookmarks</span>
+              Markers:
+            </span>
+            {MARKER_FILTER_CATEGORIES.map((cat) => {
+              const count = markerCounts[cat.id];
+              const isSelected = markerCategory === cat.id;
+              if (count === 0 && cat.id !== 'all') return null;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setMarkerCategory(cat.id)}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-accent-ai text-white shadow-sm'
+                      : 'bg-bg-canvas hover:bg-bg-panel text-text-secondary border border-hairline/60'
+                  }`}
+                  title={`Filter timeline markers by ${cat.label} (${count})`}
+                >
+                  <span className="material-symbols-outlined text-[13px]">{cat.icon}</span>
+                  <span>{cat.label}</span>
+                  <span
+                    className={`ml-0.5 rounded-full px-1.5 py-[0.5px] text-[10px] tabular-nums font-bold ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-bg-surface text-text-muted'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Center: Active Marker Display / Quick Edit Chip */}
+          <div className="flex items-center gap-2">
+            {activeMarker ? (
+              <button
+                type="button"
+                onClick={() => setEditingMarkerId(activeMarker.id)}
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-accent-ai/15 border border-accent-ai/40 text-accent-ai hover:bg-accent-ai/25 transition-colors cursor-pointer"
+                title="Click to edit marker details (Name, Color, Sync Lock, Notes)"
+              >
+                <span className="material-symbols-outlined text-[14px] leading-none">
+                  {getMarkerGlyph(activeMarker)}
+                </span>
+                <span className="font-semibold max-w-[140px] truncate text-[11px]">
+                  {activeMarker.name || 'Marker'}
+                </span>
+                <span className="text-[10px] font-mono text-text-secondary">
+                  {formatTimecode(activeMarker.frame, fps)}
+                </span>
+                {activeMarker.locked && (
+                  <span className="text-[10px] px-1 rounded bg-amber-500/20 text-amber-400 font-semibold">
+                    SYNC
+                  </span>
+                )}
+                {activeMarker.notes && (
+                  <span className="material-symbols-outlined text-[12px] text-text-muted" title={activeMarker.notes}>
+                    comment
+                  </span>
+                )}
+              </button>
+            ) : (
+              <span className="text-[11px] text-text-disabled italic">
+                {filteredMarkers.length > 0
+                  ? `${filteredMarkers.length} marker${filteredMarkers.length === 1 ? '' : 's'} in view`
+                  : 'No markers in category'}
+              </span>
+            )}
+          </div>
+
+          {/* Right: Quick Jump Controls */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={filteredMarkers.length === 0}
+              onClick={handleJumpPrevMarker}
+              title="Jump to previous marker (Alt+M / Ctrl+Shift+M)"
+              aria-label="Previous marker"
+              className="flex items-center gap-0.5 px-2 py-0.5 rounded bg-bg-canvas hover:bg-bg-panel border border-hairline text-text-primary text-[11px] font-medium disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+              <span>Prev</span>
+            </button>
+            <button
+              type="button"
+              disabled={filteredMarkers.length === 0}
+              onClick={handleJumpNextMarker}
+              title="Jump to next marker (Shift+M)"
+              aria-label="Next marker"
+              className="flex items-center gap-0.5 px-2 py-0.5 rounded bg-bg-canvas hover:bg-bg-panel border border-hairline text-text-primary text-[11px] font-medium disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+            >
+              <span>Next</span>
+              <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const existing = markers.find((m) => Math.abs(m.frame - playheadFrame) <= 0.5);
+                if (existing) {
+                  setEditingMarkerId(existing.id);
+                } else {
+                  void useSequenceStore.getState().addMarker(playheadFrame);
+                }
+              }}
+              title="Add marker at playhead (M)"
+              aria-label="Add marker"
+              className="flex items-center gap-0.5 px-2 py-0.5 rounded bg-bg-canvas hover:bg-accent-ai/20 border border-hairline text-accent-ai text-[11px] font-medium transition-colors ml-1 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[14px]">bookmark_add</span>
+              <span>+ Marker</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* The empty stage still shows its lanes — the workspace is always
           visible and drop targets have to exist before anything is on them.
           One dim line says what goes here; it vanishes with the first clip. */}
@@ -2406,20 +2570,29 @@ export function TimelinePanel() {
                   pinned with the scale they annotate. Trough-space left (the
                   wrapper's origin already sits past the gutter). Click seeks;
                   double-click opens full edit modal; shift-click toggles lock; right-click deletes. */}
-              {markers.map((marker) => (
-                <div
-                  key={marker.id}
-                  className="group absolute top-0 z-20"
-                  style={{ left: marker.frame * pixelsPerFrame }}
-                >
-                  {/* S233 — a locked marker is a sync point (R5): it draws
-                      the lock glyph, shift-click toggles the lock, and
-                      right-click refuses to delete it while locked. Double-click
-                      opens MarkerModal to view/edit notes, rename, or change color. */}
-                  <button
-                    type="button"
-                    aria-label={`Marker: ${marker.name || 'unnamed'}${marker.locked ? ' (locked sync point)' : ''} — click seeks, double-click edits details, shift-click ${marker.locked ? 'unlocks' : 'locks'}, right-click deletes`}
-                    className={`relative material-symbols-outlined material-symbols-outlined--filled -translate-x-1/2 cursor-pointer text-[14px] leading-none transition-transform hover:scale-125 ${MARKER_CLASSES[marker.color] ?? 'text-accent-ai'}`}
+              {markers.map((marker) => {
+                const isMatchingCategory =
+                  markerCategory === 'all' || filteredMarkers.some((m) => m.id === marker.id);
+                const isCurrent = activeMarker?.id === marker.id;
+
+                return (
+                  <div
+                    key={marker.id}
+                    className={`group absolute top-0 z-20 transition-opacity duration-150 ${
+                      isMatchingCategory ? 'opacity-100' : 'opacity-25 hover:opacity-90'
+                    }`}
+                    style={{ left: marker.frame * pixelsPerFrame }}
+                  >
+                    {/* S233 — a locked marker is a sync point (R5): it draws
+                        the lock glyph, shift-click toggles the lock, and
+                        right-click refuses to delete it while locked. Double-click
+                        opens MarkerModal to view/edit notes, rename, or change color. */}
+                    <button
+                      type="button"
+                      aria-label={`Marker: ${marker.name || 'unnamed'}${marker.locked ? ' (locked sync point)' : ''} — click seeks, double-click edits details, shift-click ${marker.locked ? 'unlocks' : 'locks'}, right-click deletes`}
+                      className={`relative material-symbols-outlined material-symbols-outlined--filled -translate-x-1/2 cursor-pointer text-[14px] leading-none transition-all hover:scale-125 ${
+                        MARKER_CLASSES[marker.color] ?? 'text-accent-ai'
+                      } ${isCurrent ? 'scale-125 drop-shadow-[0_0_6px_rgba(255,255,255,0.7)]' : ''}`}
                     style={{ marginTop: 13 }}
                     onClick={(event) => {
                       if (event.shiftKey) {
@@ -2473,7 +2646,8 @@ export function TimelinePanel() {
                     )}
                   </div>
                 </div>
-              ))}
+              );
+            })}
 
               {/* S174 — the playhead's head: a stub of the line across the
                   strip plus the grab cap, pinned with the ruler. The

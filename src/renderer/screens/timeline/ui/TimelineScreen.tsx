@@ -4,6 +4,8 @@ import {
   duplicateClips,
   findNextCut,
   findPreviousCut,
+  findNextMarker,
+  findPreviousMarker,
   framesToSeconds,
   insertFreezeFrame,
   layoutTrack,
@@ -391,6 +393,28 @@ export function TimelineScreen() {
               state.setEditingMarkerId(existing.id);
             } else {
               void state.addMarker(frame);
+            }
+            return;
+          }
+          case 'jump_prev_marker': {
+            if (state.markers.length > 0) {
+              const from = currentPlayheadFrame();
+              const prev = findPreviousMarker(state.markers, from);
+              if (prev) {
+                setPlaying(false);
+                setPlayhead(prev.frame);
+              }
+            }
+            return;
+          }
+          case 'jump_next_marker': {
+            if (state.markers.length > 0) {
+              const from = currentPlayheadFrame();
+              const next = findNextMarker(state.markers, from);
+              if (next) {
+                setPlaying(false);
+                setPlayhead(next.frame);
+              }
             }
             return;
           }

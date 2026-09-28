@@ -81,6 +81,8 @@ export type TimelineActionId =
   | 'clear_out'
   | 'clear_in_out'
   | 'add_marker'
+  | 'jump_prev_marker'
+  | 'jump_next_marker'
   // Audio & FX
   | 'audio_gain_dialog'
   | 'nudge_gain_up'
@@ -151,6 +153,8 @@ export const TIMELINE_ACTIONS: ActionMetadata[] = [
   { id: 'clear_out', name: 'Clear Out Point', description: 'Remove Work Area Out-point boundary', category: 'marking' },
   { id: 'clear_in_out', name: 'Clear In & Out Points', description: 'Clear entire timeline Work Area boundaries', category: 'marking' },
   { id: 'add_marker', name: 'Add / Edit Marker', description: 'Place a sequence marker or edit marker under playhead', category: 'marking' },
+  { id: 'jump_prev_marker', name: 'Jump to Previous Marker', description: 'Move playhead to preceding timeline marker', category: 'marking' },
+  { id: 'jump_next_marker', name: 'Jump to Next Marker', description: 'Move playhead to succeeding timeline marker', category: 'marking' },
 
   // Audio & FX
   { id: 'audio_gain_dialog', name: 'Audio Gain & Fades Modal', description: 'Open dialog to adjust clip gain and crossfades', category: 'audio_fx' },
@@ -232,6 +236,8 @@ export const VIDEOSTUDIO_KEYMAP: NleKeymapProfile = {
     clear_out: [{ key: 'o', alt: true }],
     clear_in_out: [{ key: 'x', alt: true }],
     add_marker: [{ key: 'm' }],
+    jump_prev_marker: [{ key: 'm', alt: true }, { key: 'm', ctrlOrMeta: true, shift: true }],
+    jump_next_marker: [{ key: 'm', shift: true }],
 
     audio_gain_dialog: [{ key: 'g' }],
     nudge_gain_up: [{ key: ']' }],
@@ -299,6 +305,8 @@ export const PREMIERE_KEYMAP: NleKeymapProfile = {
     clear_out: [{ key: 'o', alt: true }],
     clear_in_out: [{ key: 'x', alt: true }],
     add_marker: [{ key: 'm' }],
+    jump_prev_marker: [{ key: 'm', alt: true }, { key: 'm', ctrlOrMeta: true, shift: true }],
+    jump_next_marker: [{ key: 'm', shift: true }],
 
     audio_gain_dialog: [{ key: 'g' }],
     nudge_gain_up: [{ key: ']' }],
@@ -366,6 +374,8 @@ export const RESOLVE_KEYMAP: NleKeymapProfile = {
     clear_out: [{ key: 'o', alt: true }],
     clear_in_out: [{ key: 'x', alt: true }],
     add_marker: [{ key: 'm' }],
+    jump_prev_marker: [{ key: 'm', alt: true }, { key: 'm', ctrlOrMeta: true, shift: true }],
+    jump_next_marker: [{ key: 'm', shift: true }],
 
     audio_gain_dialog: [{ key: 'g' }],
     nudge_gain_up: [{ key: ']' }],
@@ -433,6 +443,8 @@ export const FINALCUT_KEYMAP: NleKeymapProfile = {
     clear_out: [{ key: 'o', alt: true }],
     clear_in_out: [{ key: 'x', alt: true }],
     add_marker: [{ key: 'm' }],
+    jump_prev_marker: [{ key: 'm', alt: true }, { key: 'm', ctrlOrMeta: true, shift: true }],
+    jump_next_marker: [{ key: 'm', shift: true }],
 
     audio_gain_dialog: [{ key: 'g' }],
     nudge_gain_up: [{ key: ']' }],
@@ -500,6 +512,8 @@ export const CAPCUT_KEYMAP: NleKeymapProfile = {
     clear_out: [{ key: 'o', alt: true }],
     clear_in_out: [{ key: 'x', alt: true }],
     add_marker: [{ key: 'm' }],
+    jump_prev_marker: [{ key: 'm', alt: true }, { key: 'm', ctrlOrMeta: true, shift: true }],
+    jump_next_marker: [{ key: 'm', shift: true }],
 
     audio_gain_dialog: [{ key: 'g' }],
     nudge_gain_up: [{ key: ']' }],

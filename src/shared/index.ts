@@ -145,6 +145,7 @@ export * from './utils/timeline/timeline-virtualization-ops';
 export * from './utils/timeline/nle-hud-ops';
 export * from './utils/timeline/multi-format-batch-ops';
 export * from './utils/timeline/diagnostics-telemetry-ops';
+export * from './utils/timeline/marker-navigation-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

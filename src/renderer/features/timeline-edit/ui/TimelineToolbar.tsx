@@ -3,6 +3,8 @@ import { useMemo } from 'react';
 import {
   deleteToPlayhead,
   duplicateClips,
+  findNextMarker,
+  findPreviousMarker,
   framesToSeconds,
   insertFreezeFrame,
   layoutTrack,
@@ -498,8 +500,22 @@ export function TimelineToolbar() {
           onClick={() => useSequenceStore.getState().pasteClipboard({ ripple: true })}
         />
       </div>
-      {/* Marker cluster: 1-click Add/Edit + Quick Color Palette */}
+      {/* Marker cluster: 1-click Add/Edit + Quick Color Palette + Marker Navigation */}
       <div className="flex items-center rounded-card border border-hairline bg-bg-canvas p-0.5">
+        <IconButton
+          icon="skip_previous"
+          label="Jump to previous marker (Alt+M / Ctrl+Shift+M)"
+          size="sm"
+          onClick={() => {
+            const state = useSequenceStore.getState();
+            if (state.markers.length === 0) return;
+            const prev = findPreviousMarker(state.markers, currentPlayheadFrame());
+            if (prev) {
+              state.setPlaying(false);
+              state.setPlayhead(prev.frame);
+            }
+          }}
+        />
         <IconButton
           icon="bookmark_add"
           label="Add marker (M)"
@@ -512,6 +528,20 @@ export function TimelineToolbar() {
               state.setEditingMarkerId(existing.id);
             } else {
               void state.addMarker(frame);
+            }
+          }}
+        />
+        <IconButton
+          icon="skip_next"
+          label="Jump to next marker (Shift+M)"
+          size="sm"
+          onClick={() => {
+            const state = useSequenceStore.getState();
+            if (state.markers.length === 0) return;
+            const next = findNextMarker(state.markers, currentPlayheadFrame());
+            if (next) {
+              state.setPlaying(false);
+              state.setPlayhead(next.frame);
             }
           }}
         />
