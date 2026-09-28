@@ -72,6 +72,7 @@ import {
   generateNotchFilterString,
 } from './audio-deesser-notch-ops';
 import { type ClipAnchorSettings } from './connected-clip-anchor-ops';
+import { type SpectralDuckingSettings } from './spectral-ducking-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -308,6 +309,8 @@ export interface ClipEffects {
   compound?: CompoundClipSettings;
   /** S188 — Magnetic Connected Clips & Relational Parent-Child Storyline Anchoring */
   anchor?: ClipAnchorSettings;
+  /** S189 — Frequency-Selective Spectral Audio Ducking & Formant Attenuation */
+  spectralDucking?: SpectralDuckingSettings;
   /**
    * S161 — hand-drawn (whiteboard) reveal. Stills only: the still routes
    * through `whiteboard-segment.ts` instead of the Ken Burns path, and the
@@ -1961,6 +1964,30 @@ export const clipEffectsSchema = z
         offsetFrames: z.number().int(),
         anchorPoint: z.enum(['start', 'end', 'midpoint']).optional(),
         orphanPolicy: z.enum(['keep_absolute', 'delete', 'reanchor_nearest']).optional(),
+      })
+      .strict()
+      .optional(),
+    spectralDucking: z
+      .object({
+        enabled: z.boolean(),
+        mode: z.enum(['broadband', 'spectral_formant']),
+        preset: z
+          .enum([
+            'transparent_speech',
+            'broadcast_podcast',
+            'subtle_acoustic',
+            'high_impact_trailer',
+          ])
+          .optional(),
+        thresholdDb: boundedNumber(-50, 0),
+        duckingDepthDb: boundedNumber(-50, 0),
+        lowCrossoverHz: boundedNumber(100, 1000),
+        highCrossoverHz: boundedNumber(1000, 10000),
+        lookaheadMs: boundedNumber(0, 100),
+        attackMs: boundedNumber(1, 500),
+        holdMs: boundedNumber(0, 2000),
+        releaseMs: boundedNumber(10, 5000),
+        ratio: boundedNumber(1, 20),
       })
       .strict()
       .optional(),

@@ -416,10 +416,32 @@ function AudioMixerDockContent() {
       {/* S33 — Collapsible Sidechain Auto-Ducking Configuration Panel */}
       {showDuckingPanel && (
         <div className="flex items-center justify-between gap-4 border-b border-hairline px-3 py-1.5 bg-bg-canvas/90 text-xs font-mono select-none">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <span className="text-[11px] font-bold text-accent-ai font-sans uppercase tracking-wider">
               Auto-Ducking:
             </span>
+
+            {/* S189 — Mode Toggle: Formant Clarity vs Broadband */}
+            <button
+              type="button"
+              onClick={() =>
+                setDucking({
+                  mode: ducking.mode === 'broadband' ? 'spectral_formant' : 'broadband',
+                })
+              }
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold border transition-colors ${
+                ducking.mode === 'spectral_formant'
+                  ? 'bg-accent-ai/20 border-accent-ai/50 text-accent-ai'
+                  : 'bg-bg-app border-hairline text-text-secondary hover:text-text-primary'
+              }`}
+              title={
+                ducking.mode === 'spectral_formant'
+                  ? 'Spectral Formant Mode: Ducks only 250Hz-4kHz speech frequencies, preserving bass punch and high air'
+                  : 'Broadband Mode: Standard full-spectrum volume attenuation'
+              }
+            >
+              {ducking.mode === 'spectral_formant' ? 'Spectral Formant' : 'Broadband'}
+            </button>
 
             {/* Ducking Depth */}
             <label className="flex items-center gap-1.5 text-text-secondary text-[11px]">

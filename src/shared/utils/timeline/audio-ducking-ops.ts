@@ -22,6 +22,14 @@ export interface DuckingSettings {
   holdMs: number;
   /** Release time in milliseconds (how smoothly music recovers). Range: 100 to 2000 ms. */
   releaseMs: number;
+  /** S189 — Ducking mode: 'broadband' (standard attenuation) or 'spectral_formant' (speech formant isolation) */
+  mode?: 'broadband' | 'spectral_formant';
+  /** Low-to-Mid crossover split frequency in Hz (default 250) */
+  lowCrossoverHz?: number;
+  /** Mid-to-High crossover split frequency in Hz (default 4000) */
+  highCrossoverHz?: number;
+  /** Lookahead buffer delay in ms (default 20) */
+  lookaheadMs?: number;
 }
 
 export const DEFAULT_DUCKING_SETTINGS: DuckingSettings = {
@@ -31,6 +39,10 @@ export const DEFAULT_DUCKING_SETTINGS: DuckingSettings = {
   attackMs: 30,
   holdMs: 150,
   releaseMs: 400,
+  mode: 'spectral_formant',
+  lowCrossoverHz: 250,
+  highCrossoverHz: 4000,
+  lookaheadMs: 20,
 };
 
 export interface DuckingGainResult {
