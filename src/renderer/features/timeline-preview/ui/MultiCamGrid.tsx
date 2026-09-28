@@ -71,9 +71,18 @@ export const MultiCamGrid = React.memo(function MultiCamGrid({
     });
   }, [tiles, clip, playheadFrame, fps, playing, playbackRate]);
 
+  const angleCount = tiles.length;
+  const gridLayoutClass =
+    angleCount <= 2
+      ? 'grid-cols-2 grid-rows-1'
+      : angleCount > 4
+        ? 'grid-cols-3 grid-rows-3'
+        : 'grid-cols-2 grid-rows-2';
+  const visibleTiles = tiles.slice(0, angleCount <= 2 ? 2 : angleCount > 4 ? 9 : 4);
+
   return (
-    <div className="relative grid h-full w-full grid-cols-2 grid-rows-2 gap-1.5 bg-black p-1 select-none overflow-hidden rounded-lg border border-hairline/80 shadow-2xl">
-      {tiles.slice(0, 4).map((tile) => {
+    <div className={`relative grid h-full w-full ${gridLayoutClass} gap-1.5 bg-black p-1 select-none overflow-hidden rounded-lg border border-hairline/80 shadow-2xl`}>
+      {visibleTiles.map((tile) => {
         const angleMediaUrl = tile.angle.filePath
           ? toMediaUrl(tile.angle.filePath)
           : clip.filePath

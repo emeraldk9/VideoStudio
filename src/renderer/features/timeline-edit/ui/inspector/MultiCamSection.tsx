@@ -1,5 +1,7 @@
 import {
   DEFAULT_MULTICAM_SETTINGS,
+  MULTICAM_LAYOUT_CONFIGS,
+  resolveAngleTallyState,
   switchActiveAngle,
   type MultiCamClipSettings,
   type MultiCamSyncMethod,
@@ -95,7 +97,10 @@ export function MultiCamSection({ clip, patchClip }: MultiCamSectionProps) {
                         {angle.name}
                       </span>
                       {isActive ? (
-                        <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                        <span className="flex items-center gap-1 text-[9px] font-bold text-red-400 bg-red-950/80 px-1 py-0.5 rounded border border-red-500/50">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                          ON AIR
+                        </span>
                       ) : null}
                     </div>
                     <span className="font-semibold text-[11px] truncate w-full text-text-primary">
