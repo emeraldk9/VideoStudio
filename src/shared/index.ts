@@ -156,6 +156,7 @@ export * from './utils/timeline/multicam-angle-cut-ops';
 export * from './utils/timeline/connected-clip-anchor-ops';
 export * from './utils/timeline/spectral-ducking-ops';
 export * from './utils/timeline/timeline-magnetic-snapping-ops';
+export * from './utils/timeline/dynamic-eq-ops';
 export * from './types/keymap';
 export * from './types/stylus-capture';
 export * from './ipc/ipc-channels';

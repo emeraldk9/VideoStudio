@@ -73,6 +73,7 @@ import {
 } from './audio-deesser-notch-ops';
 import { type ClipAnchorSettings } from './connected-clip-anchor-ops';
 import { type SpectralDuckingSettings } from './spectral-ducking-ops';
+import { type DynamicEqSettings, generateDynamicEqFiltergraph } from './dynamic-eq-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -311,6 +312,8 @@ export interface ClipEffects {
   anchor?: ClipAnchorSettings;
   /** S189 — Frequency-Selective Spectral Audio Ducking & Formant Attenuation */
   spectralDucking?: SpectralDuckingSettings;
+  /** S191 — Multi-Band Dynamic EQ & Resonance Notch Suppressor */
+  dynamicEq?: DynamicEqSettings;
   /**
    * S161 — hand-drawn (whiteboard) reveal. Stills only: the still routes
    * through `whiteboard-segment.ts` instead of the Ken Burns path, and the
@@ -1991,6 +1994,35 @@ export const clipEffectsSchema = z
       })
       .strict()
       .optional(),
+    dynamicEq: z
+      .object({
+        enabled: z.boolean(),
+        globalGainDb: boundedNumber(-12, 12),
+        lookaheadMs: boundedNumber(0, 20),
+        bands: z.array(
+          z
+            .object({
+              id: z.string(),
+              name: z.string().optional(),
+              enabled: z.boolean(),
+              type: z.enum(['bell', 'low_shelf', 'high_shelf', 'notch']),
+              frequencyHz: boundedNumber(20, 20000),
+              q: boundedNumber(0.1, 20.0),
+              staticGainDb: boundedNumber(-24, 24),
+              dynamicGainDb: boundedNumber(-24, 24),
+              thresholdDb: boundedNumber(-60, 0),
+              ratio: boundedNumber(1.0, 20.0),
+              kneeDb: boundedNumber(0, 12),
+              attackMs: boundedNumber(0.1, 100),
+              releaseMs: boundedNumber(5, 1000),
+              mode: z.enum(['compress', 'expand']),
+              detection: z.enum(['peak', 'rms']).optional(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -2179,6 +2211,14 @@ export function buildAudioFilterChain(effects: ClipEffects | undefined): string 
   const eqFilter = buildFfmpegEqFilter(effects.equalizer);
   if (eqFilter) {
     parts.push(eqFilter);
+  }
+
+  // S191 — Multi-Band Dynamic EQ & Resonance Notch Suppressor
+  if (effects.dynamicEq) {
+    const dynamicEqFilter = generateDynamicEqFiltergraph(effects.dynamicEq);
+    if (dynamicEqFilter) {
+      parts.push(dynamicEqFilter);
+    }
   }
 
   // S36 — Dynamic Range Audio Compressor & Peak Limiter

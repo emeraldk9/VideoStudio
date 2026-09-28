@@ -75,6 +75,7 @@ import { useToastStore } from '../../../../shared/model/toastStore';
 import { MODAL_IDS } from '../../../../shared/config/modal-ids';
 import { useModalStore } from '../../../../shared/model/modalStore';
 import { BeatDetectionSection } from './BeatDetectionSection';
+import { DynamicEqSection } from './DynamicEqSection';
 
 export interface AudioInspectorTabProps {
   clip: SequenceClip;
@@ -511,6 +512,11 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
             );
           })()}
         </Section>
+      ) : null}
+
+      {/* S191 — Multi-Band Dynamic EQ & Resonance Notch Suppressor */}
+      {currentTab === 'audio' && carriesSound ? (
+        <DynamicEqSection clip={clip} patchClip={patchClip} />
       ) : null}
 
       {/* S36 — Clip Dynamics (Compressor & Limiter) */}
