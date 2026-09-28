@@ -74,6 +74,7 @@ import {
 import { type ClipAnchorSettings } from './connected-clip-anchor-ops';
 import { type SpectralDuckingSettings } from './spectral-ducking-ops';
 import { type DynamicEqSettings, generateDynamicEqFiltergraph } from './dynamic-eq-ops';
+import { type MultibandDynamicsSettings, generateMultibandDynamicsFiltergraph } from './multiband-dynamics-ops';
 
 /**
  * Beta S154 phase 3 — per-clip effects: colour correction and speed.
@@ -314,6 +315,8 @@ export interface ClipEffects {
   spectralDucking?: SpectralDuckingSettings;
   /** S191 — Multi-Band Dynamic EQ & Resonance Notch Suppressor */
   dynamicEq?: DynamicEqSettings;
+  /** S193 — Audio Mastering Multiband Compressor & Upward Expander */
+  multibandDynamics?: MultibandDynamicsSettings;
   /**
    * S161 — hand-drawn (whiteboard) reveal. Stills only: the still routes
    * through `whiteboard-segment.ts` instead of the Ken Burns path, and the
@@ -2023,6 +2026,99 @@ export const clipEffectsSchema = z
       })
       .strict()
       .optional(),
+    multibandDynamics: z
+      .object({
+        enabled: z.boolean(),
+        crossoverLowHz: boundedNumber(50, 400),
+        crossoverMidHz: boundedNumber(400, 4000),
+        crossoverHighHz: boundedNumber(2500, 14000),
+        masterGainDb: boundedNumber(-12, 12),
+        lookaheadMs: boundedNumber(0, 20),
+        bands: z.object({
+          low: z
+            .object({
+              id: z.literal('low'),
+              name: z.string(),
+              enabled: z.boolean(),
+              mute: z.boolean().optional(),
+              solo: z.boolean().optional(),
+              thresholdDb: boundedNumber(-60, 0),
+              ratio: boundedNumber(1, 20),
+              kneeDb: boundedNumber(0, 12),
+              attackMs: boundedNumber(0.1, 100),
+              releaseMs: boundedNumber(5, 1000),
+              upwardExpansionEnabled: z.boolean(),
+              expansionThresholdDb: boundedNumber(-80, -20),
+              expansionRatio: boundedNumber(1, 4),
+              expansionRangeDb: boundedNumber(0, 18),
+              makeupGainDb: boundedNumber(-12, 18),
+              limiterCeilingDb: boundedNumber(-6, 0),
+            })
+            .strict(),
+          lowMid: z
+            .object({
+              id: z.literal('lowMid'),
+              name: z.string(),
+              enabled: z.boolean(),
+              mute: z.boolean().optional(),
+              solo: z.boolean().optional(),
+              thresholdDb: boundedNumber(-60, 0),
+              ratio: boundedNumber(1, 20),
+              kneeDb: boundedNumber(0, 12),
+              attackMs: boundedNumber(0.1, 100),
+              releaseMs: boundedNumber(5, 1000),
+              upwardExpansionEnabled: z.boolean(),
+              expansionThresholdDb: boundedNumber(-80, -20),
+              expansionRatio: boundedNumber(1, 4),
+              expansionRangeDb: boundedNumber(0, 18),
+              makeupGainDb: boundedNumber(-12, 18),
+              limiterCeilingDb: boundedNumber(-6, 0),
+            })
+            .strict(),
+          highMid: z
+            .object({
+              id: z.literal('highMid'),
+              name: z.string(),
+              enabled: z.boolean(),
+              mute: z.boolean().optional(),
+              solo: z.boolean().optional(),
+              thresholdDb: boundedNumber(-60, 0),
+              ratio: boundedNumber(1, 20),
+              kneeDb: boundedNumber(0, 12),
+              attackMs: boundedNumber(0.1, 100),
+              releaseMs: boundedNumber(5, 1000),
+              upwardExpansionEnabled: z.boolean(),
+              expansionThresholdDb: boundedNumber(-80, -20),
+              expansionRatio: boundedNumber(1, 4),
+              expansionRangeDb: boundedNumber(0, 18),
+              makeupGainDb: boundedNumber(-12, 18),
+              limiterCeilingDb: boundedNumber(-6, 0),
+            })
+            .strict(),
+          high: z
+            .object({
+              id: z.literal('high'),
+              name: z.string(),
+              enabled: z.boolean(),
+              mute: z.boolean().optional(),
+              solo: z.boolean().optional(),
+              thresholdDb: boundedNumber(-60, 0),
+              ratio: boundedNumber(1, 20),
+              kneeDb: boundedNumber(0, 12),
+              attackMs: boundedNumber(0.1, 100),
+              releaseMs: boundedNumber(5, 1000),
+              upwardExpansionEnabled: z.boolean(),
+              expansionThresholdDb: boundedNumber(-80, -20),
+              expansionRatio: boundedNumber(1, 4),
+              expansionRangeDb: boundedNumber(0, 18),
+              makeupGainDb: boundedNumber(-12, 18),
+              limiterCeilingDb: boundedNumber(-6, 0),
+            })
+            .strict(),
+        }),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -2218,6 +2314,14 @@ export function buildAudioFilterChain(effects: ClipEffects | undefined): string 
     const dynamicEqFilter = generateDynamicEqFiltergraph(effects.dynamicEq);
     if (dynamicEqFilter) {
       parts.push(dynamicEqFilter);
+    }
+  }
+
+  // S193 — Audio Mastering Multiband Compressor & Upward Expander
+  if (effects.multibandDynamics) {
+    const mbFilter = generateMultibandDynamicsFiltergraph(effects.multibandDynamics);
+    if (mbFilter) {
+      parts.push(mbFilter);
     }
   }
 

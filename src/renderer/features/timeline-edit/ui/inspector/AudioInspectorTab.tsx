@@ -76,6 +76,7 @@ import { MODAL_IDS } from '../../../../shared/config/modal-ids';
 import { useModalStore } from '../../../../shared/model/modalStore';
 import { BeatDetectionSection } from './BeatDetectionSection';
 import { DynamicEqSection } from './DynamicEqSection';
+import { MultibandDynamicsSection } from './MultibandDynamicsSection';
 
 export interface AudioInspectorTabProps {
   clip: SequenceClip;
@@ -667,6 +668,11 @@ export const AudioInspectorTab = React.memo(function AudioInspectorTab({
             );
           })()}
         </Section>
+      ) : null}
+
+      {/* S193 — Audio Mastering Multiband Compressor & Upward Expander */}
+      {currentTab === 'audio' && carriesSound ? (
+        <MultibandDynamicsSection clip={clip} patchClip={patchClip} />
       ) : null}
 
       {/* S41 — Spatial Acoustics & Reverb */}
